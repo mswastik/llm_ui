@@ -90,14 +90,16 @@ async def add_message(
     conversation_id: str,
     role: str,
     content: str,
-    tool_calls: Optional[List] = None
+    tool_calls: Optional[List] = None,
+    thinking: Optional[str] = None
 ) -> Dict:
     """Add a message to a conversation"""
     message = Message(
         conversation_id=conversation_id,
         role=role,
         content=content,
-        tool_calls=tool_calls
+        tool_calls=tool_calls,
+        thinking=thinking
     )
     db.add(message)
     
@@ -117,6 +119,7 @@ async def add_message(
         "role": message.role,
         "content": message.content,
         "tool_calls": message.tool_calls,
+        "thinking": message.thinking,
         "created_at": message.created_at.isoformat(),
     }
 
@@ -139,6 +142,7 @@ async def get_conversation_messages(
             "role": msg.role,
             "content": msg.content,
             "tool_calls": msg.tool_calls,
+            "thinking": msg.thinking,
             "created_at": msg.created_at.isoformat(),
         }
         for msg in messages
@@ -302,6 +306,7 @@ async def get_message(db: AsyncSession, message_id: str) -> Optional[Dict]:
         "role": message.role,
         "content": message.content,
         "tool_calls": message.tool_calls,
+        "thinking": message.thinking,
         "created_at": message.created_at.isoformat(),
     }
 

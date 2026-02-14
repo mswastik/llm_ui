@@ -35,6 +35,9 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
+    # Store thinking content from reasoning models (e.g., DeepSeek)
+    thinking = Column(Text, nullable=True)
+    
     # Store tool calls and results if any
     tool_calls = Column(JSON, nullable=True)
     

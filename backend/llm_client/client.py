@@ -27,7 +27,7 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 5048,
+        max_tokens: int = 10048,
         tools: List[Dict] = None,
         model: str = None
     ) -> AsyncGenerator[Dict, None]:
@@ -94,6 +94,16 @@ class LLMClient:
                                     chunk_data = json.loads(data)
                                     delta = chunk_data.get("choices", [{}])[0].get("delta", {})
                                     
+                                    # Handle thinking content (for thinking models like DeepSeek)
+                                    # Check multiple field names that llama.cpp might use
+                                    thinking_content = delta.get("thinking") or delta.get("reasoning_content")
+                                    if thinking_content:
+                                        yield {
+                                            "type": "thinking",
+                                            "content": thinking_content
+                                        }
+                                        await asyncio.sleep(0)
+                                    
                                     # Handle content
                                     if "content" in delta and delta["content"]:
                                         yield {
@@ -148,7 +158,7 @@ class LLMClient:
         """
         return self._tools or []
     
-    async def generate_title(self, first_message: str) -> str:
+    async def generate_title(self, first_message: str, model: str = None) -> str:
         """
         Generate a conversation title from the first message.
         """
@@ -156,18 +166,30 @@ class LLMClient:
         
         messages = [{"role": "user", "content": title_prompt}]
         
+        print(f"Generating title with model: {model or self.model}")
         title = ""
-        async for chunk in self.stream_chat(messages, temperature=0.5, max_tokens=20):
-            if chunk.get("type") == "content":
-                title += chunk.get("content", "")
+        try:
+            async for chunk in self.stream_chat(messages, temperature=0.5, max_tokens=20, model=model):
+                if chunk.get("type") == "content":
+                    title += chunk.get("content", "")
+                elif chunk.get("type") == "error":
+                    print(f"Error in title generation: {chunk.get('error')}")
+                    return first_message[:50].strip() or "New Chat"
+        except Exception as e:
+            print(f"Exception in title generation: {e}")
+            return first_message[:50].strip() or "New Chat"
         
-        return title.strip() or "New Chat"
+        # Clean up the title - remove quotes, newlines, and extra whitespace
+        title = title.strip().strip('"\'').replace('\n', ' ').strip()
+        
+        print(f"Generated title: '{title}'")
+        return title or first_message[:50].strip() or "New Chat"
     
     async def complete(
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
-        max_tokens: int = 2048
+        max_tokens: int = 10048
     ) -> str:
         """
         Non-streaming completion (collects full response).

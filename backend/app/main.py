@@ -234,6 +234,7 @@ async def stream_response(
                             web_search_tool_call["status"] = "completed"
                             web_search_tool_call["progress"] = 100
                             web_search_tool_call["result"] = {"sources": result.get("sources", [])}
+                            web_search_tool_call["progress_history"].append({"status": "Web search complete", "progress": 100, "timestamp": datetime.utcnow().isoformat()})
                             yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'search_web', 'status': 'Web search complete', 'progress': 100, 'result': {'sources': result.get('sources', [])}})}\n\n"
                             await asyncio.sleep(0)
                     except Exception as e:
@@ -248,12 +249,13 @@ async def stream_response(
                 if enable_rag:
                     query_text = messages[-1]["content"] if messages else ""
                     
-                    # Initialize tool call data
+                    # Initialize tool call data with progress history
                     rag_tool_call = {
                         "name": "query_documents",
                         "arguments": {"query": query_text},
                         "status": "starting",
                         "progress": 0,
+                        "progress_history": [],  # Track all progress events
                         "result": None
                     }
                     tool_calls_data.append(rag_tool_call)
@@ -263,6 +265,7 @@ async def stream_response(
                     
                     rag_tool_call["status"] = "Searching documents..."
                     rag_tool_call["progress"] = 10
+                    rag_tool_call["progress_history"].append({"status": "Searching documents...", "progress": 10, "timestamp": datetime.utcnow().isoformat()})
                     yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'query_documents', 'status': 'Searching documents...', 'progress': 10})}\n\n"
                     await asyncio.sleep(0)
                     
@@ -276,6 +279,7 @@ async def stream_response(
                             rag_tool_call["status"] = "completed"
                             rag_tool_call["progress"] = 100
                             rag_tool_call["result"] = {"result_count": len(rag_result.get("results", []))}
+                            rag_tool_call["progress_history"].append({"status": "Document search complete", "progress": 100, "timestamp": datetime.utcnow().isoformat()})
                             yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'query_documents', 'status': 'Document search complete', 'progress': 100, 'result': {'result_count': len(rag_result.get('results', []))}})}\n\n"
                             await asyncio.sleep(0)
                     except Exception as e:
@@ -295,6 +299,7 @@ async def stream_response(
                             break
                 
                 assistant_message = ""
+                thinking_content = ""  # Track thinking content separately
                 tool_calls = tool_calls_data  # Start with the pre-tool calls from web search and RAG
                 
                 # Stream LLM response
@@ -308,6 +313,13 @@ async def stream_response(
                             assistant_message += content
                             yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
                             # Small yield to allow streaming to work properly
+                            await asyncio.sleep(0)
+                        
+                        elif chunk_type == "thinking":
+                            # Thinking content from reasoning models (e.g., DeepSeek)
+                            thinking = chunk.get("content", "")
+                            thinking_content += thinking
+                            yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
                             await asyncio.sleep(0)
                         
                         elif chunk_type == "tool_call":
@@ -353,23 +365,54 @@ async def stream_response(
                     import traceback
                     traceback.print_exc()
                     yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
-                
+                # Determine if this is the first exchange before saving the assistant message
+                messages_before_save = await get_conversation_messages(db, conversation_id)
+                user_count_before = len([m for m in messages_before_save if m["role"] == "user"])
+                assistant_count_before = len([m for m in messages_before_save if m["role"] == "assistant"])
+
+                is_first_exchange = (user_count_before == 1 and assistant_count_before == 0)
+
                 # Save assistant message (only if we have content)
                 if assistant_message.strip():
-                    await add_message(db, conversation_id, "assistant", assistant_message, tool_calls if tool_calls else None)
-                
+                    await add_message(db, conversation_id, "assistant", assistant_message, tool_calls if tool_calls else None, thinking_content if thinking_content else None)
+
                 # Auto-generate conversation title if this is the first exchange
-                conv_messages = await get_conversation_messages(db, conversation_id)
-                if len(conv_messages) == 2:  # First user message + first assistant response
-                    try:
-                        title = await llm_client.generate_title(conv_messages[0]["content"])
-                        await update_conversation_title(db, conversation_id, title)
-                        yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
-                    except Exception as e:
-                        print(f"Error generating title: {e}")
-                
+                # This check happens regardless of whether the assistant message had content
+                if is_first_exchange:
+                    # Find the first user message to generate title from
+                    first_user_message = next((m for m in messages_before_save if m["role"] == "user"), None)
+                    if first_user_message:
+                        title = None
+                        try:
+                            # Shield title generation from cancellation and add timeout
+                            title = await asyncio.wait_for(
+                                asyncio.shield(llm_client.generate_title(first_user_message["content"], model=model)),
+                                timeout=30.0
+                            )
+                            # If title is empty or "New Chat", use fallback
+                            if not title or title == "New Chat":
+                                title = first_user_message["content"][:50].strip()
+                        except asyncio.TimeoutError:
+                            print(f"Title generation timed out for request {request_id}")
+                            title = first_user_message["content"][:50].strip()
+                        except asyncio.CancelledError:
+                            # Client disconnected during title generation - try to save anyway
+                            print(f"Title generation cancelled for request {request_id}, attempting fallback")
+                            title = first_user_message["content"][:50].strip()
+                        except Exception as e:
+                            print(f"Error generating title: {e}")
+                            title = first_user_message["content"][:50].strip()
+                        
+                        # Update title if we have one
+                        if title:
+                            try:
+                                await update_conversation_title(db, conversation_id, title)
+                                yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                            except Exception as e:
+                                print(f"Error updating title: {e}")
+
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        
+
         except asyncio.CancelledError:
             # Client disconnected, this is normal
             print(f"Event generator cancelled for request {request_id}")

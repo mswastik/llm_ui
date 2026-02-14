@@ -10,6 +10,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./llm_ui.db")
 # llama.cpp Configuration
 LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_URL", "http://localhost:8080")
 LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", "glm4.7-30ba3b")
+QUERY_MODEL = os.getenv("QUERY_MODEL", "qwen3-30ba3b") # Query model should be non-thinking model
 
 # Application Settings
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")

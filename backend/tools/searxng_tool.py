@@ -13,7 +13,7 @@ import asyncio
 import json
 from typing import List, Dict, Tuple, Callable, Any
 from dataclasses import dataclass, field
-from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL
+from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
 
 
 @dataclass
@@ -24,6 +24,7 @@ class SearchConfig:
     rerank_api: str = f"{LLAMA_CPP_BASE_URL}/v1/rerank"
     llm_base_url: str = LLAMA_CPP_BASE_URL
     llm_model: str = LLAMA_CPP_MODEL
+    query_model: str = QUERY_MODEL
     llm_api_key: str = "sk-12"
     num_search_results: int = 25
     chunk_size: int = 1200
@@ -273,7 +274,7 @@ class SearXNGSearchTool:
             ]
             
             payload = {
-                "model": self.config.llm_model,
+                "model": self.config.query_model,
                 "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": 580,
@@ -367,10 +368,11 @@ class SearXNGSearchTool:
         ]
         
         payload = {
-            "model": self.config.llm_model,
+            "model": self.config.query_model,
             "messages": messages,
             "temperature": 0.6,
-            "max_tokens": 980,
+            "max_tokens": 1080,
+            "stream": False
         }
         
         headers = {"Content-Type": "application/json"}

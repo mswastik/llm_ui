@@ -235,6 +235,7 @@ function chatApp() {
                 id: Date.now() + 1,
                 role: 'assistant',
                 content: '',
+                thinking: '',  // Track thinking content separately
                 tool_calls: [],
                 created_at: new Date().toISOString()
             };
@@ -258,6 +259,17 @@ function chatApp() {
                             const msgEl = document.getElementById('message-content-' + assistantMessage.id);
                             if (msgEl) {
                                 msgEl.innerHTML = marked.parse(this.messages[msgIndex].content);
+                            }
+                            this.scrollToBottom();
+                            break;
+                        
+                        case 'thinking':
+                            // Thinking content from reasoning models (e.g., DeepSeek)
+                            this.messages[msgIndex].thinking += data.content;
+                            // Update thinking display if element exists
+                            const thinkingEl = document.getElementById('thinking-content-' + assistantMessage.id);
+                            if (thinkingEl) {
+                                thinkingEl.innerHTML = marked.parse(this.messages[msgIndex].thinking);
                             }
                             this.scrollToBottom();
                             break;
@@ -297,14 +309,7 @@ function chatApp() {
                             
                             if (data.result) {
                                 this.toolStatus.active = false;
-                                if (data.result.sources) {
-                                    const sourcesText = this.formatSources(data.result.sources);
-                                    this.messages[msgIndex].content += sourcesText;
-                                    const msgEl = document.getElementById('message-content-' + assistantMessage.id);
-                                    if (msgEl) {
-                                        msgEl.innerHTML = marked.parse(this.messages[msgIndex].content);
-                                    }
-                                }
+                                // Don't add sources to main content - they're already shown in tool_calls section
                             }
                             this.scrollToBottom();
                             break;
@@ -565,6 +570,7 @@ function chatApp() {
                 id: Date.now() + 1,
                 role: 'assistant',
                 content: '',
+                thinking: '',  // Track thinking content separately
                 tool_calls: [],
                 created_at: new Date().toISOString()
             };
@@ -577,6 +583,12 @@ function chatApp() {
                     switch (data.type) {
                         case 'content':
                             assistantMessage.content += data.content;
+                            this.scrollToBottom();
+                            break;
+                        
+                        case 'thinking':
+                            // Thinking content from reasoning models (e.g., DeepSeek)
+                            assistantMessage.thinking += data.content;
                             this.scrollToBottom();
                             break;
                         
@@ -902,6 +914,19 @@ function chatApp() {
         // Check if tool calls are expanded for a message
         isToolCallsExpanded(messageId) {
             return this.expandedToolCalls[messageId] === true;
+        },
+        
+        // Expanded thinking tracking (by message id)
+        expandedThinking: {},
+        
+        // Toggle thinking expansion for a message
+        toggleThinking(messageId) {
+            this.expandedThinking[messageId] = !this.expandedThinking[messageId];
+        },
+        
+        // Check if thinking is expanded for a message
+        isThinkingExpanded(messageId) {
+            return this.expandedThinking[messageId] === true;
         }
     }
 }

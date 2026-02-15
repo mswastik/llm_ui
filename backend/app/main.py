@@ -10,7 +10,7 @@ import uuid
 from typing import AsyncGenerator, Dict, List, Optional
 from datetime import datetime
 
-from config import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE #, UPLOAD_DIR, SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from config import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR #, SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 from database.models import init_db, get_db
 from database.crud import (
     create_conversation, get_conversation, get_all_conversations,

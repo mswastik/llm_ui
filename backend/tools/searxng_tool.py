@@ -154,7 +154,7 @@ class SearXNGSearchTool:
                     content = snippet
                 elif not content:
                     content = snippet
-                
+
                 if url not in source_url_to_index:
                     source_idx = len(sources)
                     source_url_to_index[url] = source_idx
@@ -162,19 +162,20 @@ class SearXNGSearchTool:
                         "id": source_idx + 1,
                         "title": title,
                         "url": url,
-                        "snippet": "",  # Will be updated with first chunk
+                        "snippet": snippet,  # Store the original snippet
+                        "chunk_content": "",  # Will be updated with first chunk
                         "chunk_count": 0,
                     })
                 else:
                     source_idx = source_url_to_index[url]
-                
+
                 chunks = self._chunk_text(content)
                 for i, chunk in enumerate(chunks):
                     chunk_to_source_map.append((chunk.strip(), source_idx))
                     sources[source_idx]["chunk_count"] += 1
-                    # Store first chunk as snippet
-                    if i == 0 and not sources[source_idx]["snippet"]:
-                        sources[source_idx]["snippet"] = chunk[:300] + "..." if len(chunk) > 300 else chunk
+                    # Store first chunk as chunk_content
+                    if i == 0 and not sources[source_idx]["chunk_content"]:
+                        sources[source_idx]["chunk_content"] = chunk[:500] + "..." if len(chunk) > 500 else chunk
             
             if not chunk_to_source_map:
                 return {"sources": [], "content": "No content could be extracted from search results."}

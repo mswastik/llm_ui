@@ -485,10 +485,22 @@ class RAGService:
             
             # Format context
             context = self._format_context(results, query)
-            
+
+            # Prepare detailed sources with chunk content for citations
+            sources = []
+            for i, result in enumerate(results, 1):
+                sources.append({
+                    "id": i,
+                    "title": f"Document {result.get('document_id', 'Unknown')} - Chunk {result.get('chunk_index', i)}",
+                    "url": f"#document-{result.get('document_id', 'unknown')}",
+                    "snippet": result.get("content", "")[:300] + "..." if len(result.get("content", "")) > 300 else result.get("content", ""),
+                    "chunk_content": result.get("content", "")
+                })
+
             return {
                 "results": results,
-                "context": context
+                "context": context,
+                "sources": sources
             }
         
         except Exception as e:

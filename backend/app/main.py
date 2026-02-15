@@ -135,22 +135,27 @@ async def _core_stream_handler(
                 # Send tool call start event
                 yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
                 # Create tool call record
-                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None}
+                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
                 tool_calls_history.append(web_search_tool_call)
-                
+
                 async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
                     # Forward the progress event
                     yield f"data: {json.dumps(progress_event)}\n\n"
-                    
+
                     # Update tool call status
                     if progress_event.get("type") == "tool_progress":
                         web_search_tool_call["status"] = progress_event.get("status", "running")
                         web_search_tool_call["progress"] = progress_event.get("progress", 0)
+                        # Add progress event to history
+                        web_search_tool_call["progress_history"].append(progress_event)
                         if progress_event.get("result"):
                             web_search_tool_call["result"] = progress_event["result"]
                             web_search_tool_call["status"] = "completed"
                             if progress_event["result"].get("content"):
                                 context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
+                    elif progress_event.get("type") == "tool_error":
+                        web_search_tool_call["status"] = "error"
+                        web_search_tool_call["result"] = {"error": progress_event.get("error")}
                     await asyncio.sleep(0)
 
             if enable_rag:
@@ -158,22 +163,27 @@ async def _core_stream_handler(
                 # Send tool call start event
                 yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'query_documents', 'args': {'query': query_text}})}\n\n"
                 # Create tool call record
-                rag_tool_call = {"name": "query_documents", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None}
+                rag_tool_call = {"name": "query_documents", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
                 tool_calls_history.append(rag_tool_call)
-                
+
                 async for progress_event in tool_executor.execute_tool("query_documents", {"query": query_text}, request_id):
                     # Forward the progress event
                     yield f"data: {json.dumps(progress_event)}\n\n"
-                    
+
                     # Update tool call status
                     if progress_event.get("type") == "tool_progress":
                         rag_tool_call["status"] = progress_event.get("status", "running")
                         rag_tool_call["progress"] = progress_event.get("progress", 0)
+                        # Add progress event to history
+                        rag_tool_call["progress_history"].append(progress_event)
                         if progress_event.get("result"):
                             rag_tool_call["result"] = progress_event["result"]
                             rag_tool_call["status"] = "completed"
                             if progress_event["result"].get("context"):
                                 context_additions.append(f"\n\n**Document Search Results:**\n{progress_event['result']['context']}")
+                    elif progress_event.get("type") == "tool_error":
+                        rag_tool_call["status"] = "error"
+                        rag_tool_call["result"] = {"error": progress_event.get("error")}
                     await asyncio.sleep(0)
 
             # Add context to the last user message
@@ -208,16 +218,24 @@ async def _core_stream_handler(
                     # Send tool call start event
                     yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tc_data['name'], 'args': tc_data['arguments']})}\n\n"
                     # Create tool call record
-                    tc_record = {"name": tc_data["name"], "arguments": tc_data["arguments"], "status": "pending", "result": None}
+                    tc_record = {"name": tc_data["name"], "arguments": tc_data["arguments"], "status": "pending", "result": None, "progress_history": []}
                     tool_calls_history.append(tc_record)
-                    
+
                     # Execute the tool
                     async for progress_event in tool_executor.execute_tool(tc_data["name"], tc_data["arguments"], request_id):
                         # Forward the progress event
                         yield f"data: {json.dumps(progress_event)}\n\n"
-                        if progress_event.get("type") == "tool_progress" and progress_event.get("result"):
-                            tc_record["result"] = progress_event["result"]
-                            tc_record["status"] = "completed"
+                        if progress_event.get("type") == "tool_progress":
+                            tc_record["status"] = progress_event.get("status", "running")
+                            tc_record["progress"] = progress_event.get("progress", 0)
+                            # Add progress event to history
+                            tc_record["progress_history"].append(progress_event)
+                            if progress_event.get("result"):
+                                tc_record["result"] = progress_event["result"]
+                                tc_record["status"] = "completed"
+                        elif progress_event.get("type") == "tool_error":
+                            tc_record["status"] = "error"
+                            tc_record["result"] = {"error": progress_event.get("error")}
                 await asyncio.sleep(0)
 
             # Save assistant message

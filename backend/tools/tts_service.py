@@ -33,7 +33,8 @@ except ImportError:
 class TTSConfig:
     """Configuration for TTS service"""
     engine: str = "edge-tts"  # Options: "edge-tts", "pyttsx3", "piper"
-    voice: str = "en-US-ChristopherNeural"  # Default Edge TTS voice
+    #voice: str = "en-US-ChristopherNeural"  # Default Edge TTS voice
+    voice: str = "en-IN-PrabhatNeural" #en-IN-PrabhatNeural en-IN-NeerjaNeural
     rate: str = "+0%"  # Speech rate adjustment
     volume: float = 1.0  # Volume (0.0 to 1.0)
     output_dir: str = UPLOAD_DIR

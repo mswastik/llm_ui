@@ -1,16 +1,15 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from contextlib import asynccontextmanager
 import asyncio
 import json
 import os
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional
-from datetime import datetime
 
-from config import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR #, SYSTEM_PROMPT, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from config import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from database.models import init_db, get_db
 from database.crud import (
     create_conversation, get_conversation, get_all_conversations,
@@ -104,20 +103,154 @@ async def send_message(conversation_id: str, request: Request):
         # Save user message
         await add_message(db, conversation_id, "user", user_message)
         
-        # Get conversation history
-        messages = await get_conversation_messages(db, conversation_id)
-        
         # Create a unique request ID for this interaction
         request_id = str(uuid.uuid4())
         
-        # Store tool options in a way that stream_response can access
-        # We'll use query parameters for the stream endpoint
         return {
             "request_id": request_id,
             "status": "processing",
             "enable_web_search": enable_web_search,
             "enable_rag": enable_rag
         }
+
+
+async def _core_stream_handler(
+    request_id: str,
+    conversation_id: str,
+    enable_web_search: bool = False,
+    enable_rag: bool = False,
+    model: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    """Universal SSE handler for streaming LLM responses and tool execution."""
+    try:
+        async with get_db() as db:
+            messages = await get_conversation_messages(db, conversation_id)
+            llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+            context_additions = []
+            tool_calls_history = []
+
+            # Execute pre-processing tools (web search, RAG) if enabled
+            if enable_web_search:
+                query_text = llm_messages[-1]["content"] if llm_messages else ""
+                # Send tool call start event
+                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
+                # Create tool call record
+                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None}
+                tool_calls_history.append(web_search_tool_call)
+                
+                async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
+                    # Forward the progress event
+                    yield f"data: {json.dumps(progress_event)}\n\n"
+                    
+                    # Update tool call status
+                    if progress_event.get("type") == "tool_progress":
+                        web_search_tool_call["status"] = progress_event.get("status", "running")
+                        web_search_tool_call["progress"] = progress_event.get("progress", 0)
+                        if progress_event.get("result"):
+                            web_search_tool_call["result"] = progress_event["result"]
+                            web_search_tool_call["status"] = "completed"
+                            if progress_event["result"].get("content"):
+                                context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
+                    await asyncio.sleep(0)
+
+            if enable_rag:
+                query_text = llm_messages[-1]["content"] if llm_messages else ""
+                # Send tool call start event
+                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'query_documents', 'args': {'query': query_text}})}\n\n"
+                # Create tool call record
+                rag_tool_call = {"name": "query_documents", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None}
+                tool_calls_history.append(rag_tool_call)
+                
+                async for progress_event in tool_executor.execute_tool("query_documents", {"query": query_text}, request_id):
+                    # Forward the progress event
+                    yield f"data: {json.dumps(progress_event)}\n\n"
+                    
+                    # Update tool call status
+                    if progress_event.get("type") == "tool_progress":
+                        rag_tool_call["status"] = progress_event.get("status", "running")
+                        rag_tool_call["progress"] = progress_event.get("progress", 0)
+                        if progress_event.get("result"):
+                            rag_tool_call["result"] = progress_event["result"]
+                            rag_tool_call["status"] = "completed"
+                            if progress_event["result"].get("context"):
+                                context_additions.append(f"\n\n**Document Search Results:**\n{progress_event['result']['context']}")
+                    await asyncio.sleep(0)
+
+            # Add context to the last user message
+            if context_additions:
+                for msg in reversed(llm_messages):
+                    if msg["role"] == "user":
+                        msg["content"] += "".join(context_additions) + "\n\n**Important**: Please cite sources using [1], [2], etc."
+                        break
+
+            # Build list of tools to exclude (already executed as pre-processing)
+            exclude_tools = []
+            if enable_web_search:
+                exclude_tools.append("search_web")
+            if enable_rag:
+                exclude_tools.append("query_documents")
+
+            # Stream LLM response
+            assistant_message, thinking_content = "", ""
+            
+            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=tool_executor.get_tool_definitions(exclude_tools=exclude_tools)):
+                chunk_type = chunk.get("type")
+                if chunk_type == "content":
+                    content = chunk.get("content", "")
+                    assistant_message += content
+                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                elif chunk_type == "thinking":
+                    thinking = chunk.get("content", "")
+                    thinking_content += thinking
+                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
+                elif chunk_type == "tool_call":
+                    tc_data = chunk.get("tool_call")
+                    # Send tool call start event
+                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tc_data['name'], 'args': tc_data['arguments']})}\n\n"
+                    # Create tool call record
+                    tc_record = {"name": tc_data["name"], "arguments": tc_data["arguments"], "status": "pending", "result": None}
+                    tool_calls_history.append(tc_record)
+                    
+                    # Execute the tool
+                    async for progress_event in tool_executor.execute_tool(tc_data["name"], tc_data["arguments"], request_id):
+                        # Forward the progress event
+                        yield f"data: {json.dumps(progress_event)}\n\n"
+                        if progress_event.get("type") == "tool_progress" and progress_event.get("result"):
+                            tc_record["result"] = progress_event["result"]
+                            tc_record["status"] = "completed"
+                await asyncio.sleep(0)
+
+            # Save assistant message
+            if assistant_message.strip():
+                await add_message(db, conversation_id, "assistant", assistant_message, tool_calls_history or None, thinking_content or None)
+
+            # Title Generation Logic (only for first exchange)
+            messages_after_save = await get_conversation_messages(db, conversation_id)
+            user_count = len([m for m in messages_after_save if m["role"] == "user"])
+            assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
+            
+            if user_count == 1 and assistant_count == 1:
+                first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
+                if first_user_message:
+                    try:
+                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=model), timeout=10.0)
+                        await update_conversation_title(db, conversation_id, title)
+                        yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                    except Exception as e:
+                        print(f"Error generating or updating title: {e}")
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    except asyncio.CancelledError:
+        print(f"Event generator cancelled for request {request_id}")
+    except Exception as e:
+        print(f"Error in event generator: {e}")
+        import traceback
+        traceback.print_exc()
+        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    finally:
+        if request_id in active_connections:
+            del active_connections[request_id]
 
 
 @app.get("/api/stream/{request_id}")
@@ -128,306 +261,9 @@ async def stream_response(
     enable_rag: bool = False,
     model: str = None
 ):
-    """Stream LLM response with real-time tool execution updates"""
-    
-    async def event_generator() -> AsyncGenerator[str, None]:
-        try:
-            async with get_db() as db:
-                # Get conversation history
-                messages = await get_conversation_messages(db, conversation_id)
-                
-                # Format messages for LLM
-                llm_messages = [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in messages
-                ]
-                
-                # Pre-process with tools if enabled
-                context_additions = []
-                
-                # Track tool calls with their results for storage
-                tool_calls_data = []
-                
-                # Web search if enabled
-                if enable_web_search:
-                    query_text = messages[-1]["content"] if messages else ""
-                    
-                    # Initialize tool call data with progress history
-                    web_search_tool_call = {
-                        "name": "search_web",
-                        "arguments": {"query": query_text},
-                        "status": "starting",
-                        "progress": 0,
-                        "progress_history": [],  # Track all progress events
-                        "result": None
-                    }
-                    tool_calls_data.append(web_search_tool_call)
-                    
-                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
-                    await asyncio.sleep(0)
-                    
-                    # Send initial progress
-                    web_search_tool_call["status"] = "Starting web search..."
-                    web_search_tool_call["progress"] = 5
-                    web_search_tool_call["progress_history"].append({"status": "Starting web search...", "progress": 5, "timestamp": datetime.utcnow().isoformat()})
-                    yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'search_web', 'status': 'Starting web search...', 'progress': 5})}\n\n"
-                    await asyncio.sleep(0)
-                    
-                    try:
-                        # Create a queue for progress updates
-                        progress_queue = asyncio.Queue()
-                        search_complete = asyncio.Event()
-                        search_error = [None]  # Use list to share state
-                        search_result = [None]
-                        
-                        async def run_search():
-                            """Run search in background and send progress updates"""
-                            try:
-                                async def progress_callback(status: str, progress: int):
-                                    # Put progress in queue for main coroutine to send
-                                    try:
-                                        await progress_queue.put((status, progress))
-                                    except:
-                                        pass
-                                
-                                result = await tool_executor.search_tool.search(
-                                    query=query_text,
-                                    max_results=10,
-                                    progress_callback=progress_callback
-                                )
-                                search_result[0] = result
-                            except Exception as e:
-                                search_error[0] = e
-                            finally:
-                                search_complete.set()
-                        
-                        # Start search task
-                        search_task = asyncio.create_task(run_search())
-                        
-                        # Send progress updates while search is running
-                        while not search_complete.is_set():
-                            try:
-                                # Check for progress updates with timeout
-                                status, progress = await asyncio.wait_for(
-                                    progress_queue.get(), 
-                                    timeout=0.5
-                                )
-                                web_search_tool_call["status"] = status
-                                web_search_tool_call["progress"] = progress
-                                web_search_tool_call["progress_history"].append({"status": status, "progress": progress, "timestamp": datetime.utcnow().isoformat()})
-                                yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'search_web', 'status': status, 'progress': progress})}\n\n"
-                                await asyncio.sleep(0)
-                            except asyncio.TimeoutError:
-                                # Send keepalive comment to prevent timeout
-                                yield ": keepalive\n\n"
-                                await asyncio.sleep(0)
-                        
-                        # Wait for search to complete
-                        await search_task
-                        
-                        if search_error[0]:
-                            raise search_error[0]
-                        
-                        result = search_result[0]
-                        if result and result.get("content"):
-                            context_additions.append(f"\n\n**Web Search Results:**\n{result['content']}")
-                            web_search_tool_call["status"] = "completed"
-                            web_search_tool_call["progress"] = 100
-                            web_search_tool_call["result"] = {"sources": result.get("sources", [])}
-                            web_search_tool_call["progress_history"].append({"status": "Web search complete", "progress": 100, "timestamp": datetime.utcnow().isoformat()})
-                            yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'search_web', 'status': 'Web search complete', 'progress': 100, 'result': {'sources': result.get('sources', [])}})}\n\n"
-                            await asyncio.sleep(0)
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                        web_search_tool_call["status"] = "error"
-                        web_search_tool_call["result"] = {"error": str(e)}
-                        yield f"data: {json.dumps({'type': 'tool_error', 'tool': 'search_web', 'error': str(e)})}\n\n"
-                        await asyncio.sleep(0)
-                
-                # RAG query if enabled
-                if enable_rag:
-                    query_text = messages[-1]["content"] if messages else ""
-                    
-                    # Initialize tool call data with progress history
-                    rag_tool_call = {
-                        "name": "query_documents",
-                        "arguments": {"query": query_text},
-                        "status": "starting",
-                        "progress": 0,
-                        "progress_history": [],  # Track all progress events
-                        "result": None
-                    }
-                    tool_calls_data.append(rag_tool_call)
-                    
-                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'query_documents', 'args': {'query': query_text}})}\n\n"
-                    await asyncio.sleep(0)
-                    
-                    rag_tool_call["status"] = "Searching documents..."
-                    rag_tool_call["progress"] = 10
-                    rag_tool_call["progress_history"].append({"status": "Searching documents...", "progress": 10, "timestamp": datetime.utcnow().isoformat()})
-                    yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'query_documents', 'status': 'Searching documents...', 'progress': 10})}\n\n"
-                    await asyncio.sleep(0)
-                    
-                    try:
-                        rag_result = await tool_executor.rag_service.query(
-                            query=query_text,
-                            top_k=10
-                        )
-                        if rag_result.get("context"):
-                            context_additions.append(f"\n\n**Document Search Results:**\n{rag_result['context']}")
-                            rag_tool_call["status"] = "completed"
-                            rag_tool_call["progress"] = 100
-                            rag_tool_call["result"] = {"result_count": len(rag_result.get("results", []))}
-                            rag_tool_call["progress_history"].append({"status": "Document search complete", "progress": 100, "timestamp": datetime.utcnow().isoformat()})
-                            yield f"data: {json.dumps({'type': 'tool_progress', 'tool': 'query_documents', 'status': 'Document search complete', 'progress': 100, 'result': {'result_count': len(rag_result.get('results', []))}})}\n\n"
-                            await asyncio.sleep(0)
-                    except Exception as e:
-                        rag_tool_call["status"] = "error"
-                        rag_tool_call["result"] = {"error": str(e)}
-                        yield f"data: {json.dumps({'type': 'tool_error', 'tool': 'query_documents', 'error': str(e)})}\n\n"
-                        await asyncio.sleep(0)
-                
-                # Add context to the last user message if we have additions
-                if context_additions and llm_messages:
-                    # Find the last user message and append context
-                    for i in range(len(llm_messages) - 1, -1, -1):
-                        if llm_messages[i]["role"] == "user":
-                            # Add citation instruction to help LLM cite sources
-                            citation_instruction = "\n\n**Important**: When using information from the search results above, please cite your sources using the citation numbers [1], [2], etc. that correspond to the sources. For example: 'According to [1], the information states...'"
-                            llm_messages[i]["content"] += "".join(context_additions) + citation_instruction
-                            break
-                
-                assistant_message = ""
-                thinking_content = ""  # Track thinking content separately
-                tool_calls = tool_calls_data  # Start with the pre-tool calls from web search and RAG
-                
-                # Stream LLM response
-                try:
-                    async for chunk in llm_client.stream_chat(llm_messages, model=model):
-                        chunk_type = chunk.get("type")
-                        
-                        if chunk_type == "content":
-                            # Text content from LLM
-                            content = chunk.get("content", "")
-                            assistant_message += content
-                            yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                            # Small yield to allow streaming to work properly
-                            await asyncio.sleep(0)
-                        
-                        elif chunk_type == "thinking":
-                            # Thinking content from reasoning models (e.g., DeepSeek)
-                            thinking = chunk.get("content", "")
-                            thinking_content += thinking
-                            yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
-                            await asyncio.sleep(0)
-                        
-                        elif chunk_type == "tool_call":
-                            # LLM wants to call a tool
-                            tool_call = chunk.get("tool_call")
-                            tool_calls.append({
-                                "name": tool_call["name"],
-                                "arguments": tool_call["arguments"],
-                                "status": "pending",
-                                "result": None
-                            })
-                            
-                            yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tool_call['name'], 'args': tool_call['arguments']})}\n\n"
-                            await asyncio.sleep(0)
-                            
-                            # Execute tool with progress updates
-                            async for progress in tool_executor.execute_tool(
-                                tool_call['name'],
-                                tool_call['arguments'],
-                                request_id
-                            ):
-                                # Update tool call status in our tracking
-                                if progress.get("type") == "tool_progress":
-                                    for tc in tool_calls:
-                                        if tc["name"] == progress.get("tool") and tc["status"] != "completed":
-                                            tc["status"] = progress.get("status", "running")
-                                            tc["progress"] = progress.get("progress", 0)
-                                            if progress.get("result"):
-                                                tc["result"] = progress["result"]
-                                                tc["status"] = "completed"
-                                            break
-                                yield f"data: {json.dumps(progress)}\n\n"
-                                await asyncio.sleep(0)
-                
-                except asyncio.CancelledError:
-                    # Client disconnected, clean up gracefully
-                    print(f"Stream cancelled for request {request_id}")
-                    raise
-                except Exception as e:
-                    # Handle other errors
-                    error_msg = f"Error during streaming: {str(e)}"
-                    print(error_msg)
-                    import traceback
-                    traceback.print_exc()
-                    yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
-                # Determine if this is the first exchange before saving the assistant message
-                messages_before_save = await get_conversation_messages(db, conversation_id)
-                user_count_before = len([m for m in messages_before_save if m["role"] == "user"])
-                assistant_count_before = len([m for m in messages_before_save if m["role"] == "assistant"])
-
-                is_first_exchange = (user_count_before == 1 and assistant_count_before == 0)
-
-                # Save assistant message (only if we have content)
-                if assistant_message.strip():
-                    await add_message(db, conversation_id, "assistant", assistant_message, tool_calls if tool_calls else None, thinking_content if thinking_content else None)
-
-                # Auto-generate conversation title if this is the first exchange
-                # This check happens regardless of whether the assistant message had content
-                if is_first_exchange:
-                    # Find the first user message to generate title from
-                    first_user_message = next((m for m in messages_before_save if m["role"] == "user"), None)
-                    if first_user_message:
-                        title = None
-                        try:
-                            # Shield title generation from cancellation and add timeout
-                            title = await asyncio.wait_for(
-                                asyncio.shield(llm_client.generate_title(first_user_message["content"], model=model)),
-                                timeout=30.0
-                            )
-                            # If title is empty or "New Chat", use fallback
-                            if not title or title == "New Chat":
-                                title = first_user_message["content"][:50].strip()
-                        except asyncio.TimeoutError:
-                            print(f"Title generation timed out for request {request_id}")
-                            title = first_user_message["content"][:50].strip()
-                        except asyncio.CancelledError:
-                            # Client disconnected during title generation - try to save anyway
-                            print(f"Title generation cancelled for request {request_id}, attempting fallback")
-                            title = first_user_message["content"][:50].strip()
-                        except Exception as e:
-                            print(f"Error generating title: {e}")
-                            title = first_user_message["content"][:50].strip()
-                        
-                        # Update title if we have one
-                        if title:
-                            try:
-                                await update_conversation_title(db, conversation_id, title)
-                                yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
-                            except Exception as e:
-                                print(f"Error updating title: {e}")
-
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        except asyncio.CancelledError:
-            # Client disconnected, this is normal
-            print(f"Event generator cancelled for request {request_id}")
-        except Exception as e:
-            print(f"Error in event generator: {e}")
-            import traceback
-            traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-        finally:
-            # Clean up connection
-            if request_id in active_connections:
-                del active_connections[request_id]
-    
+    """Stream LLM response with real-time tool execution updates."""
     return StreamingResponse(
-        event_generator(),
+        _core_stream_handler(request_id, conversation_id, enable_web_search, enable_rag, model),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -437,6 +273,21 @@ async def stream_response(
     )
 
 
+@app.get("/api/stream/regenerate/{request_id}")
+async def stream_regenerate_response(request_id: str, conversation_id: str, model: str = None):
+    """Stream regenerated LLM response using unified handler."""
+    return StreamingResponse(
+        _core_stream_handler(request_id, conversation_id, False, False, model),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+# MCP Server Management
 @app.get("/api/mcp/servers")
 async def list_mcp_servers():
     """List all available MCP servers"""
@@ -472,6 +323,7 @@ async def remove_mcp_server(server_name: str):
         raise HTTPException(status_code=404, detail="Server not found")
 
 
+# Conversation Management
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
     """Delete a conversation"""
@@ -556,12 +408,6 @@ async def regenerate_last_response(conversation_id: str, request: Request):
                 # Get all messages up to the user message (excluding the old assistant response)
                 messages_to_keep = messages[:msg_index]
                 
-                # Format messages for LLM
-                llm_messages = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in messages_to_keep
-                ]
-                
                 # Create new request ID
                 request_id = str(uuid.uuid4())
                 
@@ -570,88 +416,7 @@ async def regenerate_last_response(conversation_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Could not find preceding user message")
 
 
-@app.get("/api/stream/regenerate/{request_id}")
-async def stream_regenerate_response(request_id: str, conversation_id: str, model: str = None):
-    """Stream regenerated LLM response"""
-    
-    async def event_generator() -> AsyncGenerator[str, None]:
-        try:
-            async with get_db() as db:
-                # Get conversation history
-                messages = await get_conversation_messages(db, conversation_id)
-                
-                # Format messages for LLM
-                llm_messages = [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in messages
-                ]
-                
-                assistant_message = ""
-                tool_calls = []
-                
-                # Stream LLM response
-                try:
-                    async for chunk in llm_client.stream_chat(llm_messages, model=model):
-                        chunk_type = chunk.get("type")
-                        
-                        if chunk_type == "content":
-                            content = chunk.get("content", "")
-                            assistant_message += content
-                            yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                            await asyncio.sleep(0)  # Allow streaming to work properly
-                        
-                        elif chunk_type == "tool_call":
-                            tool_call = chunk.get("tool_call")
-                            tool_calls.append(tool_call)
-                            
-                            yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tool_call['name'], 'args': tool_call['arguments']})}\n\n"
-                            await asyncio.sleep(0)
-                            
-                            async for progress in tool_executor.execute_tool(
-                                tool_call['name'],
-                                tool_call['arguments'],
-                                request_id
-                            ):
-                                yield f"data: {json.dumps(progress)}\n\n"
-                                await asyncio.sleep(0)
-                
-                except asyncio.CancelledError:
-                    print(f"Stream cancelled for request {request_id}")
-                    raise
-                except Exception as e:
-                    error_msg = f"Error during streaming: {str(e)}"
-                    print(error_msg)
-                    yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
-                
-                # Save assistant message
-                if assistant_message.strip():
-                    await add_message(db, conversation_id, "assistant", assistant_message, tool_calls if tool_calls else None)
-                
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"Error in event generator: {e}")
-            import traceback
-            traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-        finally:
-            if request_id in active_connections:
-                del active_connections[request_id]
-    
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
-
-
-# Document upload endpoints
+# Document Management
 @app.post("/api/documents/upload")
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Upload a document to the knowledgebase and process it for RAG"""
@@ -824,32 +589,8 @@ async def list_available_tools():
 @app.get("/api/models")
 async def list_available_models():
     """List all available models from the LLM server"""
-    import aiohttp
-    
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
-                f"{llm_client.base_url}/v1/models",
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    models = data.get("data", [])
-                    return {
-                        "models": [
-                            {
-                                "id": m.get("id", ""),
-                                "name": m.get("id", m.get("id", "Unknown")),
-                                "owned_by": m.get("owned_by", "unknown")
-                            }
-                            for m in models
-                        ]
-                    }
-                else:
-                    return {"models": [], "error": f"Failed to fetch models: {response.status}"}
-    except Exception as e:
-        return {"models": [], "error": str(e)}
+    models = await llm_client.list_models()
+    return {"models": models}
 
 
 @app.post("/api/rag/query")
@@ -897,6 +638,53 @@ async def web_search_endpoint(request: Request):
     )
     
     return result
+
+
+# TTS Endpoints
+@app.post("/api/tts/generate")
+async def generate_tts(request: Request):
+    """
+    Generate speech audio from text using TTS.
+    
+    Returns audio file URL that can be played in the browser.
+    """
+    data = await request.json()
+    text = data.get("text", "")
+    voice = data.get("voice")
+    
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+    
+    result = await tool_executor.tts_service.generate_speech(
+        text=text,
+        voice=voice
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "TTS generation failed"))
+    
+    return result
+
+
+@app.get("/api/tts/voices")
+async def list_tts_voices():
+    """List available TTS voices"""
+    return tool_executor.tts_service.list_available_voices()
+
+
+@app.get("/api/audio/{filename}")
+async def get_audio_file(filename: str):
+    """Serve generated TTS audio files"""
+    audio_path = os.path.join(UPLOAD_DIR, filename)
+    
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    
+    return FileResponse(
+        audio_path,
+        media_type="audio/mpeg",
+        filename=filename
+    )
 
 
 if __name__ == "__main__":

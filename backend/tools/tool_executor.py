@@ -5,6 +5,57 @@ from datetime import datetime
 
 from tools.searxng_tool import SearXNGSearchTool, SearchConfig, SEARXNG_TOOL_DEFINITION
 from tools.rag_service import RAGService, RAGConfig, RAG_TOOL_DEFINITION
+from tools.tts_service import TTSService, TTS_TOOL_DEFINITION
+
+
+class AsyncProgressTracker:
+    """
+    Helper class to bridge callback-based progress updates with async generators.
+    
+    Uses an asyncio.Queue to collect progress updates from callbacks and yield them
+    to the async generator consumer.
+    """
+    
+    def __init__(self):
+        self.queue = asyncio.Queue()
+        self._closed = False
+    
+    def callback(self, status: str, progress: int, data: Dict = None):
+        """Synchronous callback to add progress updates to the queue."""
+        if not self._closed:
+            try:
+                self.queue.put_nowait({
+                    "status": status,
+                    "progress": progress,
+                    "data": data
+                })
+            except asyncio.QueueFull:
+                pass  # Skip if queue is full
+    
+    async def async_callback(self, status: str, progress: int, data: Dict = None):
+        """Async callback to add progress updates to the queue."""
+        if not self._closed:
+            await self.queue.put({
+                "status": status,
+                "progress": progress,
+                "data": data
+            })
+    
+    def close(self):
+        """Signal that no more updates will be added."""
+        self._closed = True
+        try:
+            self.queue.put_nowait(None)  # Sentinel to signal end
+        except asyncio.QueueFull:
+            pass
+    
+    async def get_updates(self):
+        """Async generator that yields progress updates."""
+        while True:
+            update = await self.queue.get()
+            if update is None:  # Sentinel received
+                break
+            yield update
 
 
 class ToolExecutor:
@@ -24,22 +75,36 @@ class ToolExecutor:
         # Initialize RAG service
         self.rag_service = RAGService()
         
+        # Initialize TTS service
+        self.tts_service = TTSService()
+        
         # Register custom tools that need progress tracking
         self.custom_tools = {
             "search_web": self._search_web_with_progress,
             "query_documents": self._query_documents_with_progress,
+            "generate_speech": self._generate_speech_with_progress,
         }
     
-    def get_tool_definitions(self) -> List[Dict]:
+    def get_tool_definitions(self, exclude_tools: List[str] = None) -> List[Dict]:
         """
         Get all tool definitions for LLM function calling.
         
+        Args:
+            exclude_tools: List of tool names to exclude from definitions.
+                          Useful when tools have already been executed as pre-processing.
+        
         Returns a list of tool definitions in OpenAI format.
         """
+        exclude_tools = exclude_tools or []
+        
         tools = [
             SEARXNG_TOOL_DEFINITION,
             RAG_TOOL_DEFINITION,
+            TTS_TOOL_DEFINITION,
         ]
+        
+        # Filter out excluded tools
+        tools = [t for t in tools if t.get("function", {}).get("name") not in exclude_tools]
         
         # Add MCP tools if available
         if self.mcp_manager:
@@ -147,11 +212,8 @@ class ToolExecutor:
             }
             return
         
-        # Progress callback to yield updates
-        progress_values = [0]  # Use list to allow modification in nested function
-        
-        def progress_callback(status: str, progress: int):
-            progress_values[0] = progress
+        # Create progress tracker for collecting intermediate updates
+        progress_tracker = AsyncProgressTracker()
         
         # Yield initial status
         yield {
@@ -162,21 +224,60 @@ class ToolExecutor:
         }
         
         try:
-            # Execute search
-            result = await self.search_tool.search(
-                query=query,
-                max_results=max_results,
-                top_k=max_results,
-                progress_callback=progress_callback
+            # Start the search task
+            search_task = asyncio.create_task(
+                self.search_tool.search(
+                    query=query,
+                    max_results=max_results,
+                    top_k=max_results,
+                    progress_callback=progress_tracker.async_callback
+                )
             )
             
-            # Yield progress updates during search
-            # The search_tool handles the actual search, we yield final result
+            # Yield intermediate progress updates while search is running
+            while not search_task.done():
+                try:
+                    # Wait for progress updates with a timeout
+                    update = await asyncio.wait_for(
+                        progress_tracker.queue.get(), 
+                        timeout=0.1
+                    )
+                    if update:
+                        yield {
+                            "type": "tool_progress",
+                            "tool": "search_web",
+                            "status": update["status"],
+                            "progress": update["progress"],
+                            "data": update.get("data")
+                        }
+                except asyncio.TimeoutError:
+                    # No update available, continue waiting
+                    await asyncio.sleep(0)
+            
+            # Get the final result
+            result = search_task.result()
+            
+            # Process any remaining updates in the queue
+            while not progress_tracker.queue.empty():
+                try:
+                    update = progress_tracker.queue.get_nowait()
+                    if update:
+                        yield {
+                            "type": "tool_progress",
+                            "tool": "search_web",
+                            "status": update["status"],
+                            "progress": update["progress"],
+                            "data": update.get("data")
+                        }
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Yield final processing status
             yield {
                 "type": "tool_progress",
                 "tool": "search_web",
                 "status": "Processing search results...",
-                "progress": 90
+                "progress": 95
             }
             
             # Check for errors
@@ -213,6 +314,8 @@ class ToolExecutor:
                 "tool": "search_web",
                 "error": f"Search failed: {str(e)}"
             }
+        finally:
+            progress_tracker.close()
     
     async def _query_documents_with_progress(
         self,
@@ -295,6 +398,56 @@ class ToolExecutor:
                 "type": "tool_error",
                 "tool": "query_documents",
                 "error": f"Document query failed: {str(e)}"
+            }
+    
+    async def _generate_speech_with_progress(
+        self,
+        arguments: Dict[str, Any],
+        request_id: str
+    ) -> AsyncGenerator[Dict, None]:
+        """
+        TTS generation tool with progress updates.
+        
+        Generates speech audio from text.
+        """
+        text = arguments.get("text", "")
+        voice = arguments.get("voice")
+        
+        if not text:
+            yield {
+                "type": "tool_error",
+                "tool": "generate_speech",
+                "error": "Text is required"
+            }
+            return
+        
+        yield {
+            "type": "tool_progress",
+            "tool": "generate_speech",
+            "status": "Generating speech...",
+            "progress": 10
+        }
+        
+        try:
+            # Generate speech
+            result = await self.tts_service.generate_speech(
+                text=text,
+                voice=voice
+            )
+            
+            yield {
+                "type": "tool_progress",
+                "tool": "generate_speech",
+                "status": "Speech generated",
+                "progress": 100,
+                "result": result
+            }
+        
+        except Exception as e:
+            yield {
+                "type": "tool_error",
+                "tool": "generate_speech",
+                "error": f"TTS generation failed: {str(e)}"
             }
     
     async def process_document_for_rag(

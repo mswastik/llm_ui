@@ -200,3 +200,30 @@ class LLMClient:
                 response += chunk.get("content", "")
         
         return response
+
+    async def list_models(self) -> List[Dict]:
+        """List all available models from the LLM server."""
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    f"{self.base_url}/v1/models",
+                    headers={"Content-Type": "application/json"}
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        models = data.get("data", [])
+                        return [
+                            {
+                                "id": m.get("id", ""),
+                                "name": m.get("id", m.get("id", "Unknown")),
+                                "owned_by": m.get("owned_by", "unknown")
+                            }
+                            for m in models
+                        ]
+                    else:
+                        print(f"Failed to fetch models: {response.status}")
+                        return []
+        except Exception as e:
+            print(f"Error fetching models: {e}")
+            return []

@@ -14,6 +14,7 @@ import json
 from typing import List, Dict, Tuple, Callable, Any
 from dataclasses import dataclass, field
 from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
+from tools.base import SharedLLMUtils
 
 
 @dataclass
@@ -489,89 +490,18 @@ class SearXNGSearchTool:
     
     async def _get_embedding_async(self, text: str) -> np.ndarray:
         """Get embedding vector for text with retry logic"""
-        for attempt in range(self.config.max_retries):
-            try:
-                payload = {"input": text, "model": "qwen3-embedding"}
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(
-                        self.config.embeddings_api, json=payload, timeout=60
-                    ),
-                )
-                
-                if response.status_code == 200:
-                    return np.array(response.json()["data"][0]["embedding"])
-                
-                if attempt < self.config.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-            
-            except Exception as e:
-                if attempt < self.config.max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                else:
-                    raise
-        
-        raise Exception(f"Embedding failed after {self.config.max_retries} attempts")
+        return await SharedLLMUtils.get_embedding(text, max_retries=self.config.max_retries)
     
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """Calculate cosine similarity"""
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+        return SharedLLMUtils.cosine_similarity(a, b)
     
     async def _rerank_async_with_indices(
         self, query: str, chunks: List[str]
     ) -> List[int]:
         """Rerank chunks and return indices in new order"""
         async with self.model_lock:
-            for attempt in range(self.config.max_retries):
-                try:
-                    payload = {
-                        "model": "qwen3-reranker",
-                        "query": query,
-                        "documents": chunks,
-                    }
-                    
-                    loop = asyncio.get_event_loop()
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: requests.post(
-                            self.config.rerank_api, json=payload, timeout=130
-                        ),
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        
-                        if "results" in result:
-                            results = result["results"]
-                            sorted_results = sorted(
-                                results,
-                                key=lambda x: x.get("relevance_score", 0),
-                                reverse=True,
-                            )
-                            return [r["index"] for r in sorted_results]
-                        elif "scores" in result:
-                            scores = result["scores"]
-                            return list(np.argsort(scores)[::-1])
-                        elif "data" in result:
-                            data = result["data"]
-                            sorted_data = sorted(
-                                data, key=lambda x: x.get("score", 0), reverse=True
-                            )
-                            return [d["index"] for d in sorted_data]
-                        else:
-                            return list(range(len(chunks)))
-                    
-                    if attempt < self.config.max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)
-                
-                except Exception as e:
-                    if attempt < self.config.max_retries - 1:
-                        await asyncio.sleep(2)
-                    else:
-                        return list(range(len(chunks)))
-        
-        return list(range(len(chunks)))
+            return await SharedLLMUtils.rerank(query, chunks, max_retries=self.config.max_retries)
     
     def _format_results(
         self,

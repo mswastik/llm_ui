@@ -284,7 +284,12 @@ function chatApp() {
                                 arguments: data.args,
                                 status: 'starting',
                                 progress: 0,
-                                result: null
+                                result: null,
+                                progress_history: [{
+                                    status: 'starting',
+                                    progress: 0,
+                                    timestamp: new Date().toISOString()
+                                }]
                             });
                             break;
                         
@@ -301,9 +306,27 @@ function chatApp() {
                             if (toolCallIndex !== -1) {
                                 this.messages[msgIndex].tool_calls[toolCallIndex].status = data.status;
                                 this.messages[msgIndex].tool_calls[toolCallIndex].progress = data.progress || 0;
+                                
+                                // Add to progress history
+                                if (!this.messages[msgIndex].tool_calls[toolCallIndex].progress_history) {
+                                    this.messages[msgIndex].tool_calls[toolCallIndex].progress_history = [];
+                                }
+                                this.messages[msgIndex].tool_calls[toolCallIndex].progress_history.push({
+                                    status: data.status,
+                                    progress: data.progress || 0,
+                                    data: data.data || null,
+                                    timestamp: new Date().toISOString()
+                                });
+                                
                                 if (data.result) {
                                     this.messages[msgIndex].tool_calls[toolCallIndex].result = data.result;
                                     this.messages[msgIndex].tool_calls[toolCallIndex].status = 'completed';
+                                    // Add final entry to progress history
+                                    this.messages[msgIndex].tool_calls[toolCallIndex].progress_history.push({
+                                        status: 'completed',
+                                        progress: 100,
+                                        timestamp: new Date().toISOString()
+                                    });
                                 }
                             }
                             
@@ -599,7 +622,15 @@ function chatApp() {
                             this.toolStatus.progress = 0;
                             assistantMessage.tool_calls.push({
                                 name: data.tool,
-                                arguments: data.args
+                                arguments: data.args,
+                                status: 'starting',
+                                progress: 0,
+                                result: null,
+                                progress_history: [{
+                                    status: 'starting',
+                                    progress: 0,
+                                    timestamp: new Date().toISOString()
+                                }]
                             });
                             break;
                         
@@ -608,6 +639,38 @@ function chatApp() {
                             this.toolStatus.status = data.status;
                             this.toolStatus.progress = data.progress || null;
                             this.toolStatus.data = data.data || null;
+                            
+                            // Update the tool call in the assistant message
+                            const toolCallIdx = assistantMessage.tool_calls.findIndex(
+                                tc => tc.name === data.tool && tc.status !== 'completed'
+                            );
+                            if (toolCallIdx !== -1) {
+                                assistantMessage.tool_calls[toolCallIdx].status = data.status;
+                                assistantMessage.tool_calls[toolCallIdx].progress = data.progress || 0;
+                                
+                                // Add to progress history
+                                if (!assistantMessage.tool_calls[toolCallIdx].progress_history) {
+                                    assistantMessage.tool_calls[toolCallIdx].progress_history = [];
+                                }
+                                assistantMessage.tool_calls[toolCallIdx].progress_history.push({
+                                    status: data.status,
+                                    progress: data.progress || 0,
+                                    data: data.data || null,
+                                    timestamp: new Date().toISOString()
+                                });
+                                
+                                if (data.result) {
+                                    assistantMessage.tool_calls[toolCallIdx].result = data.result;
+                                    assistantMessage.tool_calls[toolCallIdx].status = 'completed';
+                                    // Add final entry to progress history
+                                    assistantMessage.tool_calls[toolCallIdx].progress_history.push({
+                                        status: 'completed',
+                                        progress: 100,
+                                        timestamp: new Date().toISOString()
+                                    });
+                                }
+                            }
+                            
                             if (data.result) {
                                 this.toolStatus.active = false;
                             }
@@ -927,6 +990,139 @@ function chatApp() {
         // Check if thinking is expanded for a message
         isThinkingExpanded(messageId) {
             return this.expandedThinking[messageId] === true;
+        },
+        
+        // Expanded sources tracking (by message id)
+        expandedSources: {},
+        
+        // Toggle sources expansion for a message
+        toggleSources(messageId) {
+            this.expandedSources[messageId] = !this.expandedSources[messageId];
+        },
+        
+        // Check if sources are expanded for a message
+        isSourcesExpanded(messageId) {
+            return this.expandedSources[messageId] === true;
+        },
+        
+        // TTS (Text-to-Speech) state
+        ttsLoading: {},
+        currentAudio: null,
+        currentAudioMessageId: null,
+        
+        // Speak message using TTS
+        async speakMessage(message) {
+            // Stop any currently playing audio
+            if (this.currentAudio) {
+                this.stopAudio();
+                return;
+            }
+            
+            // Get text content (strip HTML if any)
+            const text = message.content.replace(/<[^>]*>/g, '').trim();
+            if (!text) {
+                this.showToast('No text to speak', 'error');
+                return;
+            }
+            
+            // Set loading state
+            this.ttsLoading[message.id] = true;
+            
+            try {
+                const response = await fetch('/api/tts/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('TTS generation failed');
+                }
+                
+                const data = await response.json();
+                
+                if (data.success && data.audio_url) {
+                    // Create and play audio
+                    this.currentAudio = new Audio(data.audio_url);
+                    this.currentAudioMessageId = message.id;
+                    
+                    this.currentAudio.onended = () => {
+                        this.currentAudio = null;
+                        this.currentAudioMessageId = null;
+                    };
+                    
+                    this.currentAudio.onerror = () => {
+                        this.showToast('Failed to play audio', 'error');
+                        this.currentAudio = null;
+                        this.currentAudioMessageId = null;
+                    };
+                    
+                    await this.currentAudio.play();
+                } else {
+                    throw new Error(data.error || 'TTS generation failed');
+                }
+            } catch (error) {
+                console.error('TTS error:', error);
+                this.showToast('Failed to generate speech', 'error');
+            } finally {
+                this.ttsLoading[message.id] = false;
+            }
+        },
+        
+        // Stop audio playback
+        stopAudio() {
+            if (this.currentAudio) {
+                this.currentAudio.pause();
+                this.currentAudio.currentTime = 0;
+                this.currentAudio = null;
+                this.currentAudioMessageId = null;
+            }
+        },
+        
+        // Get sources from message tool calls
+        getMessageSources(message) {
+            if (!message.tool_calls || message.tool_calls.length === 0) {
+                return [];
+            }
+            
+            const allSources = [];
+            message.tool_calls.forEach(toolCall => {
+                if (toolCall.result && toolCall.result.sources) {
+                    toolCall.result.sources.forEach(source => {
+                        // Avoid duplicates
+                        if (!allSources.some(s => s.url === source.url)) {
+                            allSources.push(source);
+                        }
+                    });
+                }
+            });
+            
+            return allSources;
+        },
+        
+        // Render markdown with citation support
+        renderMarkdownWithCitations(text, sources) {
+            if (!text) return '';
+            
+            // First parse markdown
+            let html = marked.parse(text);
+            
+            // If we have sources, replace citation references [1], [2], etc. with clickable links
+            if (sources && sources.length > 0) {
+                // Match [N] patterns where N is a number
+                html = html.replace(/\[(\d+)\]/g, (match, num) => {
+                    const index = parseInt(num) - 1;
+                    if (index >= 0 && index < sources.length) {
+                        const source = sources[index];
+                        const title = source.title || 'Source';
+                        const url = source.url || '#';
+                        return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" class="citation-link" title="${title}">[${num}]</a></sup>`;
+                    }
+                    return match;
+                });
+            }
+            
+            return html;
         }
     }
 }

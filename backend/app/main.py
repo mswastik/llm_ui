@@ -672,6 +672,18 @@ async def list_tts_voices():
     return tool_executor.tts_service.list_available_voices()
 
 
+@app.get("/api/tts/status")
+async def get_tts_status():
+    """Check if TTS is available"""
+    from tools.tts_service import HAS_EDGE_TTS, HAS_PYTTSX3
+    return {
+        "available": HAS_EDGE_TTS or HAS_PYTTSX3,
+        "edge_tts": HAS_EDGE_TTS,
+        "pyttsx3": HAS_PYTTSX3,
+        "engine": tool_executor.tts_service.config.engine
+    }
+
+
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):
     """Serve generated TTS audio files"""

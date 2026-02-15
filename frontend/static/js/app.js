@@ -47,6 +47,7 @@ function chatApp() {
         
         // Event Source for SSE
         eventSource: null,
+        streamingConversationId: null,  // Track which conversation is being streamed
         
         // Toast notification
         toast: {
@@ -64,6 +65,7 @@ function chatApp() {
             await this.loadMCPServers();
             await this.loadModels();
             await this.loadDocuments();
+            await this.checkTTSStatus();
             
             // Create a new conversation if none exist
             if (this.conversations.length === 0) {
@@ -71,6 +73,21 @@ function chatApp() {
             } else {
                 // Load the most recent conversation
                 await this.loadConversation(this.conversations[0].id);
+            }
+        },
+        
+        // Check TTS availability
+        async checkTTSStatus() {
+            try {
+                const response = await fetch('/api/tts/status');
+                const data = await response.json();
+                this.ttsAvailable = data.available;
+                if (!data.available) {
+                    console.log('TTS not available. Install edge-tts: pip install edge-tts');
+                }
+            } catch (error) {
+                console.error('Error checking TTS status:', error);
+                this.ttsAvailable = false;
             }
         },
         
@@ -102,6 +119,14 @@ function chatApp() {
         },
         
         async loadConversation(conversationId) {
+            // Cancel any ongoing stream before switching
+            if (this.eventSource) {
+                this.eventSource.close();
+                this.eventSource = null;
+            }
+            this.isLoading = false;
+            this.toolStatus.active = false;
+            
             try {
                 const response = await fetch(`/api/conversations/${conversationId}`);
                 const data = await response.json();
@@ -228,6 +253,9 @@ function chatApp() {
                 url += `&model=${encodeURIComponent(this.selectedModel)}`;
             }
             
+            // Track which conversation is being streamed
+            this.streamingConversationId = this.currentConversationId;
+            
             this.eventSource = new EventSource(url);
             
             // Create assistant message placeholder
@@ -244,9 +272,17 @@ function chatApp() {
             // Get the message index
             const msgIndex = this.messages.length - 1;
             
+            // Store reference to the streaming conversation ID
+            const streamingConvId = this.streamingConversationId;
+            
             let streamCompleted = false;
             
             this.eventSource.onmessage = (event) => {
+                // Ignore events if conversation has changed
+                if (this.currentConversationId !== streamingConvId) {
+                    return;
+                }
+                
                 try {
                     const data = JSON.parse(event.data);
                     
@@ -385,10 +421,16 @@ function chatApp() {
             this.eventSource.onerror = (error) => {
                 console.error('SSE Error:', error, 'streamCompleted:', streamCompleted);
                 
+                // Ignore if conversation has changed
+                if (this.currentConversationId !== streamingConvId) {
+                    this.eventSource.close();
+                    return;
+                }
+                
                 // Don't close on every error - check if stream was completed
                 if (!streamCompleted) {
                     // Check if we have any content - if so, the connection might have just ended
-                    if (this.messages[msgIndex].content && this.messages[msgIndex].content.trim() !== '') {
+                    if (this.messages[msgIndex] && this.messages[msgIndex].content && this.messages[msgIndex].content.trim() !== '') {
                         // We have content, just mark as done
                         streamCompleted = true;
                         this.eventSource.close();
@@ -586,6 +628,10 @@ function chatApp() {
                 url += `&model=${encodeURIComponent(this.selectedModel)}`;
             }
             
+            // Track which conversation is being streamed
+            this.streamingConversationId = this.currentConversationId;
+            const streamingConvId = this.streamingConversationId;
+            
             this.eventSource = new EventSource(url);
             
             // Create assistant message placeholder
@@ -600,6 +646,11 @@ function chatApp() {
             this.messages.push(assistantMessage);
             
             this.eventSource.onmessage = (event) => {
+                // Ignore events if conversation has changed
+                if (this.currentConversationId !== streamingConvId) {
+                    return;
+                }
+                
                 try {
                     const data = JSON.parse(event.data);
                     
@@ -1009,54 +1060,106 @@ function chatApp() {
         ttsLoading: {},
         currentAudio: null,
         currentAudioMessageId: null,
-        
+        ttsAvailable: false,
+        isPlaying: false,  // Track if audio is currently playing
+
         // Speak message using TTS
         async speakMessage(message) {
-            // Stop any currently playing audio
-            if (this.currentAudio) {
-                this.stopAudio();
+            console.log('speakMessage called', message.id, message.content.substring(0, 50));
+
+            // Check if TTS is available
+            if (!this.ttsAvailable) {
+                this.showToast('Text-to-speech service is not available. Please install edge-tts: pip install edge-tts', 'error');
                 return;
             }
-            
+
+            // If clicking on the same message that's currently playing, pause/resume
+            if (this.currentAudioMessageId === message.id && this.currentAudio) {
+                if (this.isPlaying) {
+                    // Pause the audio
+                    this.currentAudio.pause();
+                    this.isPlaying = false;
+                    console.log('Paused audio for message:', message.id);
+                } else {
+                    // Resume the audio
+                    try {
+                        await this.currentAudio.play();
+                        this.isPlaying = true;
+                        console.log('Resumed audio for message:', message.id);
+                    } catch (error) {
+                        console.error('Error resuming audio:', error);
+                        this.showToast('Failed to resume audio', 'error');
+                    }
+                }
+                return;
+            }
+
+            // Stop any currently playing audio
+            if (this.currentAudio) {
+                console.log('Stopping current audio');
+                this.stopAudio();
+            }
+
             // Get text content (strip HTML if any)
             const text = message.content.replace(/<[^>]*>/g, '').trim();
+            console.log('Text to speak length:', text.length);
+
             if (!text) {
                 this.showToast('No text to speak', 'error');
                 return;
             }
-            
-            // Set loading state
-            this.ttsLoading[message.id] = true;
-            
+
+            // Set loading state using Alpine's reactivity
+            this.ttsLoading = { ...this.ttsLoading, [message.id]: true };
+            console.log('TTS loading state set for message:', message.id);
+
             try {
+                console.log('Calling TTS API...');
                 const response = await fetch('/api/tts/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: text })
                 });
-                
+
+                console.log('TTS response status:', response.status);
+
                 if (!response.ok) {
-                    throw new Error('TTS generation failed');
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'TTS generation failed');
                 }
-                
+
                 const data = await response.json();
-                
+                console.log('TTS response data:', data);
+
                 if (data.success && data.audio_url) {
                     // Create and play audio
+                    console.log('Creating audio with URL:', data.audio_url);
                     this.currentAudio = new Audio(data.audio_url);
                     this.currentAudioMessageId = message.id;
-                    
+                    this.isPlaying = true;
+
                     this.currentAudio.onended = () => {
                         this.currentAudio = null;
                         this.currentAudioMessageId = null;
+                        this.isPlaying = false;
                     };
-                    
-                    this.currentAudio.onerror = () => {
+
+                    this.currentAudio.onpause = () => {
+                        this.isPlaying = false;
+                    };
+
+                    this.currentAudio.onplay = () => {
+                        this.isPlaying = true;
+                    };
+
+                    this.currentAudio.onerror = (e) => {
+                        console.error('Audio error:', e);
                         this.showToast('Failed to play audio', 'error');
                         this.currentAudio = null;
                         this.currentAudioMessageId = null;
+                        this.isPlaying = false;
                     };
-                    
+
                     await this.currentAudio.play();
                 } else {
                     throw new Error(data.error || 'TTS generation failed');
@@ -1065,10 +1168,10 @@ function chatApp() {
                 console.error('TTS error:', error);
                 this.showToast('Failed to generate speech', 'error');
             } finally {
-                this.ttsLoading[message.id] = false;
+                this.ttsLoading = { ...this.ttsLoading, [message.id]: false };
             }
         },
-        
+
         // Stop audio playback
         stopAudio() {
             if (this.currentAudio) {
@@ -1076,6 +1179,7 @@ function chatApp() {
                 this.currentAudio.currentTime = 0;
                 this.currentAudio = null;
                 this.currentAudioMessageId = null;
+                this.isPlaying = false;
             }
         },
         
@@ -1103,10 +1207,10 @@ function chatApp() {
         // Render markdown with citation support
         renderMarkdownWithCitations(text, sources) {
             if (!text) return '';
-            
+
             // First parse markdown
             let html = marked.parse(text);
-            
+
             // If we have sources, replace citation references [1], [2], etc. with clickable links
             if (sources && sources.length > 0) {
                 // Match [N] patterns where N is a number
@@ -1116,12 +1220,28 @@ function chatApp() {
                         const source = sources[index];
                         const title = source.title || 'Source';
                         const url = source.url || '#';
-                        return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" class="citation-link" title="${title}">[${num}]</a></sup>`;
+                        const snippet = source.snippet || '';
+                        const chunk_content = source.chunk_content || '';
+                        
+                        // Create tooltip text with title, snippet, and chunk content
+                        let tooltipText = title;
+                        if (snippet) {
+                            tooltipText += `: ${snippet}`;
+                        }
+                        if (chunk_content && chunk_content !== snippet) {  // Only add chunk if it's different from snippet
+                            tooltipText += `\n\nContent: ${chunk_content}`;
+                        }
+                        
+                        // Escape HTML entities for attribute
+                        const escapedTooltip = tooltipText.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;');
+                        
+                        // Create citation with tooltip
+                        return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" class="citation-link" title="${escapedTooltip}">[${num}]</a></sup>`;
                     }
                     return match;
                 });
             }
-            
+
             return html;
         }
     }

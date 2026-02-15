@@ -162,15 +162,19 @@ class SearXNGSearchTool:
                         "id": source_idx + 1,
                         "title": title,
                         "url": url,
+                        "snippet": "",  # Will be updated with first chunk
                         "chunk_count": 0,
                     })
                 else:
                     source_idx = source_url_to_index[url]
                 
                 chunks = self._chunk_text(content)
-                for chunk in chunks:
+                for i, chunk in enumerate(chunks):
                     chunk_to_source_map.append((chunk.strip(), source_idx))
                     sources[source_idx]["chunk_count"] += 1
+                    # Store first chunk as snippet
+                    if i == 0 and not sources[source_idx]["snippet"]:
+                        sources[source_idx]["snippet"] = chunk[:300] + "..." if len(chunk) > 300 else chunk
             
             if not chunk_to_source_map:
                 return {"sources": [], "content": "No content could be extracted from search results."}

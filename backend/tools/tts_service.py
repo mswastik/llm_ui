@@ -117,7 +117,7 @@ class TTSService:
             return {
                 "success": True,
                 "filepath": filepath,
-                "url": f"/static/audio/{os.path.basename(filepath)}",
+                "audio_url": f"/api/audio/{os.path.basename(filepath)}",
                 "engine": "edge-tts",
                 "voice": voice
             }
@@ -142,7 +142,7 @@ class TTSService:
             return {
                 "success": True,
                 "filepath": filepath,
-                "url": f"/static/audio/{os.path.basename(filepath)}",
+                "audio_url": f"/api/audio/{os.path.basename(filepath)}",
                 "engine": "pyttsx3"
             }
         except Exception as e:

@@ -278,11 +278,65 @@ pre:hover .code-copy-btn {
     text-decoration: none;
     font-weight: 600;
     cursor: pointer;
+    position: relative;
 }
 
 .citation-link:hover {
     color: #1d4ed8;
     text-decoration: underline;
+}
+
+/* Citation tooltip - using title attribute as fallback */
+.citation-link[title]::after {
+    content: attr(title);
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    transform: translateX(-50%);
+    background-color: #1f2937;
+    color: #f9fafb;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.2;
+    max-width: 700px;
+    min-width: 250px;
+    white-space: normal;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1000;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    margin-bottom: 5px;
+}
+
+.citation-link:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Arrow for tooltip */
+.citation-link[title]::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    transform: translateX(-50%);
+    border: 8px solid transparent;
+    border-top-color: #1f2937;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1001;
+    margin-bottom: -6px;
+}
+
+.citation-link:hover::before {
+    opacity: 1;
+    visibility: visible;
 }
 
 /* TTS audio playing indicator */

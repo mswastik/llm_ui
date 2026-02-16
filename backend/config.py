@@ -4,6 +4,8 @@ Configuration settings for the LLM UI application
 import os
 from typing import Dict, Any
 
+# To fix Kokoro Cuda memory allocation
+os.environ['PYTORCH_ALLOC_CONF']='expandable_segments:True'
 # Database Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./llm_ui.db")
 

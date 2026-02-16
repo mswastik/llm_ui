@@ -300,8 +300,8 @@ pre:hover .code-copy-btn {
     font-size: 13px;
     font-weight: 400;
     line-height: 1.2;
-    max-width: 700px;
-    min-width: 250px;
+    width: 700px;
+    min-width: 650px;
     white-space: normal;
     text-align: left;
     opacity: 0;

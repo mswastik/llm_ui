@@ -128,13 +128,21 @@ class TTSService:
             from kokoro import KPipeline
             lang_code = self.config.kokoro_lang
             device = self.config.kokoro_device
-            
+
             # Validate device setting - allow cpu, cuda, cuda:0, cuda:1, etc.
             valid_devices = ('cpu', 'cuda', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3')
             if device not in valid_devices and not device.startswith('cuda:'):
                 device = 'cpu'
-            
-            self._kokoro_pipeline = KPipeline(lang_code=lang_code, device=device)
+
+            try:
+                self._kokoro_pipeline = KPipeline(lang_code=lang_code, device=device)
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+                    print(f"Warning: CUDA OOM error occurred: {e}. Falling back to CPU.")
+                    # Fall back to CPU
+                    self._kokoro_pipeline = KPipeline(lang_code=lang_code, device='cpu')
+                else:
+                    raise e
         return self._kokoro_pipeline
     
     def update_config(self, new_config: TTSConfig):
@@ -303,7 +311,30 @@ class TTSService:
                     return full_audio
                 return None
 
-            audio_data = await loop.run_in_executor(None, _generate)
+            try:
+                audio_data = await loop.run_in_executor(None, _generate)
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+                    # Clear the pipeline and force recreation with CPU
+                    self._kokoro_pipeline = None
+                    pipeline = self._get_kokoro_pipeline()  # This will use CPU fallback
+                    if pipeline is None:
+                        return {"success": False, "error": "Kokoro pipeline not available after CPU fallback."}
+                    
+                    # Retry generation with CPU pipeline
+                    def _generate_cpu():
+                        audio_segments = []
+                        for _, _, audio in pipeline(text, voice=voice):
+                            audio_segments.append(audio)
+                        
+                        if audio_segments:
+                            full_audio = np.concatenate(audio_segments)
+                            return full_audio
+                        return None
+                    
+                    audio_data = await loop.run_in_executor(None, _generate_cpu)
+                else:
+                    raise e
 
             if audio_data is None:
                 return {"success": False, "error": "Kokoro generated no audio"}

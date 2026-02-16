@@ -487,12 +487,13 @@ class RAGService:
             context = self._format_context(results, query)
 
             # Prepare detailed sources with chunk content for citations
+            # Create one source for each result to match citation markers
             sources = []
             for i, result in enumerate(results, 1):
                 sources.append({
                     "id": i,
                     "title": f"Document {result.get('document_id', 'Unknown')} - Chunk {result.get('chunk_index', i)}",
-                    "url": f"#document-{result.get('document_id', 'unknown')}",
+                    "url": f"#document-{result.get('document_id', 'unknown')}-{result.get('chunk_index', i)}",
                     "snippet": result.get("content", "")[:300] + "..." if len(result.get("content", "")) > 300 else result.get("content", ""),
                     "chunk_content": result.get("content", "")
                 })
@@ -526,13 +527,13 @@ class RAGService:
         context += f"**Query:** {query}\n\n"
         context += "## Relevant Excerpts\n\n"
 
+        # Create context with citations - each result gets its own citation marker
         for i, result in enumerate(results, 1):
             similarity = result.get("similarity", 0)
             content = result.get("content", "")
 
             context += f"### Result {i} (relevance: {similarity:.2f})\n\n"
-            # Add citation marker [i] to the content
-            context += f"{content} [{i}]\n\n"
+            context += f"{content} [{i}]\n\n"  # Add citation marker that matches source ID
             context += "---\n\n"
 
         return context

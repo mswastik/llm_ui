@@ -38,6 +38,17 @@ class TTSConfig:
     rate: str = "+0%"  # Speech rate adjustment
     volume: float = 1.0  # Volume (0.0 to 1.0)
     output_dir: str = UPLOAD_DIR
+    
+    @classmethod
+    def from_settings(cls, settings_dict: dict):
+        """Create TTSConfig from settings dictionary"""
+        return cls(
+            engine=settings_dict.get('tts_engine', 'edge-tts'),
+            voice=settings_dict.get('tts_voice', 'en-IN-NeerjaNeural'),
+            rate=settings_dict.get('tts_rate', '+0%'),
+            volume=float(settings_dict.get('tts_volume', 1.0)),
+            output_dir=settings_dict.get('upload_dir', UPLOAD_DIR)
+        )
 
 
 class TTSService:
@@ -58,6 +69,11 @@ class TTSService:
     def _ensure_output_dir(self):
         """Ensure TTS output directory exists"""
         os.makedirs(self.config.output_dir, exist_ok=True)
+    
+    def update_config(self, new_config: TTSConfig):
+        """Update the TTS configuration"""
+        self.config = new_config
+        self._ensure_output_dir()
     
     async def generate_speech(
         self,

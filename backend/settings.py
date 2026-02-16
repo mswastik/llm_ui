@@ -56,6 +56,12 @@ class Settings(BaseModel):
     # LLM Generation Defaults
     default_temperature: float = Field(default=DEFAULT_TEMPERATURE, description="Default temperature for LLM generation")
     default_max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, description="Default max tokens for LLM generation")
+    
+    # TTS Settings
+    tts_engine: str = Field(default="edge-tts", description="TTS engine to use (edge-tts, pyttsx3)")
+    tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Voice to use for TTS")
+    tts_rate: str = Field(default="+0%", description="Speech rate adjustment")
+    tts_volume: float = Field(default=1.0, description="Volume level (0.0 to 1.0)")
 
 
 class SettingsManager:
@@ -63,6 +69,11 @@ class SettingsManager:
     
     def __init__(self):
         self.settings = Settings()
+        self.tts_service = None  # Will be set later
+    
+    def set_tts_service(self, tts_service):
+        """Set the TTS service for configuration updates"""
+        self.tts_service = tts_service
     
     def get_settings(self) -> Dict[str, Any]:
         """Get current settings"""
@@ -102,6 +113,22 @@ class SettingsManager:
         # Update CORS origins if changed
         if 'cors_origins' in new_settings:
             os.environ['CORS_ORIGINS'] = new_settings['cors_origins']
+        
+        # Update TTS settings if changed and TTS service is available
+        if ('tts_engine' in new_settings or 'tts_voice' in new_settings or 
+            'tts_rate' in new_settings or 'tts_volume' in new_settings) and self.tts_service:
+            from .tools.tts_service import TTSConfig
+            tts_config = TTSConfig.from_settings(new_settings)
+            self.tts_service.update_config(tts_config)
+        
+        if 'tts_engine' in new_settings:
+            os.environ['TTS_ENGINE'] = new_settings['tts_engine']
+        if 'tts_voice' in new_settings:
+            os.environ['TTS_VOICE'] = new_settings['tts_voice']
+        if 'tts_rate' in new_settings:
+            os.environ['TTS_RATE'] = new_settings['tts_rate']
+        if 'tts_volume' in new_settings:
+            os.environ['TTS_VOLUME'] = str(new_settings['tts_volume'])
         
         return self.get_settings()
 

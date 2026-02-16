@@ -1139,8 +1139,12 @@ function chatApp() {
                 this.stopAudio();
             }
 
-            // Get text content (strip HTML if any)
-            const text = message.content.replace(/<[^>]*>/g, '').trim();
+            // Get text content (strip HTML and markdown if any)
+            let text = message.content.replace(/<[^>]*>/g, '').trim();
+            
+            // Strip markdown syntax
+            text = this.stripMarkdown(text);
+            
             console.log('Text to speak length:', text.length);
 
             if (!text) {
@@ -1261,7 +1265,7 @@ function chatApp() {
                         const url = source.url || '#';
                         const snippet = source.snippet || '';
                         const chunk_content = source.chunk_content || '';
-                        
+
                         // Create tooltip text with title, snippet, and chunk content
                         let tooltipText = title;
                         if (snippet) {
@@ -1270,10 +1274,10 @@ function chatApp() {
                         if (chunk_content && chunk_content !== snippet) {  // Only add chunk if it's different from snippet
                             tooltipText += `\n\nContent: ${chunk_content}`;
                         }
-                        
+
                         // Escape HTML entities for attribute
                         const escapedTooltip = tooltipText.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '&#10;');
-                        
+
                         // Create citation with tooltip
                         return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" class="citation-link" title="${escapedTooltip}">[${num}]</a></sup>`;
                     }
@@ -1282,6 +1286,48 @@ function chatApp() {
             }
 
             return html;
+        },
+        
+        // Strip markdown syntax for TTS
+        stripMarkdown(text) {
+            if (!text) return '';
+
+            // Remove headers (# ## ###)
+            text = text.replace(/^#{1,6}\s+/gm, '');
+            
+            // Remove bold and italic markers
+            text = text.replace(/\*\*(.*?)\*\*/g, '$1'); // **bold**
+            text = text.replace(/\*(.*?)\*/g, '$1');     // *italic*
+            text = text.replace(/__(.*?)__/g, '$1');     // __bold__
+            text = text.replace(/_(.*?)_/g, '$1');      // _italic_
+            
+            // Remove inline code
+            text = text.replace(/`(.*?)`/g, '$1');
+            
+            // Remove code blocks
+            text = text.replace(/```[\s\S]*?```/g, '');
+            
+            // Remove blockquotes
+            text = text.replace(/^>\s+/gm, '');
+            
+            // Remove list markers
+            text = text.replace(/^\s*[\-\*\+]\s+/gm, '');
+            text = text.replace(/^\s*\d+\.\s+/gm, '');
+            
+            // Remove links [text](url) -> text
+            text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+            
+            // Remove images ![alt](url) -> alt
+            text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+            
+            // Remove horizontal rules
+            text = text.replace(/^\s*[-*_]{3,}\s*$/gm, '');
+            
+            // Replace multiple newlines with single newline
+            text = text.replace(/\n{3,}/g, '\n\n');
+            
+            // Trim whitespace
+            return text.trim();
         }
     }
 }

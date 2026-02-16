@@ -45,6 +45,9 @@ templates = Jinja2Templates(directory="frontend/templates")
 llm_client = LLMClient()
 tool_executor = ToolExecutor(mcp_manager)
 
+# Set TTS service in settings manager
+settings_manager.set_tts_service(tool_executor.tts_service)
+
 # Active SSE connections for real-time status updates
 active_connections: Dict[str, asyncio.Queue] = {}
 
@@ -254,7 +257,7 @@ async def _core_stream_handler(
                     try:
                         # Use QUERY_MODEL for title generation to avoid issues with thinking models
                         from config import QUERY_MODEL
-                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL), timeout=10.0)
+                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL), timeout=40.0)
                         await update_conversation_title(db, conversation_id, title)
                         yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
                     except Exception as e:

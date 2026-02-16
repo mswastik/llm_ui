@@ -3,7 +3,7 @@ import asyncio
 import json
 from typing import List, Dict, AsyncGenerator, Any, Optional
 
-from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL #, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 
 
 class LLMClient:
@@ -26,8 +26,8 @@ class LLMClient:
     async def stream_chat(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: int = 10048,
+        temperature: float = None,
+        max_tokens: int = None,
         tools: List[Dict] = None,
         model: str = None
     ) -> AsyncGenerator[Dict, None]:
@@ -46,12 +46,16 @@ class LLMClient:
         # Use provided model or fall back to default
         active_model = model or self.model
         
+        # Use provided values or fall back to defaults from config
+        active_temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE
+        active_max_tokens = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
+
         payload = {
             "model": active_model,
             "messages": messages,
             "stream": True,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "temperature": active_temperature,
+            "max_tokens": active_max_tokens,
         }
         
         # Add tool definitions if available

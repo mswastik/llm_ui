@@ -40,6 +40,10 @@ function chatApp() {
             command: '',
             args: '[]'
         },
+
+        // Settings
+        settings: {},
+        activeSettingsTab: 'general',  // 'general', 'llm', or 'mcp'
         
         // Documents
         documents: [],
@@ -62,11 +66,12 @@ function chatApp() {
         // Initialize
         async init() {
             await this.loadConversations();
+            await this.loadSettings();  // Load settings first
             await this.loadMCPServers();
             await this.loadModels();
             await this.loadDocuments();
             await this.checkTTSStatus();
-            
+
             // Create a new conversation if none exist
             if (this.conversations.length === 0) {
                 await this.createNewConversation();
@@ -843,6 +848,40 @@ function chatApp() {
             }
         },
         
+        // Settings Management
+        async loadSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                const data = await response.json();
+                this.settings = data;
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        },
+
+        async saveSettings() {
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.settings)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    this.settings = data;
+                    this.showToast('Settings saved successfully!', 'success');
+                    this.showSettings = false;
+                } else {
+                    const error = await response.json();
+                    this.showToast(`Error saving settings: ${error.detail || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                this.showToast('Error saving settings', 'error');
+            }
+        },
+
         // MCP Server Management
         async loadMCPServers() {
             try {

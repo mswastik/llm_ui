@@ -21,6 +21,7 @@ from database.crud import (
 from mcp_client.client import MCPClientManager
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
+from backend.settings import settings_manager
 
 # Initialize MCP client manager
 mcp_manager = MCPClientManager()
@@ -246,12 +247,14 @@ async def _core_stream_handler(
             messages_after_save = await get_conversation_messages(db, conversation_id)
             user_count = len([m for m in messages_after_save if m["role"] == "user"])
             assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
-            
+
             if user_count == 1 and assistant_count == 1:
                 first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
                 if first_user_message:
                     try:
-                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=model), timeout=10.0)
+                        # Use QUERY_MODEL for title generation to avoid issues with thinking models
+                        from config import QUERY_MODEL
+                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL), timeout=10.0)
                         await update_conversation_title(db, conversation_id, title)
                         yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
                     except Exception as e:
@@ -700,6 +703,21 @@ async def get_tts_status():
         "pyttsx3": HAS_PYTTSX3,
         "engine": tool_executor.tts_service.config.engine
     }
+
+
+# Settings Management
+@app.get("/api/settings")
+async def get_settings():
+    """Get current application settings"""
+    return settings_manager.get_settings()
+
+
+@app.put("/api/settings")
+async def update_settings(request: Request):
+    """Update application settings"""
+    data = await request.json()
+    updated_settings = settings_manager.update_settings(data)
+    return updated_settings
 
 
 @app.get("/api/audio/{filename}")

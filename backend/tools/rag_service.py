@@ -525,15 +525,16 @@ class RAGService:
         context = "# 📄 Document Search Results\n\n"
         context += f"**Query:** {query}\n\n"
         context += "## Relevant Excerpts\n\n"
-        
+
         for i, result in enumerate(results, 1):
             similarity = result.get("similarity", 0)
             content = result.get("content", "")
-            
+
             context += f"### Result {i} (relevance: {similarity:.2f})\n\n"
-            context += f"{content}\n\n"
+            # Add citation marker [i] to the content
+            context += f"{content} [{i}]\n\n"
             context += "---\n\n"
-        
+
         return context
     
     def delete_document(self, document_id: str):

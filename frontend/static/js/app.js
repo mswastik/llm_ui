@@ -70,7 +70,8 @@ function chatApp() {
             await this.loadMCPServers();
             await this.loadModels();
             await this.loadDocuments();
-            await this.checkTTSStatus();
+            //await this.checkTTSStatus();
+            this.ttsAvailable = true;
 
             // Create a new conversation if none exist
             if (this.conversations.length === 0) {
@@ -881,6 +882,21 @@ function chatApp() {
                 this.showToast('Error saving settings', 'error');
             }
         },
+        
+        onTtsEngineChange() {
+            // Set default voice based on engine
+            if (this.settings.tts_engine === 'kokoro') {
+                this.settings.tts_voice = 'af_bella';
+                this.settings.kokoro_lang = 'a';
+                if (!this.settings.kokoro_device) {
+                    this.settings.kokoro_device = 'cpu';
+                }
+            } else if (this.settings.tts_engine === 'edge-tts') {
+                this.settings.tts_voice = 'en-IN-NeerjaNeural';
+            } else if (this.settings.tts_engine === 'pyttsx3') {
+                this.settings.tts_voice = '';
+            }
+        },
 
         // MCP Server Management
         async loadMCPServers() {
@@ -1294,38 +1310,41 @@ function chatApp() {
 
             // Remove headers (# ## ###)
             text = text.replace(/^#{1,6}\s+/gm, '');
-            
+
             // Remove bold and italic markers
             text = text.replace(/\*\*(.*?)\*\*/g, '$1'); // **bold**
             text = text.replace(/\*(.*?)\*/g, '$1');     // *italic*
             text = text.replace(/__(.*?)__/g, '$1');     // __bold__
             text = text.replace(/_(.*?)_/g, '$1');      // _italic_
-            
+
             // Remove inline code
             text = text.replace(/`(.*?)`/g, '$1');
-            
+
             // Remove code blocks
             text = text.replace(/```[\s\S]*?```/g, '');
-            
+
             // Remove blockquotes
             text = text.replace(/^>\s+/gm, '');
-            
+
             // Remove list markers
             text = text.replace(/^\s*[\-\*\+]\s+/gm, '');
             text = text.replace(/^\s*\d+\.\s+/gm, '');
-            
+
+            // Remove citation patterns [1], [2], etc.
+            text = text.replace(/\[\d+\]/g, '');
+
             // Remove links [text](url) -> text
             text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-            
+
             // Remove images ![alt](url) -> alt
             text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
-            
+
             // Remove horizontal rules
             text = text.replace(/^\s*[-*_]{3,}\s*$/gm, '');
-            
+
             // Replace multiple newlines with single newline
             text = text.replace(/\n{3,}/g, '\n\n');
-            
+
             // Trim whitespace
             return text.trim();
         }

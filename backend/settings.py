@@ -58,10 +58,12 @@ class Settings(BaseModel):
     default_max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, description="Default max tokens for LLM generation")
     
     # TTS Settings
-    tts_engine: str = Field(default="edge-tts", description="TTS engine to use (edge-tts, pyttsx3)")
+    tts_engine: str = Field(default="edge-tts", description="TTS engine to use (edge-tts, pyttsx3, kokoro)")
     tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Voice to use for TTS")
     tts_rate: str = Field(default="+0%", description="Speech rate adjustment")
     tts_volume: float = Field(default=1.0, description="Volume level (0.0 to 1.0)")
+    kokoro_lang: str = Field(default="a", description="Kokoro language code (a=American English, b=British English)")
+    kokoro_device: str = Field(default="cpu", description="Kokoro device (cpu or cuda)")
 
 
 class SettingsManager:
@@ -116,7 +118,8 @@ class SettingsManager:
         
         # Update TTS settings if changed and TTS service is available
         if ('tts_engine' in new_settings or 'tts_voice' in new_settings or 
-            'tts_rate' in new_settings or 'tts_volume' in new_settings) and self.tts_service:
+            'tts_rate' in new_settings or 'tts_volume' in new_settings or
+            'kokoro_lang' in new_settings or 'kokoro_device' in new_settings) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)
             self.tts_service.update_config(tts_config)
@@ -129,6 +132,10 @@ class SettingsManager:
             os.environ['TTS_RATE'] = new_settings['tts_rate']
         if 'tts_volume' in new_settings:
             os.environ['TTS_VOLUME'] = str(new_settings['tts_volume'])
+        if 'kokoro_lang' in new_settings:
+            os.environ['KOKORO_LANG'] = new_settings['kokoro_lang']
+        if 'kokoro_device' in new_settings:
+            os.environ['KOKORO_DEVICE'] = new_settings['kokoro_device']
         
         return self.get_settings()
 

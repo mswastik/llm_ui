@@ -672,22 +672,29 @@ async def generate_tts(request: Request):
     
     Returns audio file URL that can be played in the browser.
     """
-    data = await request.json()
-    text = data.get("text", "")
-    voice = data.get("voice")
-    
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Text is required")
-    
-    result = await tool_executor.tts_service.generate_speech(
-        text=text,
-        voice=voice
-    )
-    
-    if not result.get("success"):
-        raise HTTPException(status_code=500, detail=result.get("error", "TTS generation failed"))
-    
-    return result
+    try:
+        data = await request.json()
+        text = data.get("text", "")
+        voice = data.get("voice")
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Text is required")
+        
+        result = await tool_executor.tts_service.generate_speech(
+            text=text,
+            voice=voice
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "TTS generation failed"))
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
 
 
 @app.get("/api/tts/voices")
@@ -699,11 +706,13 @@ async def list_tts_voices():
 @app.get("/api/tts/status")
 async def get_tts_status():
     """Check if TTS is available"""
-    from tools.tts_service import HAS_EDGE_TTS, HAS_PYTTSX3
+    from tools.tts_service import HAS_EDGE_TTS, HAS_PYTTSX3, _check_kokoro_available
+    kokoro_available = _check_kokoro_available()
     return {
-        "available": HAS_EDGE_TTS or HAS_PYTTSX3,
+        "available": HAS_EDGE_TTS or HAS_PYTTSX3 or kokoro_available,
         "edge_tts": HAS_EDGE_TTS,
         "pyttsx3": HAS_PYTTSX3,
+        "kokoro": kokoro_available,
         "engine": tool_executor.tts_service.config.engine
     }
 

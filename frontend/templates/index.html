@@ -762,21 +762,62 @@
                                 <label class="block text-sm font-medium text-gray-700 mb-1">TTS Engine</label>
                                 <select
                                     x-model="settings.tts_engine"
+                                    @change="onTtsEngineChange()"
                                     class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="edge-tts">Edge TTS</option>
                                     <option value="pyttsx3">Pyttsx3</option>
+                                    <option value="kokoro">Kokoro TTS</option>
                                 </select>
                             </div>
                             
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">TTS Voice</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.tts_voice"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <template x-if="settings.tts_engine === 'kokoro'">
+                                    <select
+                                        x-model="settings.tts_voice"
+                                        class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                        <option value="af_bella">Bella (Female, American)</option>
+                                        <option value="af_sarah">Sarah (Female, American)</option>
+                                        <option value="af_sky">Sky (Female, American)</option>
+                                        <option value="am_adam">Adam (Male, American)</option>
+                                        <option value="am_michael">Michael (Male, American)</option>
+                                        <option value="bf_emma">Emma (Female, British)</option>
+                                        <option value="bf_isabella">Isabella (Female, British)</option>
+                                        <option value="bm_george">George (Male, British)</option>
+                                        <option value="bm_lewis">Lewis (Male, British)</option>
+                                    </select>
+                                </template>
+                                <template x-if="settings.tts_engine !== 'kokoro'">
+                                    <input
+                                        type="text"
+                                        x-model="settings.tts_voice"
+                                        class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                </template>
                             </div>
                             
-                            <div>
+                            <div x-show="settings.tts_engine === 'kokoro'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Language</label>
+                                <select
+                                    x-model="settings.kokoro_lang"
+                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="a">American English</option>
+                                    <option value="b">British English</option>
+                                </select>
+                            </div>
+                            
+                            <div x-show="settings.tts_engine === 'kokoro'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Device</label>
+                                <select
+                                    x-model="settings.kokoro_device"
+                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="cpu">CPU (slower but no VRAM usage)</option>
+                                    <option value="cuda">CUDA (auto-select GPU)</option>
+                                    <option value="cuda:0">CUDA:0 (first GPU)</option>
+                                    <option value="cuda:1">CUDA:1 (second GPU)</option>
+                                </select>
+                            </div>
+                            
+                            <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Speech Rate</label>
                                 <input
                                     type="text"
@@ -784,7 +825,7 @@
                                     class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
                             
-                            <div>
+                            <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Volume Level</label>
                                 <input
                                     type="number"
@@ -801,8 +842,11 @@
                             <p class="text-sm text-gray-700 mb-2">
                                 <strong>Edge TTS:</strong> High quality online TTS service. Requires internet connection. Voices: en-US, en-GB, en-IN, etc.
                             </p>
-                            <p class="text-sm text-gray-700">
+                            <p class="text-sm text-gray-700 mb-2">
                                 <strong>Pyttsx3:</strong> Offline TTS service. Lower quality but works without internet.
+                            </p>
+                            <p class="text-sm text-gray-700">
+                                <strong>Kokoro TTS:</strong> High-quality local TTS. Requires model download from HuggingFace (~300MB). Works offline after download.
                             </p>
                         </div>
                     </div>

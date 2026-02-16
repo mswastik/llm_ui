@@ -375,12 +375,13 @@ class ToolExecutor:
                 }
                 return
             
-            # Format result
+            # Format result - include sources for proper citation display
             formatted_result = {
                 "query": query,
                 "results": result.get("results", []),
                 "context": result.get("context", "No relevant content found"),
-                "result_count": len(result.get("results", []))
+                "result_count": len(result.get("results", [])),
+                "sources": result.get("sources", [])
             }
             
             yield {

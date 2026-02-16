@@ -11,3 +11,8 @@ requests>=2.31.0
 PyPDF2>=3.0.0
 python-docx>=1.1.0
 greenlet
+# TTS dependencies (optional - install as needed)
+# edge-tts  # Microsoft Edge TTS (requires internet)
+# pyttsx3   # Offline TTS
+# kokoro    # High-quality local TTS (requires model download)
+# soundfile # Required for Kokoro audio output

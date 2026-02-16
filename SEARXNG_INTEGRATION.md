@@ -1,377 +1,236 @@
-# Integrating Your SearXNG Search Tool
+# SearXNG Web Search Integration
 
-This guide shows how to integrate your existing SearXNG-based search tool (from open-webui) into this application with full real-time progress updates.
+This guide explains how the SearXNG web search feature is integrated into the LLM UI application with real-time progress updates.
 
-## Your Current Tool Architecture
+## Current Implementation Architecture
 
-From your description, your tool does:
-1. ✅ Generate search query
-2. ✅ Execute SearXNG search
-3. ✅ Parse web pages
-4. ✅ Generate embeddings
-5. ✅ Rerank results
-6. ✅ Answer user query with citations
+The application includes a sophisticated SearXNG integration that performs:
+1. ✅ Multi-query generation for better coverage
+2. ✅ Adaptive query generation based on initial results
+3. ✅ Execute SearXNG search with privacy-focused results
+4. ✅ Parse web pages and extract content
+5. ✅ Generate embeddings for semantic search
+6. ✅ Rerank results by relevance
+7. ✅ Format citations with source tracking
+8. ✅ Real-time progress updates to the UI
 
-## Integration Steps
+## How It Works
 
-### 1. Copy Your Tool Code
+### 1. Search Flow
 
-Create a new file: `backend/tools/searxng_search.py`
+When a user enables web search:
 
-```python
-import asyncio
-from typing import AsyncGenerator, Dict, Any, List
-import aiohttp
+1. **Query Enhancement**: The system generates multiple search queries to improve coverage
+2. **Adaptive Queries**: Additional queries are generated based on initial results
+3. **SearXNG Search**: Queries are sent to your configured SearXNG instance
+4. **Content Extraction**: Web pages are parsed and content is extracted
+5. **Semantic Processing**: Content is chunked and embedded for relevance ranking
+6. **Result Reranking**: Results are reordered by semantic relevance
+7. **Context Injection**: Relevant results are injected into the LLM context
+8. **Citation Formatting**: Sources are formatted with citations for the response
 
-# Import your existing modules
-# from your_embedding_module import embed_text
-# from your_reranker_module import rerank_results
-# from your_parser_module import parse_webpage
+### 2. Real-time Progress Updates
 
+The search process provides granular progress updates:
+- Generating optimized search queries...
+- Searching with X queries...
+- Found X unique results. Extracting content...
+- Created X chunks from X sources
+- Computing embeddings...
+- Calculating semantic similarities...
+- Filtering by similarity threshold...
+- Reranking results...
+- Formatting results...
 
-async def search_web_with_progress(
-    arguments: Dict[str, Any],
-    request_id: str
-) -> AsyncGenerator[Dict, None]:
-    """
-    SearXNG-based web search with real-time progress updates.
-    
-    This wraps your existing search pipeline and emits progress events
-    that are streamed to the UI via Server-Sent Events.
-    """
-    
-    query = arguments.get("query", "")
-    num_results = arguments.get("num_results", 10)
-    
-    # Step 1: Generate optimized search query
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": "Generating search query...",
-        "progress": 5
-    }
-    
-    # Your LLM-based query optimization logic here
-    optimized_query = await optimize_search_query(query)
-    
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": f"Searching: {optimized_query}",
-        "progress": 10,
-        "data": {"query": optimized_query}
-    }
-    
-    # Step 2: Execute SearXNG search
-    search_results = await execute_searxng(optimized_query, num_results)
-    
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": f"Found {len(search_results)} results",
-        "progress": 25,
-        "data": {"result_count": len(search_results)}
-    }
-    
-    # Step 3: Parse web pages
-    parsed_contents = []
-    for i, result in enumerate(search_results):
-        yield {
-            "type": "tool_progress",
-            "tool": "search_web",
-            "status": f"Parsing website {i+1}/{len(search_results)}: {result['title'][:50]}...",
-            "progress": 25 + (i / len(search_results) * 30),  # 25-55%
-            "data": {
-                "parsing": i+1,
-                "total": len(search_results),
-                "current_url": result["url"]
-            }
-        }
-        
-        # Your webpage parsing logic
-        content = await parse_webpage(result["url"])
-        parsed_contents.append({
-            "title": result["title"],
-            "url": result["url"],
-            "content": content,
-            "snippet": result.get("snippet", "")
-        })
-        
-        await asyncio.sleep(0.1)  # Small delay between requests
-    
-    # Step 4: Generate embeddings
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": "Generating embeddings for retrieved content...",
-        "progress": 60
-    }
-    
-    # Your embedding logic
-    embedded_contents = await embed_all_contents(parsed_contents, query)
-    
-    # Step 5: Rerank results
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": "Reranking results by relevance...",
-        "progress": 80
-    }
-    
-    # Your reranking logic
-    reranked_results = await rerank_by_relevance(embedded_contents, query)
-    
-    # Step 6: Generate answer
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": "Generating answer from sources...",
-        "progress": 90
-    }
-    
-    # Format sources for citation
-    sources = [
-        {
-            "title": r["title"],
-            "url": r["url"],
-            "snippet": r["content"][:200] + "...",
-            "relevance_score": r.get("score", 0.0)
-        }
-        for r in reranked_results[:5]  # Top 5 sources
-    ]
-    
-    # Final result
-    yield {
-        "type": "tool_progress",
-        "tool": "search_web",
-        "status": "Complete",
-        "progress": 100,
-        "result": {
-            "query": query,
-            "optimized_query": optimized_query,
-            "sources": sources,
-            "total_results": len(search_results),
-            "processing_time": "X.XX seconds"  # Add actual timing
-        }
-    }
+### 3. Configuration
 
-
-# Helper functions - implement these based on your existing code
-
-async def optimize_search_query(query: str) -> str:
-    """Generate an optimized search query using LLM"""
-    # Your implementation
-    return query
-
-
-async def execute_searxng(query: str, num_results: int) -> List[Dict]:
-    """Execute search via SearXNG"""
-    # Your SearXNG integration
-    # Example:
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            "http://localhost:8888/search",  # Your SearXNG instance
-            params={
-                "q": query,
-                "format": "json",
-                "language": "en"
-            }
-        ) as response:
-            data = await response.json()
-            return data.get("results", [])[:num_results]
-
-
-async def parse_webpage(url: str) -> str:
-    """Parse webpage content"""
-    # Your webpage parsing implementation
-    # Could use beautifulsoup, trafilatura, etc.
-    pass
-
-
-async def embed_all_contents(contents: List[Dict], query: str) -> List[Dict]:
-    """Generate embeddings for all content"""
-    # Your embedding implementation
-    # Use your llama.cpp embedding model
-    pass
-
-
-async def rerank_by_relevance(contents: List[Dict], query: str) -> List[Dict]:
-    """Rerank results by relevance"""
-    # Your reranking implementation
-    # Use your llama.cpp reranking model
-    pass
-```
-
-### 2. Register the Tool
-
-Edit `backend/tools/tool_executor.py`:
+The SearXNG integration is configured in `backend/config.py`:
 
 ```python
-from tools.searxng_search import search_web_with_progress
-
-class ToolExecutor:
-    def __init__(self, mcp_manager):
-        self.mcp_manager = mcp_manager
-        self.custom_tools = {
-            "search_web": search_web_with_progress,  # Use your implementation
-            "analyze_document": self._analyze_document_with_progress,
-        }
+class SearchConfig:
+    searxng_url: str = "http://localhost:8888/search"  # Your SearXNG instance
+    embeddings_api: str = f"{LLAMA_CPP_BASE_URL}/v1/embeddings"  # llama.cpp embeddings endpoint
+    rerank_api: str = f"{LLAMA_CPP_BASE_URL}/v1/rerank"  # llama.cpp rerank endpoint
+    llm_base_url: str = LLAMA_CPP_BASE_URL
+    llm_model: str = LLAMA_CPP_MODEL
+    query_model: str = QUERY_MODEL  # Model for query generation
+    num_search_results: int = 25  # Number of results per query
+    chunk_size: int = 1200  # Words per content chunk
+    similarity_threshold: float = 0.4  # Minimum similarity for inclusion
+    enable_multi_query: bool = True  # Enable multi-query generation
 ```
 
-### 3. Update LLM Client to Include Search Tool
+## Setting Up SearXNG
 
-Edit `backend/llm_client/client.py` in the `_get_available_tools` method:
+### 1. Install SearXNG
 
-```python
-async def _get_available_tools(self) -> List[Dict]:
-    """Get tool definitions to send to the LLM"""
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_web",
-                "description": "Search the web for current information using SearXNG. Returns relevant sources with citations.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query"
-                        },
-                        "num_results": {
-                            "type": "integer",
-                            "description": "Number of results to retrieve (default: 10)",
-                            "default": 10
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }
-    ]
-    
-    # Add MCP tools as well
-    mcp_tools = await self.mcp_manager.list_all_tools()
-    for tool in mcp_tools:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": f"{tool['server']}:{tool['name']}",
-                "description": tool['description'],
-                "parameters": tool['input_schema']
-            }
-        })
-    
-    return tools
-```
-
-### 4. Configure Your Services
-
-Make sure these are running:
-
-**SearXNG Instance:**
+Follow the official SearXNG installation guide:
 ```bash
-# Your SearXNG should be running on localhost:8888
-# Or update the URL in execute_searxng()
+# Using Docker (recommended)
+docker run -d --name searxng -p 8888:8080 \
+  -e BASE_URL="http://localhost:8888" \
+  searxng/searxng:latest
+
+# Or install locally
+git clone https://github.com/searxng/searxng.git
+cd searxng
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -e .
+python searxng_extra/settings_v1.yml install
 ```
 
-**llama.cpp Embedding Server:**
+### 2. Configure SearXNG
+
+Edit your SearXNG configuration to enable the JSON output format:
+- Ensure the `json` output format is enabled in your SearXNG settings
+- Configure search engines as needed for your use case
+
+### 3. Update Application Configuration
+
+Update the SearXNG URL in `backend/config.py`:
+
+```python
+SEARXNG_URL = "http://localhost:8888/search"  # Point to your SearXNG instance
+```
+
+Or use environment variables:
 ```bash
-# Start embedding server for your embedding model
+SEARXNG_URL="http://your-searxng-instance.com/search"
+```
+
+## Using Web Search in the UI
+
+### 1. Enable Web Search
+- Type your message in the chat input
+- Toggle the "Web Search" button (magnifying glass icon)
+- Send your message
+- The application will perform a web search before generating the response
+
+### 2. View Search Results
+- Search progress appears in real-time
+- Sources are displayed with citations ([1], [2], etc.)
+- Click on citations to view source URLs
+- Results are integrated into the LLM's response
+
+## Advanced Configuration
+
+### 1. Embedding and Reranking Models
+
+For optimal search results, use dedicated models:
+
+**Embedding Model**: For semantic similarity calculations
+```bash
+# Dedicated embedding server
 ./llama-server -m /path/to/embedding-model.gguf --port 8081 --embedding
 ```
 
-**llama.cpp Reranking Server (optional):**
+**Reranking Model**: For result reordering (if different from embedding model)
 ```bash
-# If using separate reranking model
-./llama-server -m /path/to/reranking-model.gguf --port 8082
+# Optional reranking server
+./llama-server -m /path/to/reranking-model.gguf --port 8082 --rerank
 ```
 
-### 5. Environment Variables
+### 2. Performance Tuning
 
-Add to your `.env` file:
-
-```bash
-# SearXNG Configuration
-SEARXNG_URL=http://localhost:8888
-SEARXNG_LANGUAGE=en
-
-# Embedding Service
-EMBEDDING_URL=http://localhost:8081
-
-# Reranking Service (optional)
-RERANKING_URL=http://localhost:8082
-
-# Search Settings
-DEFAULT_NUM_RESULTS=10
-MAX_PARSE_WORKERS=5
-```
-
-### 6. Test the Integration
-
-Start the application and try a search query:
-
-```
-User: "What are the latest developments in quantum computing?"
-```
-
-You should see real-time progress updates in the UI:
-- ✅ Generating search query...
-- ✅ Searching: quantum computing breakthroughs 2024
-- ✅ Found 10 results
-- ✅ Parsing website 1/10: MIT News - Quantum...
-- ✅ Parsing website 2/10: Nature - Recent advances...
-- ✅ Generating embeddings...
-- ✅ Reranking results...
-- ✅ Complete
-
-## Displaying Citations in the UI
-
-The frontend automatically formats sources. The tool result should include:
+Adjust search parameters in `backend/tools/searxng_tool.py`:
 
 ```python
-"result": {
-    "sources": [
-        {
-            "title": "Article Title",
-            "url": "https://example.com",
-            "snippet": "Relevant excerpt...",
-            "relevance_score": 0.95
-        }
-    ]
+# Chunk size (larger = fewer chunks, smaller = more precision)
+chunk_size: int = 1200
+
+# Similarity threshold (higher = more relevant, lower = more results)
+similarity_threshold: float = 0.4
+
+# Number of search results to fetch per query
+num_search_results: int = 25
+
+# Enable/disable multi-query generation
+enable_multi_query: bool = True
+```
+
+### 3. Custom Search Categories
+
+Modify the SearXNG request parameters to focus on specific categories:
+
+```python
+async def _fetch_searxng_results(self, query: str) -> List[Tuple[str, str, str]]:
+    """Fetch search results from SearXNG"""
+    params = {
+        "q": query, 
+        "format": "json", 
+        "categories": "general"  # Change to "science", "news", etc.
+    }
+    # ... rest of implementation
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### SearXNG Connection Issues
+**Problem**: Cannot connect to SearXNG instance
+**Solutions**:
+1. Verify SearXNG is running: `curl http://localhost:8888`
+2. Check URL in configuration matches your instance
+3. Ensure network connectivity between application and SearXNG
+
+#### Slow Search Performance
+**Problem**: Search takes too long
+**Solutions**:
+1. Reduce `num_search_results` in configuration
+2. Lower `chunk_size` for faster processing
+3. Increase similarity threshold to filter early
+4. Check network latency to SearXNG instance
+
+#### Poor Search Results
+**Problem**: Irrelevant results or low-quality content
+**Solutions**:
+1. Adjust `similarity_threshold` (try 0.3-0.6 range)
+2. Verify embedding model quality
+3. Check SearXNG search engine configuration
+4. Enable/disable multi-query generation based on needs
+
+#### Embedding/Reranking Failures
+**Problem**: Semantic processing fails
+**Solutions**:
+1. Verify llama.cpp server supports embeddings endpoint
+2. Check model compatibility with embedding/reranking
+3. Ensure sufficient VRAM for embedding model
+4. Verify API endpoint configuration
+
+## Customization
+
+### 1. Modify Search Behavior
+
+Edit `backend/tools/searxng_tool.py` to customize:
+- Query generation logic
+- Content extraction methods
+- Chunking strategies
+- Similarity calculations
+- Result formatting
+
+### 2. Add Search Categories
+
+Extend the search to include specific categories by modifying the SearXNG API call:
+
+```python
+params = {
+    "q": query, 
+    "format": "json", 
+    "categories": "general,science,technology"  # Multiple categories
 }
 ```
 
-The UI will render these as clickable citations with snippets.
+### 3. Adjust Progress Reporting
 
-## Advanced: Making it an MCP Server
+Modify the progress reporting granularity in the search methods to provide more or less detailed updates to the UI.
 
-Alternatively, you could package your entire search pipeline as a standalone MCP server:
+## Integration with Other Features
 
-```bash
-# Create a new MCP server package
-mkdir my-search-mcp-server
-cd my-search-mcp-server
-npm init -y
-```
-
-Then add it to the UI via the MCP Servers settings.
-
-This approach gives you:
-- ✅ Portability across different LLM UIs
-- ✅ Standard MCP protocol compliance
-- ✅ Easy sharing with others
-
-However, you lose real-time progress updates (MCP limitation).
-
-## Recommendation
-
-**Use the custom tool approach** for your use case since:
-1. You need granular progress updates
-2. You're building a dedicated UI for your workflow
-3. You have complex multi-step processing
-
-The MCP approach is better for:
-- Simple, atomic tools
-- Cross-application compatibility
-- Tools that don't need progress tracking
+The SearXNG search seamlessly integrates with:
+- **RAG (Document Search)**: Can be used alongside document search
+- **MCP Tools**: Works in conjunction with other tools
+- **Model Selection**: Respects selected model for responses
+- **Citation System**: Provides proper source attribution
+- **Real-time UI**: Shows progress updates as they happen

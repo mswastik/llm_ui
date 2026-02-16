@@ -33,6 +33,7 @@ The app uses **Server-Sent Events (SSE)** for real-time updates:
 3. Frontend connects to SSE stream: `/api/stream/{request_id}`
 4. Backend streams events:
    - `content`: Text chunks from LLM
+   - `thinking`: Reasoning content from thinking models
    - `tool_call_start`: Tool execution begins
    - `tool_progress`: Progress updates (0-100%)
    - `tool_error`: Tool execution failed
@@ -69,85 +70,73 @@ Or use Tailwind's configuration in `frontend/templates/index.html`:
 </script>
 ```
 
-### 2. Add Document Upload Support
+### 2. Enhanced Document Processing (RAG)
 
-**Backend (`backend/app/main.py`):**
+The application already includes comprehensive document processing with RAG (Retrieval-Augmented Generation):
 
-```python
-from fastapi import UploadFile, File
-from database.crud import create_document
+**Backend Components:**
+- `tools/rag_service.py` - RAG service with document processing
+- `tools/base.py` - Shared utilities for embeddings and reranking
+- `database/models.py` - Document and chunk models
 
-@app.post("/api/upload/document")
-async def upload_document(file: UploadFile = File(...)):
-    """Upload and process a document"""
-    
-    # Save file
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
-    # Create database record
-    async with get_db() as db:
-        doc = await create_document(
-            db,
-            filename=file.filename,
-            filepath=file_path,
-            file_type=file.content_type,
-            size_bytes=len(content)
-        )
-    
-    # Trigger async processing
-    asyncio.create_task(process_document(doc["id"]))
-    
-    return {"document_id": doc["id"], "status": "processing"}
+**Document Processing Flow:**
+1. User uploads document via `/api/documents/upload`
+2. Document is processed by `RAGService.process_document()`
+3. Text is extracted and chunked
+4. Embeddings are generated for each chunk
+5. Chunks and embeddings are stored in SQLite
+6. Documents can be queried via `/api/rag/query`
 
+**Customize Document Processing:**
+Edit `tools/rag_service.py` to modify:
+- Chunk size and overlap
+- Embedding model
+- Similarity threshold
+- Supported file formats
 
-async def process_document(document_id: str):
-    """Process uploaded document asynchronously"""
-    # Your document processing logic
-    # Extract text, generate embeddings, etc.
-    pass
-```
+### 3. Web Search Integration (SearXNG)
 
-**Frontend (`frontend/templates/index.html`):**
+The application includes sophisticated web search with SearXNG:
 
-Add file input in the chat input area:
+**Backend Components:**
+- `tools/searxng_tool.py` - SearXNG integration
+- `tools/base.py` - Shared utilities for embeddings and reranking
 
-```html
-<form @submit.prevent="sendMessage()" class="flex gap-3">
-    <label class="cursor-pointer">
-        <input type="file" class="hidden" @change="handleFileUpload($event)">
-        <svg class="w-6 h-6 text-gray-500 hover:text-gray-700">
-            <!-- Paperclip icon -->
-        </svg>
-    </label>
-    <textarea ...></textarea>
-    <button type="submit">...</button>
-</form>
-```
+**Search Features:**
+- Multi-query generation for better coverage
+- Adaptive query generation based on initial results
+- Content extraction and semantic chunking
+- Embedding-based similarity filtering
+- Re-ranking for relevance
+- Citation support with source tracking
 
-**Alpine.js (`frontend/static/js/app.js`):**
+**Customize Search:**
+Edit `tools/searxng_tool.py` to modify:
+- SearXNG URL
+- Number of search results
+- Chunk size
+- Similarity threshold
+- Supported search categories
 
-```javascript
-async handleFileUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await fetch('/api/upload/document', {
-        method: 'POST',
-        body: formData
-    });
-    
-    const data = await response.json();
-    this.inputMessage = `Analyze the document I just uploaded: ${file.name}`;
-}
-```
+### 4. Text-to-Speech (TTS) Integration
 
-### 3. Add System Prompts
+The application supports multiple TTS engines:
+
+**Backend Components:**
+- `tools/tts_service.py` - TTS service with multiple backends
+
+**Supported Engines:**
+- **Edge TTS**: High-quality online service (requires internet)
+- **Pyttsx3**: Offline service (lower quality but works without internet)
+
+**Customize TTS:**
+Edit `tools/tts_service.py` to modify:
+- Default voice
+- Speech rate
+- Volume level
+- Output format
+
+### 5. Add System Prompts
 
 **Database Model (`backend/database/models.py`):**
 
@@ -164,13 +153,13 @@ class Conversation(Base):
 @app.put("/api/conversations/{conversation_id}/settings")
 async def update_conversation_settings(conversation_id: str, request: Request):
     data = await request.json()
-    
+
     async with get_db() as db:
         result = await db.execute(
             select(Conversation).where(Conversation.id == conversation_id)
         )
         conv = result.scalar_one_or_none()
-        
+
         if conv:
             conv.system_prompt = data.get("system_prompt")
             conv.model_settings = data.get("model_settings")
@@ -180,37 +169,7 @@ async def update_conversation_settings(conversation_id: str, request: Request):
 
 Add settings panel in the chat header area.
 
-### 4. Add Voice Input
-
-Use browser's Web Speech API:
-
-```html
-<button @click="startVoiceInput()" class="...">
-    <svg><!-- Microphone icon --></svg>
-</button>
-```
-
-```javascript
-startVoiceInput() {
-    if (!('webkitSpeechRecognition' in window)) {
-        alert('Voice input not supported in this browser');
-        return;
-    }
-    
-    const recognition = new webkitSpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.continuous = false;
-    
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        this.inputMessage = transcript;
-    };
-    
-    recognition.start();
-}
-```
-
-### 5. Export Conversations
+### 6. Add Conversation Export
 
 **Backend:**
 
@@ -218,22 +177,22 @@ startVoiceInput() {
 @app.get("/api/conversations/{conversation_id}/export")
 async def export_conversation(conversation_id: str, format: str = "markdown"):
     """Export conversation as markdown or JSON"""
-    
+
     async with get_db() as db:
         conversation = await get_conversation(db, conversation_id)
         messages = await get_conversation_messages(db, conversation_id)
-    
+
     if format == "markdown":
         content = f"# {conversation['title']}\n\n"
         for msg in messages:
             content += f"**{msg['role'].title()}**: {msg['content']}\n\n"
-        
+
         return Response(
             content=content,
             media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename={conversation['title']}.md"}
         )
-    
+
     elif format == "json":
         return JSONResponse({
             "conversation": conversation,
@@ -241,7 +200,7 @@ async def export_conversation(conversation_id: str, format: str = "markdown"):
         })
 ```
 
-### 6. Add Conversation Search
+### 7. Add Conversation Search
 
 **Backend:**
 
@@ -249,7 +208,7 @@ async def export_conversation(conversation_id: str, format: str = "markdown"):
 @app.get("/api/conversations/search")
 async def search_conversations(q: str):
     """Search conversations by content"""
-    
+
     async with get_db() as db:
         # Search in messages
         result = await db.execute(
@@ -258,20 +217,20 @@ async def search_conversations(q: str):
             .limit(20)
         )
         messages = result.scalars().all()
-        
+
         # Get unique conversation IDs
         conv_ids = list(set(msg.conversation_id for msg in messages))
-        
+
         # Fetch conversations
         conversations = []
         for conv_id in conv_ids:
             conv = await get_conversation(db, conv_id)
             conversations.append(conv)
-        
+
         return {"conversations": conversations, "query": q}
 ```
 
-### 7. Add User Authentication
+### 8. Add User Authentication
 
 Use FastAPI's security utilities:
 
@@ -297,41 +256,110 @@ async def list_conversations(user=Depends(verify_token)):
     pass
 ```
 
-### 8. Streaming with Tool Results
+### 9. Streaming with Tool Results
 
-Currently, tool results aren't fed back to the LLM. To enable this:
+The application now supports streaming with tool results:
 
 **In `backend/app/main.py`:**
 
 ```python
-async def stream_response(request_id: str, conversation_id: str):
-    async def event_generator() -> AsyncGenerator[str, None]:
-        # ... existing code ...
-        
-        tool_results = []
-        
-        async for chunk in llm_client.stream_chat(llm_messages):
-            if chunk_type == "tool_call":
-                tool_call = chunk.get("tool_call")
-                
-                # Execute tool
-                async for progress in tool_executor.execute_tool(...):
-                    yield f"data: {json.dumps(progress)}\n\n"
-                    
-                    if progress.get("type") == "tool_progress" and progress.get("result"):
-                        tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.get("id"),
-                            "content": json.dumps(progress["result"])
-                        })
-                
-                # Continue LLM generation with tool results
-                llm_messages.append({"role": "assistant", "content": "", "tool_calls": [tool_call]})
-                llm_messages.extend(tool_results)
-                
-                # Stream continuation
-                async for continuation_chunk in llm_client.stream_chat(llm_messages):
-                    # Process continuation...
+async def _core_stream_handler(
+    request_id: str,
+    conversation_id: str,
+    enable_web_search: bool = False,
+    enable_rag: bool = False,
+    model: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    """Universal SSE handler for streaming LLM responses and tool execution."""
+    try:
+        async with get_db() as db:
+            messages = await get_conversation_messages(db, conversation_id)
+            llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+            context_additions = []
+            tool_calls_history = []
+
+            # Execute pre-processing tools (web search, RAG) if enabled
+            if enable_web_search:
+                query_text = llm_messages[-1]["content"] if llm_messages else ""
+                # Send tool call start event
+                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
+                # Create tool call record
+                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
+                tool_calls_history.append(web_search_tool_call)
+
+                async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
+                    # Forward the progress event
+                    yield f"data: {json.dumps(progress_event)}\n\n"
+
+                    # Update tool call status
+                    if progress_event.get("type") == "tool_progress":
+                        web_search_tool_call["status"] = progress_event.get("status", "running")
+                        web_search_tool_call["progress"] = progress_event.get("progress", 0)
+                        # Add progress event to history
+                        web_search_tool_call["progress_history"].append(progress_event)
+                        if progress_event.get("result"):
+                            web_search_tool_call["result"] = progress_event["result"]
+                            web_search_tool_call["status"] = "completed"
+                            if progress_event["result"].get("content"):
+                                context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
+                    elif progress_event.get("type") == "tool_error":
+                        web_search_tool_call["status"] = "error"
+                        web_search_tool_call["result"] = {"error": progress_event.get("error")}
+                    await asyncio.sleep(0)
+
+            # Add context to the last user message
+            if context_additions:
+                for msg in reversed(llm_messages):
+                    if msg["role"] == "user":
+                        msg["content"] += "".join(context_additions) + "\n\n**Important**: Please cite sources using [1], [2], etc."
+                        break
+
+            # Stream LLM response
+            assistant_message, thinking_content = "", ""
+
+            async for chunk in llm_client.stream_chat(llm_messages, model=model):
+                chunk_type = chunk.get("type")
+                if chunk_type == "content":
+                    content = chunk.get("content", "")
+                    assistant_message += content
+                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                elif chunk_type == "thinking":
+                    thinking = chunk.get("content", "")
+                    thinking_content += thinking
+                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
+                elif chunk_type == "tool_call":
+                    tc_data = chunk.get("tool_call")
+                    # Send tool call start event
+                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tc_data['name'], 'args': tc_data['arguments']})}\n\n"
+                    # Create tool call record
+                    tc_record = {"name": tc_data["name"], "arguments": tc_data["arguments"], "status": "pending", "result": None, "progress_history": []}
+                    tool_calls_history.append(tc_record)
+
+                    # Execute the tool
+                    async for progress_event in tool_executor.execute_tool(tc_data["name"], tc_data["arguments"], request_id):
+                        # Forward the progress event
+                        yield f"data: {json.dumps(progress_event)}\n\n"
+                        if progress_event.get("type") == "tool_progress":
+                            tc_record["status"] = progress_event.get("status", "running")
+                            tc_record["progress"] = progress_event.get("progress", 0)
+                            # Add progress event to history
+                            tc_record["progress_history"].append(progress_event)
+                            if progress_event.get("result"):
+                                tc_record["result"] = progress_event["result"]
+                                tc_record["status"] = "completed"
+                        elif progress_event.get("type") == "tool_error":
+                            tc_record["status"] = "error"
+                            tc_record["result"] = {"error": progress_event.get("error")}
+                await asyncio.sleep(0)
+
+            # Save assistant message
+            if assistant_message.strip():
+                await add_message(db, conversation_id, "assistant", assistant_message, tool_calls_history or None, thinking_content or None)
+
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    except Exception as e:
+        print(f"Error in event generator: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 ```
 
 ## Performance Optimization
@@ -366,10 +394,10 @@ async def get_conversation_detail(conversation_id: str):
     cached = await redis_client.get(f"conv:{conversation_id}")
     if cached:
         return json.loads(cached)
-    
+
     # Fetch from DB
     # ... existing code ...
-    
+
     # Cache for 5 minutes
     await redis_client.setex(
         f"conv:{conversation_id}",
@@ -406,7 +434,7 @@ from tools.tool_executor import ToolExecutor
 @pytest.mark.asyncio
 async def test_search_tool():
     executor = ToolExecutor(None)
-    
+
     results = []
     async for progress in executor.execute_tool(
         "search_web",
@@ -414,7 +442,7 @@ async def test_search_tool():
         "test-request-id"
     ):
         results.append(progress)
-    
+
     assert any(r["type"] == "tool_progress" for r in results)
     assert results[-1]["progress"] == 100
 ```
@@ -449,6 +477,9 @@ WORKDIR /app
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install optional dependencies
+RUN pip install edge-tts
 
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
@@ -526,3 +557,5 @@ To contribute to the project:
 - [HTMX Documentation](https://htmx.org/)
 - [Model Context Protocol Spec](https://modelcontextprotocol.io/)
 - [llama.cpp](https://github.com/ggerganov/llama.cpp)
+- [SearXNG Documentation](https://docs.searxng.org/)
+- [Edge TTS Documentation](https://github.com/rany2/edge-tts)

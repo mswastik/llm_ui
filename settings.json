@@ -1,0 +1,23 @@
+{
+  "database_url": "sqlite+aiosqlite:///./llm_ui.db",
+  "llama_cpp_base_url": "http://localhost:8080",
+  "llama_cpp_model": "glm4.7-30ba3b",
+  "query_model": "qwen3-30ba3b",
+  "app_host": "0.0.0.0",
+  "app_port": 8000,
+  "debug": false,
+  "max_upload_size": 10485760,
+  "upload_dir": "./uploads",
+  "cors_origins": "*",
+  "system_prompt": "You are a helpful AI assistant. When you use tools, explain what you're doing and why.",
+  "default_temperature": 0.7,
+  "default_max_tokens": 16048,
+  "tts_engine": "kokoro",
+  "tts_voice": "af_bella",
+  "tts_rate": "+0%",
+  "tts_volume": 1,
+  "kokoro_lang": "a",
+  "kokoro_device": "cpu",
+  "kokoro_volume": 1,
+  "kokoro_speed": 2
+}

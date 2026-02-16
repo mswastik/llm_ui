@@ -91,7 +91,8 @@ async def add_message(
     role: str,
     content: str,
     tool_calls: Optional[List] = None,
-    thinking: Optional[str] = None
+    thinking: Optional[str] = None,
+    extra_metadata: Optional[Dict] = None
 ) -> Dict:
     """Add a message to a conversation"""
     message = Message(
@@ -99,10 +100,11 @@ async def add_message(
         role=role,
         content=content,
         tool_calls=tool_calls,
-        thinking=thinking
+        thinking=thinking,
+        extra_metadata=extra_metadata
     )
     db.add(message)
-    
+
     # Update conversation's updated_at timestamp
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
@@ -110,9 +112,9 @@ async def add_message(
     conversation = result.scalar_one_or_none()
     if conversation:
         conversation.updated_at = datetime.utcnow()
-    
+
     await db.flush()
-    
+
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
@@ -120,6 +122,7 @@ async def add_message(
         "content": message.content,
         "tool_calls": message.tool_calls,
         "thinking": message.thinking,
+        "metadata": message.extra_metadata,
         "created_at": message.created_at.isoformat(),
     }
 
@@ -135,7 +138,7 @@ async def get_conversation_messages(
         .order_by(Message.created_at)
     )
     messages = result.scalars().all()
-    
+
     return [
         {
             "id": msg.id,
@@ -143,6 +146,7 @@ async def get_conversation_messages(
             "content": msg.content,
             "tool_calls": msg.tool_calls,
             "thinking": msg.thinking,
+            "metadata": msg.extra_metadata,
             "created_at": msg.created_at.isoformat(),
         }
         for msg in messages
@@ -296,10 +300,10 @@ async def get_message(db: AsyncSession, message_id: str) -> Optional[Dict]:
         select(Message).where(Message.id == message_id)
     )
     message = result.scalar_one_or_none()
-    
+
     if not message:
         return None
-    
+
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
@@ -307,6 +311,7 @@ async def get_message(db: AsyncSession, message_id: str) -> Optional[Dict]:
         "content": message.content,
         "tool_calls": message.tool_calls,
         "thinking": message.thinking,
+        "metadata": message.extra_metadata,
         "created_at": message.created_at.isoformat(),
     }
 
@@ -317,19 +322,21 @@ async def update_message(db: AsyncSession, message_id: str, content: str) -> Opt
         select(Message).where(Message.id == message_id)
     )
     message = result.scalar_one_or_none()
-    
+
     if not message:
         return None
-    
+
     message.content = content
     await db.flush()
-    
+
     return {
         "id": message.id,
         "conversation_id": message.conversation_id,
         "role": message.role,
         "content": message.content,
         "tool_calls": message.tool_calls,
+        "thinking": message.thinking,
+        "metadata": message.extra_metadata,
         "created_at": message.created_at.isoformat(),
     }
 

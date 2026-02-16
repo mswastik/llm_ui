@@ -2,6 +2,7 @@
 Application settings management module
 """
 import os
+import json
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 import importlib.util
@@ -26,6 +27,9 @@ MAX_UPLOAD_SIZE = config_module.MAX_UPLOAD_SIZE
 UPLOAD_DIR = config_module.UPLOAD_DIR
 CORS_ORIGINS = config_module.CORS_ORIGINS
 SYSTEM_PROMPT = config_module.SYSTEM_PROMPT
+
+
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
 
 
 class Settings(BaseModel):
@@ -64,30 +68,34 @@ class Settings(BaseModel):
     tts_volume: float = Field(default=1.0, description="Volume level (0.0 to 1.0)")
     kokoro_lang: str = Field(default="a", description="Kokoro language code (a=American English, b=British English)")
     kokoro_device: str = Field(default="cpu", description="Kokoro device (cpu or cuda)")
+    kokoro_volume: float = Field(default=1.0, description="Kokoro TTS volume level (0.0 to 1.0)")
+    kokoro_speed: float = Field(default=1.0, description="Kokoro TTS speed multiplier (0.5 to 2.0)")
 
 
 class SettingsManager:
     """Manages application settings"""
-    
+
     def __init__(self):
         self.settings = Settings()
         self.tts_service = None  # Will be set later
-    
+        # Load settings from file if it exists
+        self.load_settings_from_file()
+
     def set_tts_service(self, tts_service):
         """Set the TTS service for configuration updates"""
         self.tts_service = tts_service
-    
+
     def get_settings(self) -> Dict[str, Any]:
         """Get current settings"""
         return self.settings.dict()
-    
+
     def update_settings(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
         """Update settings with new values"""
         # Update the settings object
         for key, value in new_settings.items():
             if hasattr(self.settings, key):
                 setattr(self.settings, key, value)
-        
+
         # Update environment variables for runtime changes where applicable
         if 'llama_cpp_base_url' in new_settings:
             os.environ['LLAMA_CPP_URL'] = new_settings['llama_cpp_base_url']
@@ -111,19 +119,20 @@ class SettingsManager:
             os.environ['UPLOAD_DIR'] = new_settings['upload_dir']
         if 'system_prompt' in new_settings:
             os.environ['SYSTEM_PROMPT'] = new_settings['system_prompt']
-        
+
         # Update CORS origins if changed
         if 'cors_origins' in new_settings:
             os.environ['CORS_ORIGINS'] = new_settings['cors_origins']
-        
+
         # Update TTS settings if changed and TTS service is available
-        if ('tts_engine' in new_settings or 'tts_voice' in new_settings or 
+        if ('tts_engine' in new_settings or 'tts_voice' in new_settings or
             'tts_rate' in new_settings or 'tts_volume' in new_settings or
-            'kokoro_lang' in new_settings or 'kokoro_device' in new_settings) and self.tts_service:
+            'kokoro_lang' in new_settings or 'kokoro_device' in new_settings or
+            'kokoro_volume' in new_settings or 'kokoro_speed' in new_settings) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)
             self.tts_service.update_config(tts_config)
-        
+
         if 'tts_engine' in new_settings:
             os.environ['TTS_ENGINE'] = new_settings['tts_engine']
         if 'tts_voice' in new_settings:
@@ -136,8 +145,37 @@ class SettingsManager:
             os.environ['KOKORO_LANG'] = new_settings['kokoro_lang']
         if 'kokoro_device' in new_settings:
             os.environ['KOKORO_DEVICE'] = new_settings['kokoro_device']
-        
+        if 'kokoro_volume' in new_settings:
+            os.environ['KOKORO_VOLUME'] = str(new_settings['kokoro_volume'])
+        if 'kokoro_speed' in new_settings:
+            os.environ['KOKORO_SPEED'] = str(new_settings['kokoro_speed'])
+
+        # Save settings to file
+        self.save_settings_to_file()
+
         return self.get_settings()
+
+    def load_settings_from_file(self):
+        """Load settings from file if it exists"""
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, 'r') as f:
+                    saved_settings = json.load(f)
+                
+                # Update settings object with saved values
+                for key, value in saved_settings.items():
+                    if hasattr(self.settings, key):
+                        setattr(self.settings, key, value)
+            except Exception as e:
+                print(f"Error loading settings from file: {e}")
+
+    def save_settings_to_file(self):
+        """Save current settings to file"""
+        try:
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(self.get_settings(), f, indent=2)
+        except Exception as e:
+            print(f"Error saving settings to file: {e}")
 
 
 # Global settings manager instance

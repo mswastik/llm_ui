@@ -28,19 +28,22 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False)
     role = Column(String, nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     # Store thinking content from reasoning models (e.g., DeepSeek)
     thinking = Column(Text, nullable=True)
-    
+
     # Store tool calls and results if any
     tool_calls = Column(JSON, nullable=True)
-    
+
+    # Additional metadata for the message
+    extra_metadata = Column(JSON, nullable=True, name="metadata")
+
     # Relationship to conversation
     conversation = relationship("Conversation", back_populates="messages")
 

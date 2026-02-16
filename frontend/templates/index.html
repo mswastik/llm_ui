@@ -248,13 +248,18 @@
                                     </div>
                                 </div>
                             </template>
-                            
+                            <!-- Model name display for assistant messages -->
+                            <template x-if="message.role === 'assistant' && message.metadata && message.metadata.model">
+                                <div class="text-md text-amber-800 mb-2 font-bold">
+                                    <span x-text="message.metadata.model"></span>
+                                </div>
+                            </template>
                             <!-- Tool Calls (Collapsible, above content) -->
                             <template x-if="message.tool_calls && message.tool_calls.length > 0 && editingMessageId !== message.id">
-                                <div class="mb-6 pb-3 text-sm min-w-16">
+                                <div class="mb-1 py-1 rounded-md text-sm min-w-16 hover:bg-gray-200">
                                     <div 
                                         @click="toggleToolCalls(message.id)"
-                                        class="flex mt-3 items-end gap-2 cursor-pointer select-none text-xs font-medium text-gray-600 hover:text-gray-800 transition">
+                                        class="flex mt-1 items-end gap-2 cursor-pointer select-none text-xs font-medium text-gray-600 hover:text-gray-800 transition">
                                         <svg class="w-3 h-3 transition-transform duration-200" :class="isToolCallsExpanded(message.id) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
@@ -345,7 +350,7 @@
                             
                             <!-- Thinking Section (Collapsible, for reasoning models) -->
                             <template x-if="message.thinking && message.thinking.length > 0 && editingMessageId !== message.id">
-                                <div class="mb-3 text-sm min-w-16">
+                                <div class="mb-3 text-sm min-w-16 hover:bg-purple-200 rounded-md py-1">
                                     <div 
                                         @click="toggleThinking(message.id)"
                                         class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-purple-600 hover:text-purple-800 transition">
@@ -373,13 +378,13 @@
                             <!-- Message Content -->
                             <template x-if="editingMessageId !== message.id">
                                 <div>
-                                    <div class="prose prose-sm max-w-none" 
+                                    <div class="prose prose-sm max-w-none"
                                          x-html="renderMarkdownWithCitations(message.content, getMessageSources(message))"></div>
-                                    
+
                                     <!-- Sources Section (Collapsible) -->
                                     <template x-if="message.role === 'assistant' && getMessageSources(message).length > 0">
                                         <div class="mt-4 pt-3 border-t border-gray-200">
-                                            <div 
+                                            <div
                                                 @click="toggleSources(message.id)"
                                                 class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-gray-500 hover:text-gray-700 transition">
                                                 <svg class="w-3 h-3 transition-transform duration-200" :class="isSourcesExpanded(message.id) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -391,7 +396,7 @@
                                                 <span>Sources</span>
                                                 <span class="text-gray-400" x-text="'(' + getMessageSources(message).length + ')'"></span>
                                             </div>
-                                            
+
                                             <!-- Expanded Sources Content -->
                                             <div x-show="isSourcesExpanded(message.id)" x-collapse class="mt-2">
                                                 <div class="bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-64 overflow-y-auto">
@@ -399,8 +404,8 @@
                                                         <template x-for="(source, index) in getMessageSources(message)" :key="index">
                                                             <li class="flex items-start gap-1 py-0.5">
                                                                 <span class="text-gray-500 font-mono min-w-[1.5rem]" x-text="index + 1 + '.'"></span>
-                                                                <a :href="source.url" 
-                                                                   target="_blank" 
+                                                                <a :href="source.url"
+                                                                   target="_blank"
                                                                    rel="noopener noreferrer"
                                                                    class="text-blue-600 hover:text-blue-800 hover:underline break-all line-clamp-2">
                                                                     <span x-text="source.title || source.url"></span>
@@ -804,7 +809,7 @@
                                     <option value="b">British English</option>
                                 </select>
                             </div>
-                            
+
                             <div x-show="settings.tts_engine === 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Device</label>
                                 <select
@@ -816,7 +821,29 @@
                                     <option value="cuda:1">CUDA:1 (second GPU)</option>
                                 </select>
                             </div>
-                            
+
+                            <div x-show="settings.tts_engine === 'kokoro'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Volume</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    max="1"
+                                    x-model.number="settings.kokoro_volume"
+                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+
+                            <div x-show="settings.tts_engine === 'kokoro'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Speed</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.5"
+                                    max="2"
+                                    x-model.number="settings.kokoro_speed"
+                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+
                             <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Speech Rate</label>
                                 <input
@@ -824,7 +851,7 @@
                                     x-model="settings.tts_rate"
                                     class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
+
                             <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Volume Level</label>
                                 <input

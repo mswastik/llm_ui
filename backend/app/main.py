@@ -244,7 +244,9 @@ async def _core_stream_handler(
 
             # Save assistant message
             if assistant_message.strip():
-                await add_message(db, conversation_id, "assistant", assistant_message, tool_calls_history or None, thinking_content or None)
+                # Add model info to message metadata
+                message_extra_metadata = {"model": model} if model else {}
+                await add_message(db, conversation_id, "assistant", assistant_message, tool_calls_history or None, thinking_content or None, extra_metadata=message_extra_metadata)
 
             # Title Generation Logic (only for first exchange)
             messages_after_save = await get_conversation_messages(db, conversation_id)

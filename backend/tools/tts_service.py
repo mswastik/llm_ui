@@ -75,7 +75,9 @@ class TTSConfig:
     output_dir: str = UPLOAD_DIR
     kokoro_lang: str = "a"  # Kokoro language code: 'a' for American English, 'b' for British English
     kokoro_device: str = "cpu"  # Kokoro device: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-    
+    kokoro_volume: float = 1.0  # Kokoro volume (0.0 to 1.0)
+    kokoro_speed: float = 1.0  # Kokoro speed multiplier (0.5 to 2.0)
+
     @classmethod
     def from_settings(cls, settings_dict: dict):
         """Create TTSConfig from settings dictionary"""
@@ -86,7 +88,9 @@ class TTSConfig:
             volume=float(settings_dict.get('tts_volume', 1.0)),
             output_dir=settings_dict.get('upload_dir', UPLOAD_DIR),
             kokoro_lang=settings_dict.get('kokoro_lang', 'a'),
-            kokoro_device=settings_dict.get('kokoro_device', 'cpu')
+            kokoro_device=settings_dict.get('kokoro_device', 'cpu'),
+            kokoro_volume=float(settings_dict.get('kokoro_volume', 1.0)),
+            kokoro_speed=float(settings_dict.get('kokoro_speed', 1.0))
         )
 
 
@@ -115,11 +119,15 @@ class TTSService:
     def _get_cache_filename(self, text: str, voice: str, rate: str, output_format: str) -> str:
         """Generate a consistent filename based on text content and parameters"""
         # Create a hash of the text content along with voice and rate parameters
-        text_hash = hashlib.md5(f"{text}_{voice}_{rate}".encode()).hexdigest()
-        
+        # Include kokoro-specific settings in the hash for Kokoro engine
+        if self.config.engine == "kokoro":
+            text_hash = hashlib.md5(f"{text}_{voice}_{self.config.kokoro_volume}_{self.config.kokoro_speed}_{self.config.kokoro_lang}".encode()).hexdigest()
+        else:
+            text_hash = hashlib.md5(f"{text}_{voice}_{rate}".encode()).hexdigest()
+
         # Kokoro outputs WAV format, so we use wav for kokoro
         actual_format = "wav" if self.config.engine == "kokoro" else output_format
-        
+
         return f"tts_{text_hash}.{actual_format}"
 
     def _get_kokoro_pipeline(self):
@@ -149,13 +157,19 @@ class TTSService:
         """Update the TTS configuration"""
         old_device = self.config.kokoro_device if self.config else None
         old_lang = self.config.kokoro_lang if self.config else None
-        
+        old_volume = self.config.kokoro_volume if self.config else None
+        old_speed = self.config.kokoro_speed if self.config else None
+
         self.config = new_config
         self._ensure_output_dir()
-        
+
+        # Log config changes for debugging
+        print(f"TTS Config updated: engine={self.config.engine}, kokoro_volume={self.config.kokoro_volume}, kokoro_speed={self.config.kokoro_speed}")
+
         # Reset Kokoro pipeline if device or language changes
         if (old_device != new_config.kokoro_device or old_lang != new_config.kokoro_lang):
             self._kokoro_pipeline = None
+            print(f"Kokoro pipeline reset due to device/lang change")
     
     async def generate_speech(
         self,
@@ -320,18 +334,18 @@ class TTSService:
                     pipeline = self._get_kokoro_pipeline()  # This will use CPU fallback
                     if pipeline is None:
                         return {"success": False, "error": "Kokoro pipeline not available after CPU fallback."}
-                    
+
                     # Retry generation with CPU pipeline
                     def _generate_cpu():
                         audio_segments = []
                         for _, _, audio in pipeline(text, voice=voice):
                             audio_segments.append(audio)
-                        
+
                         if audio_segments:
                             full_audio = np.concatenate(audio_segments)
                             return full_audio
                         return None
-                    
+
                     audio_data = await loop.run_in_executor(None, _generate_cpu)
                 else:
                     raise e
@@ -339,9 +353,39 @@ class TTSService:
             if audio_data is None:
                 return {"success": False, "error": "Kokoro generated no audio"}
 
-            # Apply volume adjustment if needed
-            if self.config.volume != 1.0:
-                audio_data = audio_data * self.config.volume
+            # Apply volume adjustment if needed (using kokoro-specific volume)
+            if self.config.kokoro_volume != 1.0:
+                print(f"Applying Kokoro volume adjustment: {self.config.kokoro_volume}")
+                audio_data = audio_data * self.config.kokoro_volume
+
+            # Apply speed adjustment if needed
+            if self.config.kokoro_speed != 1.0:
+                print(f"Applying Kokoro speed adjustment: {self.config.kokoro_speed}")
+                try:
+                    import librosa
+                    # Resample audio to change speed (pitch-preserving)
+                    # Speed up = higher sample rate output, then resample back to original
+                    speed_factor = self.config.kokoro_speed
+                    # Stretch/compress audio using time-stretch
+                    audio_data = librosa.effects.time_stretch(audio_data.astype(np.float32), rate=speed_factor)
+                    print(f"Speed adjustment applied using librosa")
+                except ImportError:
+                    # If librosa is not available, use scipy
+                    try:
+                        from scipy.interpolate import interp1d
+                        original_length = len(audio_data)
+                        target_length = int(original_length / self.config.kokoro_speed)
+                        
+                        if target_length != original_length:
+                            # Create interpolation function
+                            x_original = np.linspace(0, 1, original_length)
+                            x_target = np.linspace(0, 1, target_length)
+                            f = interp1d(x_original, audio_data, kind='linear', fill_value='extrapolate')
+                            audio_data = f(x_target)
+                            print(f"Speed adjustment applied using scipy")
+                    except ImportError:
+                        # If neither librosa nor scipy is available, warn but continue without speed adjustment
+                        print("Warning: Speed adjustment requires librosa or scipy. Continuing without speed adjustment.")
 
             # Save as WAV file (Kokoro outputs at 24kHz)
             sf.write(filepath, audio_data, 24000)

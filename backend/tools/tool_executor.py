@@ -85,13 +85,13 @@ class ToolExecutor:
             "generate_speech": self._generate_speech_with_progress,
         }
     
-    def get_tool_definitions(self, exclude_tools: List[str] = None) -> List[Dict]:
+    def get_tool_definitions(self, exclude_tools: List[str] = None, mcp_tools: List[Dict] = None) -> List[Dict]:
         """
         Get all tool definitions for LLM function calling.
         
         Args:
             exclude_tools: List of tool names to exclude from definitions.
-                          Useful when tools have already been executed as pre-processing.
+            mcp_tools: Optional list of pre-fetched MCP tools.
         
         Returns a list of tool definitions in OpenAI format.
         """
@@ -106,10 +106,19 @@ class ToolExecutor:
         # Filter out excluded tools
         tools = [t for t in tools if t.get("function", {}).get("name") not in exclude_tools]
         
-        # Add MCP tools if available
-        if self.mcp_manager:
-            # MCP tools would be added here
-            pass
+        # Add MCP tools if provided
+        if mcp_tools:
+            for tool in mcp_tools:
+                # Convert MCP tool format to OpenAI function format
+                openai_tool = {
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("input_schema", tool.get("inputSchema", {"type": "object", "properties": {}}))
+                    }
+                }
+                tools.append(openai_tool)
         
         return tools
     

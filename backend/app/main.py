@@ -207,7 +207,12 @@ async def _core_stream_handler(
             # Stream LLM response
             assistant_message, thinking_content = "", ""
             
-            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=tool_executor.get_tool_definitions(exclude_tools=exclude_tools)):
+            # Get MCP tools for LLM function calling
+            mcp_tools = []
+            if mcp_manager:
+                mcp_tools = await mcp_manager.list_all_tools()
+            
+            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=tool_executor.get_tool_definitions(exclude_tools=exclude_tools, mcp_tools=mcp_tools)):
                 chunk_type = chunk.get("type")
                 if chunk_type == "content":
                     content = chunk.get("content", "")

@@ -161,14 +161,29 @@ async def add_mcp_server(
     args: List[str],
     env: Dict
 ) -> Dict:
-    """Add an MCP server configuration"""
-    server = MCPServer(
-        name=name,
-        command=command,
-        args=args,
-        env=env
+    """Add an MCP server configuration. Updates if exists."""
+    # Check if server already exists
+    result = await db.execute(
+        select(MCPServer).where(MCPServer.name == name)
     )
-    db.add(server)
+    server = result.scalar_one_or_none()
+    
+    if server:
+        # Update existing server
+        server.command = command
+        server.args = args
+        server.env = env
+        server.enabled = 1  # Re-enable if it was disabled
+    else:
+        # Create new server
+        server = MCPServer(
+            name=name,
+            command=command,
+            args=args,
+            env=env
+        )
+        db.add(server)
+    
     await db.flush()
     
     return {

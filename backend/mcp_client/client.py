@@ -57,8 +57,10 @@ class MCPClientManager:
     ) -> bool:
         """Start an MCP server process"""
         try:
-            # Prepare environment
-            process_env = {**env}
+            # Prepare environment - inherit from current process to ensure PATH is available
+            import os
+            process_env = os.environ.copy()
+            process_env.update(env)
             
             # Start the MCP server process
             # Note: This is a simplified version. Real MCP communication uses stdio
@@ -107,10 +109,26 @@ class MCPClientManager:
             
             # Read response from stdout
             response_line = await server.process.stdout.readline()
-            response = json.loads(response_line.decode())
-            
-            if "result" in response and "tools" in response["result"]:
-                server.tools = response["result"]["tools"]
+            if not response_line:
+                # Check stderr for errors if stdout is empty
+                error_output = await server.process.stderr.read(1024)
+                print(f"MCP server '{server.name}' closed stdout unexpectedly. Stderr: {error_output.decode()}")
+                server.tools = []
+                return
+
+            try:
+                response = json.loads(response_line.decode())
+                if "result" in response and "tools" in response["result"]:
+                    server.tools = response["result"]["tools"]
+            except json.JSONDecodeError as e:
+                # Try to read some more from stdout/stderr to see what happened
+                remaining = await server.process.stdout.read(1024)
+                stderr_output = await server.process.stderr.read(1024)
+                print(f"Failed to parse JSON from '{server.name}': {e}")
+                print(f"Raw response line: {response_line.decode()}")
+                print(f"Remaining stdout: {remaining.decode()}")
+                print(f"Stderr: {stderr_output.decode()}")
+                server.tools = []
             
         except Exception as e:
             print(f"Failed to discover tools from '{server.name}': {e}")
@@ -205,8 +223,16 @@ class MCPClientManager:
         
         # Terminate the process
         if server.process:
-            server.process.terminate()
-            await server.process.wait()
+            try:
+                # Check if process is still running
+                if server.process.returncode is None:
+                    server.process.terminate()
+                    await server.process.wait()
+            except ProcessLookupError:
+                # Process already exited
+                pass
+            except Exception as e:
+                print(f"Error terminating MCP server process: {e}")
         
         # Remove from active servers
         del self.servers[name]
@@ -222,7 +248,11 @@ class MCPClientManager:
         """Clean up all server processes"""
         for server in self.servers.values():
             if server.process:
-                server.process.terminate()
-                await server.process.wait()
+                try:
+                    if server.process.returncode is None:
+                        server.process.terminate()
+                        await server.process.wait()
+                except (ProcessLookupError, Exception):
+                    pass
         
         self.servers.clear()

@@ -159,7 +159,9 @@ async def add_mcp_server(
     name: str,
     command: str,
     args: List[str],
-    env: Dict
+    env: Dict,
+    transport_type: str = "stdio",
+    url: Optional[str] = None
 ) -> Dict:
     """Add an MCP server configuration. Updates if exists."""
     # Check if server already exists
@@ -167,31 +169,37 @@ async def add_mcp_server(
         select(MCPServer).where(MCPServer.name == name)
     )
     server = result.scalar_one_or_none()
-    
+
     if server:
         # Update existing server
+        server.transport_type = transport_type
         server.command = command
         server.args = args
         server.env = env
+        server.url = url
         server.enabled = 1  # Re-enable if it was disabled
     else:
         # Create new server
         server = MCPServer(
             name=name,
+            transport_type=transport_type,
             command=command,
             args=args,
-            env=env
+            env=env,
+            url=url
         )
         db.add(server)
-    
+
     await db.flush()
-    
+
     return {
         "id": server.id,
         "name": server.name,
+        "transport_type": server.transport_type,
         "command": server.command,
         "args": server.args,
         "env": server.env,
+        "url": server.url,
         "enabled": bool(server.enabled),
     }
 
@@ -202,14 +210,16 @@ async def get_enabled_mcp_servers(db: AsyncSession) -> List[Dict]:
         select(MCPServer).where(MCPServer.enabled == 1)
     )
     servers = result.scalars().all()
-    
+
     return [
         {
             "id": server.id,
             "name": server.name,
+            "transport_type": server.transport_type,
             "command": server.command,
             "args": server.args,
             "env": server.env,
+            "url": server.url,
         }
         for server in servers
     ]

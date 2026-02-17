@@ -334,9 +334,19 @@ async def add_mcp_server(request: Request):
     command = data.get("command")
     args = data.get("args", [])
     env = data.get("env", {})
+    transport_type = data.get("transport_type", "stdio")
+    url = data.get("url")
     
-    success = await mcp_manager.add_server(name, command, args, env)
-    
+    # Validate based on transport type
+    if transport_type in ("sse", "streamable-http"):
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required for SSE/StreamableHTTP transport")
+    elif transport_type == "stdio":
+        if not command:
+            raise HTTPException(status_code=400, detail="Command is required for stdio transport")
+
+    success = await mcp_manager.add_server(name, command, args, env, transport_type, url)
+
     if success:
         return {"status": "success", "message": f"Server '{name}' added successfully"}
     else:

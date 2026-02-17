@@ -37,8 +37,10 @@ function chatApp() {
         mcpServers: [],
         newServer: {
             name: '',
+            transport_type: 'stdio',  // 'stdio', 'sse', or 'streamable-http'
             command: '',
-            args: '[]'
+            args: '[]',
+            url: ''
         },
 
         // Settings
@@ -918,21 +920,33 @@ function chatApp() {
                     alert('Invalid JSON for arguments');
                     return;
                 }
-                
+
+                // Validate based on transport type
+                if (this.newServer.transport_type !== 'stdio' && !this.newServer.url) {
+                    alert('URL is required for SSE/StreamableHTTP transport');
+                    return;
+                }
+                if (this.newServer.transport_type === 'stdio' && !this.newServer.command) {
+                    alert('Command is required for stdio transport');
+                    return;
+                }
+
                 const response = await fetch('/api/mcp/servers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: this.newServer.name,
+                        transport_type: this.newServer.transport_type,
                         command: this.newServer.command,
                         args: args,
-                        env: {}
+                        env: {},
+                        url: this.newServer.url || null
                     })
                 });
-                
+
                 if (response.ok) {
                     await this.loadMCPServers();
-                    this.newServer = { name: '', command: '', args: '[]' };
+                    this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' };
                     alert('MCP Server added successfully!');
                 } else {
                     alert('Failed to add MCP server');

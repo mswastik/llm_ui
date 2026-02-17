@@ -50,12 +50,21 @@ class Message(Base):
 
 class MCPServer(Base):
     __tablename__ = "mcp_servers"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, unique=True, nullable=False)
-    command = Column(String, nullable=False)
+    
+    # Transport type: 'stdio', 'sse', or 'streamable-http'
+    transport_type = Column(String, default="stdio", nullable=False)
+    
+    # For stdio transport
+    command = Column(String, nullable=True)  # Optional for URL-based transports
     args = Column(JSON, default=list)
     env = Column(JSON, default=dict)
+    
+    # For SSE and StreamableHTTP transports
+    url = Column(String, nullable=True)
+    
     enabled = Column(Integer, default=1)  # SQLite doesn't have native boolean
     created_at = Column(DateTime, default=datetime.utcnow)
 

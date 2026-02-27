@@ -9,7 +9,7 @@ import os
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional
 
-from config import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
+from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from database.models import init_db, get_db
 from database.crud import (
     create_conversation, get_conversation, get_all_conversations,
@@ -223,38 +223,45 @@ async def _core_stream_handler(
             max_tool_iterations = 15  # Prevent infinite loops
             tool_iteration = 0
             
+            # Track message blocks for sequential display (content, thinking, tool calls)
+            message_blocks = []
+            current_content_block = ""
+            current_thinking_block = ""
+
             while tool_iteration < max_tool_iterations:
                 tool_iteration += 1
                 print(f"[DEBUG] Conversation loop iteration {tool_iteration}")
-                
+
                 # Stream LLM response
                 assistant_message, thinking_content = "", ""
                 pending_tool_call = None
                 had_content = False
-                
+
                 async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
                     try:
                         chunk_type = chunk.get("type")
                         print(f"[DEBUG] Chunk received: type={chunk_type}")
-                        
+
                         if chunk_type == "content":
                             content = chunk.get("content", "")
                             assistant_message += content
+                            current_content_block += content
                             had_content = True
                             yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
                         elif chunk_type == "thinking":
                             thinking = chunk.get("content", "")
                             thinking_content += thinking
+                            current_thinking_block += thinking
                             yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
                         elif chunk_type == "tool_call":
                             print(f"[DEBUG] Tool call chunk received")
                             tc_data = chunk.get("tool_call")
                             print(f"[DEBUG] tc_data: {tc_data}")
-                            
+
                             if tc_data:
                                 tool_name = tc_data.get('name')
                                 tool_args = tc_data.get('arguments')
-                                
+
                                 # Store the pending tool call
                                 if tool_name:
                                     pending_tool_call = {
@@ -265,27 +272,43 @@ async def _core_stream_handler(
                                         "progress_history": []
                                     }
                                     print(f"[DEBUG] Pending tool call: {tool_name}, args: {pending_tool_call['arguments']}")
-                        
+
                     except Exception as e:
                         print(f"[DEBUG] Error processing chunk: {e}")
                         print(f"[DEBUG] Chunk data: {chunk}")
                         import traceback
                         traceback.print_exc()
                     await asyncio.sleep(0)
-                
+
+                # Save content block if we have any (before tool call)
+                if current_content_block.strip():
+                    message_blocks.append({
+                        "type": "content",
+                        "content": current_content_block.strip()
+                    })
+                    current_content_block = ""
+
+                # Save thinking block if we have any (before tool call)
+                if current_thinking_block.strip():
+                    message_blocks.append({
+                        "type": "thinking",
+                        "content": current_thinking_block.strip()
+                    })
+                    current_thinking_block = ""
+
                 # If we have a pending tool call, execute it and continue the loop
                 if pending_tool_call:
                     print(f"Executing tool: {pending_tool_call['name']}")
-                    
+
                     # Send tool call start event
                     yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': pending_tool_call['name'], 'args': pending_tool_call['arguments']})}\n\n"
                     tool_calls_history.append(pending_tool_call)
-                    
+
                     # Execute the tool
                     tool_result = None
                     async for progress_event in tool_executor.execute_tool(
-                        pending_tool_call['name'], 
-                        pending_tool_call['arguments'], 
+                        pending_tool_call['name'],
+                        pending_tool_call['arguments'],
                         request_id
                     ):
                         # Forward the progress event
@@ -301,7 +324,17 @@ async def _core_stream_handler(
                         elif progress_event.get("type") == "tool_error":
                             pending_tool_call["status"] = "error"
                             pending_tool_call["result"] = {"error": progress_event.get("error")}
-                    
+
+                    # Add tool call block to message blocks for sequential display
+                    message_blocks.append({
+                        "type": "tool_call",
+                        "name": pending_tool_call['name'],
+                        "arguments": pending_tool_call['arguments'],
+                        "status": pending_tool_call['status'],
+                        "result": pending_tool_call['result'],
+                        "progress_history": pending_tool_call['progress_history']
+                    })
+
                     # Add tool result to conversation for LLM to continue
                     # Format for llama.cpp: role=tool with content as string
                     tool_result_str = json.dumps(tool_result, default=str) if tool_result else "No result"
@@ -310,21 +343,35 @@ async def _core_stream_handler(
                         "content": tool_result_str,
                         "tool_call_id": pending_tool_call['name']
                     })
-                    
+
                     print(f"[DEBUG] Tool executed, continuing conversation with result")
                     # Continue the while loop to get LLM's response to the tool result
                     # (LLM may respond with content, thinking, or another tool call)
-                    
+
                 else:
                     # No tool call, conversation is complete
                     print(f"[DEBUG] No pending tool call, conversation complete")
                     break
             
-            # Save assistant message
-            if assistant_message.strip():
+            # Save any remaining content/thinking blocks after the loop ends
+            if current_content_block.strip():
+                message_blocks.append({
+                    "type": "content",
+                    "content": current_content_block.strip()
+                })
+            if current_thinking_block.strip():
+                message_blocks.append({
+                    "type": "thinking",
+                    "content": current_thinking_block.strip()
+                })
+
+            # Save assistant message with message blocks for sequential display
+            if assistant_message.strip() or message_blocks:
                 # Add model info to message metadata
                 message_extra_metadata = {"model": model} if model else {}
-                await add_message(db, conversation_id, "assistant", assistant_message, tool_calls_history or None, thinking_content or None, extra_metadata=message_extra_metadata)
+                # Store message_blocks in tool_calls field for backward compatibility
+                # Each block has a "type" field: "content", "thinking", or "tool_call"
+                await add_message(db, conversation_id, "assistant", assistant_message, message_blocks or None, thinking_content or None, extra_metadata=message_extra_metadata)
 
             # Title Generation Logic (only for first exchange)
             messages_after_save = await get_conversation_messages(db, conversation_id)
@@ -336,7 +383,7 @@ async def _core_stream_handler(
                 if first_user_message:
                     try:
                         # Use QUERY_MODEL for title generation to avoid issues with thinking models
-                        from config import QUERY_MODEL
+                        from settings import QUERY_MODEL
                         title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL), timeout=40.0)
                         await update_conversation_title(db, conversation_id, title)
                         yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"

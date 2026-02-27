@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 import uuid
 
-from config import LLAMA_CPP_BASE_URL, UPLOAD_DIR
 from tools.base import SharedLLMUtils
 
 # Try to import PDF extraction
@@ -40,13 +39,17 @@ except ImportError:
 @dataclass
 class RAGConfig:
     """Configuration for RAG service"""
-    embeddings_api: str = f"{LLAMA_CPP_BASE_URL}/v1/embeddings"
-    rerank_api: str = f"{LLAMA_CPP_BASE_URL}/v1/rerank"
     chunk_size: int = 500  # Words per chunk
     chunk_overlap: int = 50  # Words overlap between chunks
     similarity_threshold: float = 0.3
     max_chunks: int = 20
     max_retries: int = 3
+    
+    def __post_init__(self):
+        """Initialize URLs after dataclass initialization"""
+        base_url = os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3")
+        self.embeddings_api = f"{base_url}/v1/embeddings"
+        self.rerank_api = f"{base_url}/v1/rerank"
 
 
 class DocumentProcessor:

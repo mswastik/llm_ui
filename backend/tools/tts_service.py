@@ -15,7 +15,7 @@ import uuid
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass
-from config import UPLOAD_DIR
+from settings import UPLOAD_DIR
 
 # Try to import TTS backends
 try:

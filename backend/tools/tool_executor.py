@@ -6,6 +6,7 @@ from datetime import datetime
 from tools.searxng_tool import SearXNGSearchTool, SearchConfig, SEARXNG_TOOL_DEFINITION
 from tools.rag_service import RAGService, RAGConfig, RAG_TOOL_DEFINITION
 from tools.tts_service import TTSService, TTS_TOOL_DEFINITION
+from backend.settings import settings_manager
 
 
 class AsyncProgressTracker:
@@ -61,23 +62,25 @@ class AsyncProgressTracker:
 class ToolExecutor:
     """
     Executes tools with real-time progress updates.
-    
+
     This class wraps MCP tool calls and custom tools to provide
     streaming progress updates to the UI via Server-Sent Events.
     """
-    
+
     def __init__(self, mcp_manager=None):
         self.mcp_manager = mcp_manager
-        
-        # Initialize SearXNG search tool
-        self.search_tool = SearXNGSearchTool()
-        
+
+        # Initialize SearXNG search tool with settings from settings manager
+        settings = settings_manager.get_settings()
+        search_config = SearchConfig.from_settings(settings)
+        self.search_tool = SearXNGSearchTool(config=search_config)
+
         # Initialize RAG service
         self.rag_service = RAGService()
-        
+
         # Initialize TTS service
         self.tts_service = TTSService()
-        
+
         # Register custom tools that need progress tracking
         self.custom_tools = {
             "search_web": self._search_web_with_progress,

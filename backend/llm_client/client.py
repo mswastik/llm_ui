@@ -3,32 +3,31 @@ import asyncio
 import json
 from typing import List, Dict, AsyncGenerator, Any, Optional
 
-from config import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from settings import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 
 
 class LLMClient:
     """
     Client to interact with llama.cpp server.
-    
+
     Assumes llama.cpp is running with OpenAI-compatible API
     at http://localhost:8080 (default llama.cpp port).
     """
-    
+
     def __init__(self, base_url: str = None, model: str = None):
         # Import settings manager here to avoid circular imports
         from backend.settings import settings_manager
         self._settings_manager = settings_manager
-        
+
         # Use provided values or get from settings
         settings = self._settings_manager.get_settings()
         self.base_url = base_url or settings.get('llama_cpp_base_url', 'http://localhost:8080')
         self.model = model or settings.get('llama_cpp_model', 'glm4.7-30ba3b')
         self._tools: Optional[List[Dict]] = None
-    
+
     def set_tools(self, tools: List[Dict]):
         """Set the tools available for function calling"""
         self._tools = tools
-    
     def _get_current_base_url(self) -> str:
         """Get the current base URL from settings (allows dynamic updates)"""
         settings = self._settings_manager.get_settings()

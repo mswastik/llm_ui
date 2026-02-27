@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
 import uvicorn
-from config import APP_HOST, APP_PORT, DEBUG
+from settings import APP_HOST, APP_PORT, DEBUG
 
 if __name__ == "__main__":
     print("=" * 60)

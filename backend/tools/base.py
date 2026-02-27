@@ -1,17 +1,23 @@
 import asyncio
 import aiohttp
+import os
 import requests
 import numpy as np
 from typing import List, Dict, Optional, Any
-from config import LLAMA_CPP_BASE_URL
 
 class SharedLLMUtils:
     """Shared utilities for embeddings and reranking to reduce code duplication."""
-    
+
+    @staticmethod
+    def _get_base_url() -> str:
+        """Get the current llama.cpp base URL from environment or config."""
+        return os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3")
+
     @staticmethod
     async def get_embedding(text: str, model: str = "qwen3-embedding", max_retries: int = 3) -> np.ndarray:
         """Get embedding vector for text with retry logic."""
-        embeddings_api = f"{LLAMA_CPP_BASE_URL}/v1/embeddings"
+        base_url = SharedLLMUtils._get_base_url()
+        embeddings_api = f"{base_url}/v1/embeddings"
         for attempt in range(max_retries):
             try:
                 payload = {"input": text, "model": model}
@@ -38,7 +44,8 @@ class SharedLLMUtils:
     @staticmethod
     async def rerank(query: str, documents: List[str], model: str = "qwen3-reranker", max_retries: int = 3) -> List[int]:
         """Rerank documents and return indices in new order."""
-        rerank_api = f"{LLAMA_CPP_BASE_URL}/v1/rerank"
+        base_url = SharedLLMUtils._get_base_url()
+        rerank_api = f"{base_url}/v1/rerank"
         for attempt in range(max_retries):
             try:
                 payload = {

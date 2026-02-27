@@ -13,25 +13,50 @@ import asyncio
 import json
 from typing import List, Dict, Tuple, Callable, Any
 from dataclasses import dataclass, field
-from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
 from tools.base import SharedLLMUtils
+from backend.settings import settings_manager
 
 
 @dataclass
 class SearchConfig:
     """Configuration for SearXNG search"""
     searxng_url: str = "http://localhost:8888/search"
-    embeddings_api: str = f"{LLAMA_CPP_BASE_URL}/v1/embeddings"
-    rerank_api: str = f"{LLAMA_CPP_BASE_URL}/v1/rerank"
-    llm_base_url: str = LLAMA_CPP_BASE_URL
-    llm_model: str = LLAMA_CPP_MODEL
-    query_model: str = QUERY_MODEL
+    embeddings_api: str = "http://localhost:8001/v3/embeddings"
+    rerank_api: str = "http://localhost:8001/v3/rerank"
+    llm_base_url: str = "http://localhost:8001/v3"
+    llm_model: str = "qwen3-4b"
+    query_model: str = "qwen3-4b"
     llm_api_key: str = "sk-12"
     num_search_results: int = 25
     chunk_size: int = 1200
     similarity_threshold: float = 0.4
     max_retries: int = 3
     enable_multi_query: bool = True
+
+    @classmethod
+    def from_settings(cls, settings: dict = None):
+        """Create SearchConfig from settings"""
+        if settings is None:
+            settings = settings_manager.get_settings()
+        
+        # Get LLM settings from settings manager
+        llm_base_url = settings.get('llama_cpp_base_url', cls.llm_base_url)
+        llm_model = settings.get('llama_cpp_model', cls.llm_model)
+        query_model = settings.get('query_model', cls.query_model)
+        
+        return cls(
+            searxng_url=settings.get('searxng_url', cls.searxng_url),
+            embeddings_api=f"{llm_base_url}/embeddings",
+            rerank_api=f"{llm_base_url}/rerank",
+            llm_base_url=llm_base_url,
+            llm_model=llm_model,
+            query_model=query_model,
+            num_search_results=settings.get('searxng_num_results', cls.num_search_results),
+            chunk_size=settings.get('searxng_chunk_size', cls.chunk_size),
+            similarity_threshold=settings.get('searxng_similarity_threshold', cls.similarity_threshold),
+            max_retries=settings.get('searxng_max_retries', cls.max_retries),
+            enable_multi_query=settings.get('searxng_enable_multi_query', cls.enable_multi_query),
+        )
 
 
 class SearXNGSearchTool:

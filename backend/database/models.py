@@ -4,24 +4,29 @@ from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 from contextlib import asynccontextmanager
 import uuid
+import logging
 
-from config import DATABASE_URL
+from settings import DATABASE_URL, SQLALCHEMY_ECHO
+
+# Suppress verbose SQLAlchemy logs
+if not SQLALCHEMY_ECHO:
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
 
 Base = declarative_base()
 
 # Database URL from config
-engine = create_async_engine(DATABASE_URL, echo=True)
+engine = create_async_engine(DATABASE_URL, echo=SQLALCHEMY_ECHO)
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 class Conversation(Base):
     __tablename__ = "conversations"
-    
+
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String, default="New Chat")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
     # Relationship to messages
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 

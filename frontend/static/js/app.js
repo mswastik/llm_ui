@@ -66,6 +66,15 @@ function chatApp() {
         // Expanded tool calls tracking (by message id)
         expandedToolCalls: {},
         
+        // Expanded tool call blocks tracking (by message id and block index)
+        expandedToolCallBlocks: {},
+        
+        // Expanded thinking blocks tracking (by message id and block index)
+        expandedThinkingBlocks: {},
+        
+        // Expanded content blocks tracking (by message id and block index)
+        expandedContentBlocks: {},
+        
         // Initialize
         async init() {
             await this.loadConversations();
@@ -264,67 +273,93 @@ function chatApp() {
             
             // Track which conversation is being streamed
             this.streamingConversationId = this.currentConversationId;
-            
+
+            console.log('[DEBUG] Starting streamResponse for request:', requestId);
             this.eventSource = new EventSource(url);
-            
-            // Create assistant message placeholder
+
+            // Create assistant message placeholder with message_blocks for sequential display
             const assistantMessage = {
                 id: Date.now() + 1,
                 role: 'assistant',
                 content: '',
-                thinking: '',  // Track thinking content separately
-                tool_calls: [],
+                thinking: '',  // Track thinking content separately (for backward compatibility)
+                tool_calls: [],  // Now stores message_blocks: content, thinking, tool_call objects
                 created_at: new Date().toISOString()
             };
+            console.log('[DEBUG] Created assistant message with id:', assistantMessage.id);
             this.messages.push(assistantMessage);
-            
+
             // Get the message index
             const msgIndex = this.messages.length - 1;
-            
+
             // Store reference to the streaming conversation ID
             const streamingConvId = this.streamingConversationId;
-            
+
             let streamCompleted = false;
             
+            // Track current block being built
+            let currentToolCallIndex = -1;
+
+            console.log('[DEBUG] EventSource onmessage handler set');
             this.eventSource.onmessage = (event) => {
                 // Ignore events if conversation has changed
                 if (this.currentConversationId !== streamingConvId) {
                     return;
                 }
-                
+
+                console.log('[DEBUG] Received SSE event:', event.data.substring(0, 200));
                 try {
                     const data = JSON.parse(event.data);
-                    
+                    console.log('[DEBUG] Parsed event type:', data.type);
+
                     switch (data.type) {
                         case 'content':
                             // Update message content
                             this.messages[msgIndex].content += data.content;
-                            
+
                             // Direct DOM update for immediate streaming display
                             const msgEl = document.getElementById('message-content-' + assistantMessage.id);
                             if (msgEl) {
                                 msgEl.innerHTML = marked.parse(this.messages[msgIndex].content);
                             }
-                            this.scrollToBottom();
+                            //this.scrollToBottom();
                             break;
-                        
+
                         case 'thinking':
                             // Thinking content from reasoning models (e.g., DeepSeek)
                             this.messages[msgIndex].thinking += data.content;
-                            // Update thinking display if element exists
-                            const thinkingEl = document.getElementById('thinking-content-' + assistantMessage.id);
-                            if (thinkingEl) {
-                                thinkingEl.innerHTML = marked.parse(this.messages[msgIndex].thinking);
+                            
+                            // Check the last block in tool_calls to decide whether to append or create new
+                            const toolCalls = this.messages[msgIndex].tool_calls;
+                            console.log('[DEBUG] Thinking event received. tool_calls length:', toolCalls.length, 'last block type:', toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].type : 'none');
+                            
+                            if (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].type === 'thinking') {
+                                // Append to the last thinking block
+                                console.log('[DEBUG] Appending to existing thinking block');
+                                toolCalls[toolCalls.length - 1].content += data.content;
+                            } else {
+                                // Create a new thinking block
+                                console.log('[DEBUG] Creating new thinking block');
+                                toolCalls.push({
+                                    type: 'thinking',
+                                    content: data.content
+                                });
                             }
+                            
+                            console.log('[DEBUG] tool_calls after update:', JSON.stringify(toolCalls.map(b => ({type: b.type, contentLen: b.content?.length || 0})), null, 2));
+                            
                             this.scrollToBottom();
                             break;
-                        
+
                         case 'tool_call_start':
                             this.toolStatus.active = true;
                             this.toolStatus.tool = data.tool;
                             this.toolStatus.status = 'Starting...';
                             this.toolStatus.progress = 0;
-                            this.messages[msgIndex].tool_calls.push({
+                            
+                            // Create a new tool call block for sequential display
+                            const newToolCall = {
+                                type: 'tool_call',
                                 name: data.tool,
                                 arguments: data.args,
                                 status: 'starting',
@@ -335,53 +370,55 @@ function chatApp() {
                                     progress: 0,
                                     timestamp: new Date().toISOString()
                                 }]
-                            });
+                            };
+                            this.messages[msgIndex].tool_calls.push(newToolCall);
+                            currentToolCallIndex = this.messages[msgIndex].tool_calls.length - 1;
                             break;
-                        
+
                         case 'tool_progress':
                             this.toolStatus.tool = data.tool;
                             this.toolStatus.status = data.status;
                             this.toolStatus.progress = data.progress || null;
                             this.toolStatus.data = data.data || null;
-                            
-                            // Update the tool call in the messages array
-                            const toolCallIndex = this.messages[msgIndex].tool_calls.findIndex(
-                                tc => tc.name === data.tool && tc.status !== 'completed'
-                            );
-                            if (toolCallIndex !== -1) {
-                                this.messages[msgIndex].tool_calls[toolCallIndex].status = data.status;
-                                this.messages[msgIndex].tool_calls[toolCallIndex].progress = data.progress || 0;
-                                
+
+                            // Update the current tool call in the messages array
+                            if (currentToolCallIndex !== -1) {
+                                const toolCall = this.messages[msgIndex].tool_calls[currentToolCallIndex];
+                                toolCall.status = data.status;
+                                toolCall.progress = data.progress || 0;
+
                                 // Add to progress history
-                                if (!this.messages[msgIndex].tool_calls[toolCallIndex].progress_history) {
-                                    this.messages[msgIndex].tool_calls[toolCallIndex].progress_history = [];
+                                if (!toolCall.progress_history) {
+                                    toolCall.progress_history = [];
                                 }
-                                this.messages[msgIndex].tool_calls[toolCallIndex].progress_history.push({
+                                toolCall.progress_history.push({
                                     status: data.status,
                                     progress: data.progress || 0,
                                     data: data.data || null,
                                     timestamp: new Date().toISOString()
                                 });
-                                
+
                                 if (data.result) {
-                                    this.messages[msgIndex].tool_calls[toolCallIndex].result = data.result;
-                                    this.messages[msgIndex].tool_calls[toolCallIndex].status = 'completed';
+                                    toolCall.result = data.result;
+                                    toolCall.status = 'completed';
                                     // Add final entry to progress history
-                                    this.messages[msgIndex].tool_calls[toolCallIndex].progress_history.push({
+                                    toolCall.progress_history.push({
                                         status: 'completed',
                                         progress: 100,
                                         timestamp: new Date().toISOString()
                                     });
+                                    // Reset current tool call index since this one is done
+                                    currentToolCallIndex = -1;
                                 }
                             }
-                            
+
                             if (data.result) {
                                 this.toolStatus.active = false;
                                 // Don't add sources to main content - they're already shown in tool_calls section
                             }
                             this.scrollToBottom();
                             break;
-                        
+
                         case 'tool_error':
                             this.toolStatus.active = false;
                             this.messages[msgIndex].content += `\n\n⚠️ Error executing ${data.tool}: ${data.error}`;
@@ -391,7 +428,7 @@ function chatApp() {
                             }
                             this.scrollToBottom();
                             break;
-                        
+
                         case 'error':
                             this.toolStatus.active = false;
                             this.isLoading = false;
@@ -402,7 +439,7 @@ function chatApp() {
                             }
                             this.scrollToBottom();
                             break;
-                        
+
                         case 'title_update':
                             this.currentConversationTitle = data.title;
                             const convIndex = this.conversations.findIndex(
@@ -412,7 +449,7 @@ function chatApp() {
                                 this.conversations[convIndex].title = data.title;
                             }
                             break;
-                        
+
                         case 'done':
                             streamCompleted = true;
                             this.eventSource.close();
@@ -654,6 +691,9 @@ function chatApp() {
             };
             this.messages.push(assistantMessage);
             
+            // Track current block being built (for sequential display)
+            let currentToolCallIndex = -1;
+            
             this.eventSource.onmessage = (event) => {
                 // Ignore events if conversation has changed
                 if (this.currentConversationId !== streamingConvId) {
@@ -672,6 +712,20 @@ function chatApp() {
                         case 'thinking':
                             // Thinking content from reasoning models (e.g., DeepSeek)
                             assistantMessage.thinking += data.content;
+                            
+                            // Check the last block in tool_calls to decide whether to append or create new
+                            const toolCalls = assistantMessage.tool_calls;
+                            if (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].type === 'thinking') {
+                                // Append to the last thinking block
+                                toolCalls[toolCalls.length - 1].content += data.content;
+                            } else {
+                                // Create a new thinking block
+                                toolCalls.push({
+                                    type: 'thinking',
+                                    content: data.content
+                                });
+                            }
+                            
                             this.scrollToBottom();
                             break;
                         
@@ -680,7 +734,10 @@ function chatApp() {
                             this.toolStatus.tool = data.tool;
                             this.toolStatus.status = 'Starting...';
                             this.toolStatus.progress = 0;
-                            assistantMessage.tool_calls.push({
+                            
+                            // Create tool call block
+                            const newToolCall = {
+                                type: 'tool_call',
                                 name: data.tool,
                                 arguments: data.args,
                                 status: 'starting',
@@ -691,7 +748,9 @@ function chatApp() {
                                     progress: 0,
                                     timestamp: new Date().toISOString()
                                 }]
-                            });
+                            };
+                            assistantMessage.tool_calls.push(newToolCall);
+                            currentToolCallIndex = assistantMessage.tool_calls.length - 1;
                             break;
                         
                         case 'tool_progress':
@@ -728,6 +787,8 @@ function chatApp() {
                                         progress: 100,
                                         timestamp: new Date().toISOString()
                                     });
+                                    // Reset current tool call index since this one is done
+                                    currentToolCallIndex = -1;
                                 }
                             }
                             
@@ -1177,25 +1238,61 @@ function chatApp() {
             this.sidebarCollapsed = !this.sidebarCollapsed;
         },
         
-        // Toggle tool calls expansion for a message
+        // Toggle tool calls expansion for a message (legacy - for old messages)
         toggleToolCalls(messageId) {
             this.expandedToolCalls[messageId] = !this.expandedToolCalls[messageId];
         },
         
-        // Check if tool calls are expanded for a message
+        // Check if tool calls are expanded for a message (legacy)
         isToolCallsExpanded(messageId) {
             return this.expandedToolCalls[messageId] === true;
         },
         
-        // Expanded thinking tracking (by message id)
+        // Toggle individual tool call block expansion
+        toggleToolCallBlock(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            this.expandedToolCallBlocks[key] = !this.expandedToolCallBlocks[key];
+        },
+        
+        // Check if individual tool call block is expanded
+        isToolCallBlockExpanded(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            return this.expandedToolCallBlocks[key] === true;
+        },
+        
+        // Toggle individual thinking block expansion
+        toggleThinkingBlock(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            this.expandedThinkingBlocks[key] = !this.expandedThinkingBlocks[key];
+        },
+        
+        // Check if individual thinking block is expanded
+        isThinkingBlockExpanded(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            return this.expandedThinkingBlocks[key] === true;
+        },
+        
+        // Toggle individual content block expansion
+        toggleContentBlock(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            this.expandedContentBlocks[key] = !this.expandedContentBlocks[key];
+        },
+        
+        // Check if individual content block is expanded
+        isContentBlockExpanded(messageId, blockIndex) {
+            const key = `${messageId}-${blockIndex}`;
+            return this.expandedContentBlocks[key] === true;
+        },
+        
+        // Expanded thinking tracking (by message id) - legacy
         expandedThinking: {},
         
-        // Toggle thinking expansion for a message
+        // Toggle thinking expansion for a message (legacy)
         toggleThinking(messageId) {
             this.expandedThinking[messageId] = !this.expandedThinking[messageId];
         },
         
-        // Check if thinking is expanded for a message
+        // Check if thinking is expanded for a message (legacy)
         isThinkingExpanded(messageId) {
             return this.expandedThinking[messageId] === true;
         },

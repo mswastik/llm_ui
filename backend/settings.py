@@ -1,75 +1,126 @@
 """
 Application settings management module
+
+Single source of truth for all configuration settings.
+Settings are loaded from settings.json on startup, with environment variables as fallback defaults.
 """
 import os
 import json
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
-import importlib.util
-import os
 
-# Dynamically load config module
-config_spec = importlib.util.spec_from_file_location("config", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend", "config.py"))
-config_module = importlib.util.module_from_spec(config_spec)
-config_spec.loader.exec_module(config_module)
-
-# Import the variables from the loaded module
-DATABASE_URL = config_module.DATABASE_URL
-LLAMA_CPP_BASE_URL = config_module.LLAMA_CPP_BASE_URL
-LLAMA_CPP_MODEL = config_module.LLAMA_CPP_MODEL
-QUERY_MODEL = config_module.QUERY_MODEL
-APP_HOST = config_module.APP_HOST
-APP_PORT = config_module.APP_PORT
-DEBUG = config_module.DEBUG
-DEFAULT_TEMPERATURE = config_module.DEFAULT_TEMPERATURE
-DEFAULT_MAX_TOKENS = config_module.DEFAULT_MAX_TOKENS
-MAX_UPLOAD_SIZE = config_module.MAX_UPLOAD_SIZE
-UPLOAD_DIR = config_module.UPLOAD_DIR
-CORS_ORIGINS = config_module.CORS_ORIGINS
-SYSTEM_PROMPT = config_module.SYSTEM_PROMPT
-
+# To fix Kokoro Cuda memory allocation
+os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settings.json")
+
+# Default values (used if not in settings.json or environment variables)
+DEFAULTS = {
+    # Database Configuration
+    "database_url": os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./llm_ui.db"),
+    
+    # Llama.cpp Configuration
+    "llama_cpp_base_url": os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3"),
+    "llama_cpp_model": os.getenv("LLAMA_CPP_MODEL", "qwen3-4b"),
+    "query_model": os.getenv("QUERY_MODEL", "qwen3-4b"),
+    
+    # Application Settings
+    "app_host": os.getenv("APP_HOST", "0.0.0.0"),
+    "app_port": int(os.getenv("APP_PORT", "8002")),
+    "debug": os.getenv("DEBUG", "false").lower() == "true",
+    
+    # LLM Generation Defaults
+    "default_temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
+    "default_max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "16048")),
+    
+    # File Upload Settings
+    "max_upload_size": int(os.getenv("MAX_UPLOAD_SIZE", "10485760")),
+    "upload_dir": os.getenv("UPLOAD_DIR", "./uploads"),
+    
+    # CORS Settings
+    "cors_origins": os.getenv("CORS_ORIGINS", "*"),
+    
+    # System Prompt
+    "system_prompt": os.getenv(
+        "SYSTEM_PROMPT",
+        "You are a helpful AI assistant. When you use tools, explain what you're doing and why."
+    ),
+    
+    # SQLAlchemy Logging
+    "sqlalchemy_echo": os.getenv("SQLALCHEMY_ECHO", "false").lower() == "true",
+    
+    # TTS Settings
+    "tts_engine": "edge-tts",
+    "tts_voice": "en-IN-NeerjaNeural",
+    "tts_rate": "+0%",
+    "tts_volume": 1.0,
+    "kokoro_lang": "a",
+    "kokoro_device": "cpu",
+    "kokoro_volume": 1.0,
+    "kokoro_speed": 1.0,
+    
+    # SearXNG Settings
+    "searxng_url": "http://localhost:8888/search",
+    "searxng_num_results": 25,
+    "searxng_chunk_size": 1200,
+    "searxng_similarity_threshold": 0.4,
+    "searxng_max_retries": 3,
+    "searxng_enable_multi_query": True,
+}
+
+# Create upload directory if it doesn't exist
+os.makedirs(DEFAULTS["upload_dir"], exist_ok=True)
 
 
 class Settings(BaseModel):
     """Application settings model"""
     # Database Configuration
-    database_url: str = Field(default=DATABASE_URL, description="Database URL")
-    
+    database_url: str = Field(default=DEFAULTS["database_url"], description="Database URL")
+
     # Llama.cpp Configuration
-    llama_cpp_base_url: str = Field(default=LLAMA_CPP_BASE_URL, description="Base URL for llama.cpp server")
-    llama_cpp_model: str = Field(default=LLAMA_CPP_MODEL, description="Default model for llama.cpp")
-    query_model: str = Field(default=QUERY_MODEL, description="Model used for query processing and title generation")
-    
+    llama_cpp_base_url: str = Field(default=DEFAULTS["llama_cpp_base_url"], description="Base URL for llama.cpp server")
+    llama_cpp_model: str = Field(default=DEFAULTS["llama_cpp_model"], description="Default model for llama.cpp")
+    query_model: str = Field(default=DEFAULTS["query_model"], description="Model used for query processing and title generation")
+
     # Application Settings
-    app_host: str = Field(default=APP_HOST, description="Host address for the application")
-    app_port: int = Field(default=APP_PORT, description="Port for the application")
-    debug: bool = Field(default=DEBUG, description="Debug mode")
-    
+    app_host: str = Field(default=DEFAULTS["app_host"], description="Host address for the application")
+    app_port: int = Field(default=DEFAULTS["app_port"], description="Port for the application")
+    debug: bool = Field(default=DEFAULTS["debug"], description="Debug mode")
+
     # File Upload Settings
-    max_upload_size: int = Field(default=MAX_UPLOAD_SIZE, description="Maximum upload size in bytes")
-    upload_dir: str = Field(default=UPLOAD_DIR, description="Directory for uploads")
-    
+    max_upload_size: int = Field(default=DEFAULTS["max_upload_size"], description="Maximum upload size in bytes")
+    upload_dir: str = Field(default=DEFAULTS["upload_dir"], description="Directory for uploads")
+
     # CORS Settings
-    cors_origins: str = Field(default=",".join(CORS_ORIGINS), description="Comma-separated list of CORS origins")
-    
+    cors_origins: str = Field(default=DEFAULTS["cors_origins"], description="Comma-separated list of CORS origins")
+
     # System Prompt
-    system_prompt: str = Field(default=SYSTEM_PROMPT, description="Default system prompt")
-    
+    system_prompt: str = Field(default=DEFAULTS["system_prompt"], description="Default system prompt")
+
     # LLM Generation Defaults
-    default_temperature: float = Field(default=DEFAULT_TEMPERATURE, description="Default temperature for LLM generation")
-    default_max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, description="Default max tokens for LLM generation")
-    
+    default_temperature: float = Field(default=DEFAULTS["default_temperature"], description="Default temperature for LLM generation")
+    default_max_tokens: int = Field(default=DEFAULTS["default_max_tokens"], description="Default max tokens for LLM generation")
+
+    # SQLAlchemy Logging
+    sqlalchemy_echo: bool = Field(default=DEFAULTS["sqlalchemy_echo"], description="Enable verbose SQLAlchemy logging")
+
     # TTS Settings
-    tts_engine: str = Field(default="edge-tts", description="TTS engine to use (edge-tts, pyttsx3, kokoro)")
-    tts_voice: str = Field(default="en-IN-NeerjaNeural", description="Voice to use for TTS")
-    tts_rate: str = Field(default="+0%", description="Speech rate adjustment")
-    tts_volume: float = Field(default=1.0, description="Volume level (0.0 to 1.0)")
-    kokoro_lang: str = Field(default="a", description="Kokoro language code (a=American English, b=British English)")
-    kokoro_device: str = Field(default="cpu", description="Kokoro device (cpu or cuda)")
-    kokoro_volume: float = Field(default=1.0, description="Kokoro TTS volume level (0.0 to 1.0)")
-    kokoro_speed: float = Field(default=1.0, description="Kokoro TTS speed multiplier (0.5 to 2.0)")
+    tts_engine: str = Field(default=DEFAULTS["tts_engine"], description="TTS engine to use (edge-tts, pyttsx3, kokoro)")
+    tts_voice: str = Field(default=DEFAULTS["tts_voice"], description="Voice to use for TTS")
+    tts_rate: str = Field(default=DEFAULTS["tts_rate"], description="Speech rate adjustment")
+    tts_volume: float = Field(default=DEFAULTS["tts_volume"], description="Volume level (0.0 to 1.0)")
+    kokoro_lang: str = Field(default=DEFAULTS["kokoro_lang"], description="Kokoro language code (a=American English, b=British English)")
+    kokoro_device: str = Field(default=DEFAULTS["kokoro_device"], description="Kokoro device (cpu or cuda)")
+    kokoro_volume: float = Field(default=DEFAULTS["kokoro_volume"], description="Kokoro TTS volume level (0.0 to 1.0)")
+    kokoro_speed: float = Field(default=DEFAULTS["kokoro_speed"], description="Kokoro TTS speed multiplier (0.5 to 2.0)")
+
+    # SearXNG Settings
+    searxng_url: str = Field(default=DEFAULTS["searxng_url"], description="SearXNG search URL")
+    searxng_num_results: int = Field(default=DEFAULTS["searxng_num_results"], description="Number of search results to fetch")
+    searxng_chunk_size: int = Field(default=DEFAULTS["searxng_chunk_size"], description="Chunk size for text processing")
+    searxng_similarity_threshold: float = Field(default=DEFAULTS["searxng_similarity_threshold"], description="Similarity threshold for filtering results")
+    searxng_max_retries: int = Field(default=DEFAULTS["searxng_max_retries"], description="Maximum retries for search requests")
+    searxng_enable_multi_query: bool = Field(default=DEFAULTS["searxng_enable_multi_query"], description="Enable multi-query search")
 
 
 class SettingsManager:
@@ -161,11 +212,37 @@ class SettingsManager:
             try:
                 with open(SETTINGS_FILE, 'r') as f:
                     saved_settings = json.load(f)
-                
+
                 # Update settings object with saved values
                 for key, value in saved_settings.items():
                     if hasattr(self.settings, key):
                         setattr(self.settings, key, value)
+
+                # Set environment variables from saved settings for runtime use
+                if 'llama_cpp_base_url' in saved_settings:
+                    os.environ['LLAMA_CPP_URL'] = saved_settings['llama_cpp_base_url']
+                if 'llama_cpp_model' in saved_settings:
+                    os.environ['LLAMA_CPP_MODEL'] = saved_settings['llama_cpp_model']
+                if 'query_model' in saved_settings:
+                    os.environ['QUERY_MODEL'] = saved_settings['query_model']
+                if 'app_host' in saved_settings:
+                    os.environ['APP_HOST'] = saved_settings['app_host']
+                if 'app_port' in saved_settings:
+                    os.environ['APP_PORT'] = str(saved_settings['app_port'])
+                if 'debug' in saved_settings:
+                    os.environ['DEBUG'] = str(saved_settings['debug']).lower()
+                if 'default_temperature' in saved_settings:
+                    os.environ['DEFAULT_TEMPERATURE'] = str(saved_settings['default_temperature'])
+                if 'default_max_tokens' in saved_settings:
+                    os.environ['DEFAULT_MAX_TOKENS'] = str(saved_settings['default_max_tokens'])
+                if 'max_upload_size' in saved_settings:
+                    os.environ['MAX_UPLOAD_SIZE'] = str(saved_settings['max_upload_size'])
+                if 'upload_dir' in saved_settings:
+                    os.environ['UPLOAD_DIR'] = saved_settings['upload_dir']
+                if 'system_prompt' in saved_settings:
+                    os.environ['SYSTEM_PROMPT'] = saved_settings['system_prompt']
+                if 'cors_origins' in saved_settings:
+                    os.environ['CORS_ORIGINS'] = saved_settings['cors_origins']
             except Exception as e:
                 print(f"Error loading settings from file: {e}")
 
@@ -180,3 +257,26 @@ class SettingsManager:
 
 # Global settings manager instance
 settings_manager = SettingsManager()
+
+
+# Convenience exports for backward compatibility
+# These are populated from the settings manager after initialization
+DATABASE_URL = settings_manager.settings.database_url
+LLAMA_CPP_BASE_URL = settings_manager.settings.llama_cpp_base_url
+LLAMA_CPP_MODEL = settings_manager.settings.llama_cpp_model
+QUERY_MODEL = settings_manager.settings.query_model
+APP_HOST = settings_manager.settings.app_host
+APP_PORT = settings_manager.settings.app_port
+DEBUG = settings_manager.settings.debug
+DEFAULT_TEMPERATURE = settings_manager.settings.default_temperature
+DEFAULT_MAX_TOKENS = settings_manager.settings.default_max_tokens
+MAX_UPLOAD_SIZE = settings_manager.settings.max_upload_size
+UPLOAD_DIR = settings_manager.settings.upload_dir
+CORS_ORIGINS = settings_manager.settings.cors_origins.split(',')
+SYSTEM_PROMPT = settings_manager.settings.system_prompt
+SQLALCHEMY_ECHO = settings_manager.settings.sqlalchemy_echo
+
+
+def get_config() -> Dict[str, Any]:
+    """Get all configuration as a dictionary (backward compatibility)"""
+    return settings_manager.get_settings()

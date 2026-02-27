@@ -208,8 +208,12 @@ class ToolExecutor:
         if self.mcp_manager:
             all_tools = await self.mcp_manager.list_all_tools()
             for tool in all_tools:
-                if tool["name"] == tool_name:
-                    return tool["server"]
+                # Handle both formats: tool dict with 'server' key or full name with colon
+                if tool.get("name") == tool_name:
+                    return tool.get("server", "unknown")
+                # Also check if tool_name includes server prefix
+                if ":" in tool_name:
+                    return tool_name.split(":")[0]
         raise ValueError(f"Tool '{tool_name}' not found in any MCP server")
     
     # Custom tool implementations with progress tracking

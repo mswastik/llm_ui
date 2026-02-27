@@ -33,8 +33,9 @@ function chatApp() {
             data: null
         },
         
-        // MCP Servers
+        // MCP Servers and Tools
         mcpServers: [],
+        mcpTools: [],
         newServer: {
             name: '',
             transport_type: 'stdio',  // 'stdio', 'sse', or 'streamable-http'
@@ -911,6 +912,89 @@ function chatApp() {
             }
         },
         
+        async loadMCPTools() {
+            try {
+                const response = await fetch('/api/mcp/tools');
+                const data = await response.json();
+                this.mcpTools = data.tools || [];
+                return this.mcpTools;
+            } catch (error) {
+                console.error('Error loading MCP tools:', error);
+                return [];
+            }
+        },
+        
+        async refreshMCPServerTools(serverName) {
+            try {
+                const response = await fetch(`/api/mcp/servers/${serverName}/refresh`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    await this.loadMCPServers();
+                    await this.loadMCPTools();
+                    this.showToast(`Tools refreshed for server '${serverName}'`, 'success');
+                } else {
+                    this.showToast(`Failed to refresh tools for server '${serverName}'`, 'error');
+                }
+            } catch (error) {
+                console.error('Error refreshing tools:', error);
+                this.showToast('Error refreshing tools', 'error');
+            }
+        },
+        
+        async reconnectMCPServer(serverName) {
+            try {
+                const response = await fetch(`/api/mcp/servers/${serverName}/reconnect`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    await this.loadMCPServers();
+                    await this.loadMCPTools();
+                    this.showToast(`Reconnected to server '${serverName}'`, 'success');
+                } else {
+                    this.showToast(`Failed to reconnect to server '${serverName}'`, 'error');
+                }
+            } catch (error) {
+                console.error('Error reconnecting:', error);
+                this.showToast('Error reconnecting to server', 'error');
+            }
+        },
+        
+        async updateMCPServer(serverName) {
+            // Get the server config from the list
+            const server = this.mcpServers.find(s => s.name === serverName);
+            if (!server) return;
+            
+            try {
+                const response = await fetch(`/api/mcp/servers/${serverName}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: server.name,
+                        transport_type: server.transport_type,
+                        command: server.command,
+                        args: server.args || [],
+                        env: server.env || {},
+                        url: server.url,
+                        timeout: 30.0
+                    })
+                });
+                
+                if (response.ok) {
+                    await this.loadMCPServers();
+                    await this.loadMCPTools();
+                    this.showToast(`Server '${serverName}' updated successfully`, 'success');
+                } else {
+                    this.showToast(`Failed to update server '${serverName}'`, 'error');
+                }
+            } catch (error) {
+                console.error('Error updating server:', error);
+                this.showToast('Error updating server', 'error');
+            }
+        },
+        
         async addMCPServer() {
             try {
                 let args = [];
@@ -946,14 +1030,16 @@ function chatApp() {
 
                 if (response.ok) {
                     await this.loadMCPServers();
+                    await this.loadMCPTools();
                     this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' };
-                    alert('MCP Server added successfully!');
+                    this.showToast('MCP Server added successfully!', 'success');
                 } else {
-                    alert('Failed to add MCP server');
+                    const error = await response.json();
+                    this.showToast(`Failed to add MCP server: ${error.detail}`, 'error');
                 }
             } catch (error) {
                 console.error('Error adding MCP server:', error);
-                alert('Error adding MCP server');
+                this.showToast('Error adding MCP server', 'error');
             }
         },
         
@@ -967,8 +1053,10 @@ function chatApp() {
                 
                 if (response.ok) {
                     await this.loadMCPServers();
+                    await this.loadMCPTools();
+                    this.showToast(`Server '${serverName}' removed`, 'success');
                 } else {
-                    alert('Failed to remove MCP server');
+                    this.showToast('Failed to remove MCP server', 'error');
                 }
             } catch (error) {
                 console.error('Error removing MCP server:', error);

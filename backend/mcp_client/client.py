@@ -1,611 +1,556 @@
+"""
+Robust MCP Client using FastMCP library.
+
+This module provides a clean, high-level interface for interacting with MCP servers
+using the FastMCP Client class, which handles all protocol details and connection management.
+"""
+
 import asyncio
-import json
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
-import subprocess
+from contextlib import asynccontextmanager
 
-from database.models import get_db
-from database.crud import get_enabled_mcp_servers, add_mcp_server as db_add_mcp_server
-
-# HTTP client for SSE and StreamableHTTP transports
-import aiohttp
+from fastmcp import Client as FastMCPClient
+from mcp.types import CallToolResult
 
 
 @dataclass
-class MCPServer:
-    """Represents an MCP server connection"""
+class MCPServerConfig:
+    """Configuration for an MCP server connection."""
     name: str
-    transport_type: str  # 'stdio', 'sse', or 'streamable-http'
+    # Transport type: 'stdio', 'sse', or 'http'
+    transport_type: str = "stdio"
+    # For stdio transport
     command: Optional[str] = None
     args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
+    # For HTTP/SSE transport
     url: Optional[str] = None
-    process: Optional[subprocess.Popen] = None
+    # Connection timeout in seconds
+    timeout: float = 30.0
+    # Whether server is enabled
+    enabled: bool = True
+
+
+@dataclass
+class MCPServerInstance:
+    """Runtime instance of an MCP server connection."""
+    config: MCPServerConfig
+    client: Optional[FastMCPClient] = None
     tools: List[Dict] = field(default_factory=list)
-    http_session: Optional[aiohttp.ClientSession] = None
-    request_id: int = 0
-    session_id: Optional[str] = None  # For FastMCP SSE transport
-    
-    def get_next_request_id(self) -> int:
-        """Get next unique request ID for JSON-RPC"""
-        self.request_id += 1
-        return self.request_id
+    is_connected: bool = False
+    is_initialized: bool = False
+    error: Optional[str] = None
+
+    def get_tool_full_name(self, tool_name: str) -> str:
+        """Get full tool name with server prefix."""
+        return f"{self.config.name}:{tool_name}"
 
 
 class MCPClientManager:
-    """Manages multiple MCP server connections"""
+    """
+    Manages multiple MCP server connections using FastMCP.
     
+    This manager handles:
+    - Server lifecycle (connect, disconnect, reconnect)
+    - Tool discovery and caching
+    - Tool execution with proper error handling
+    - Multiple transport types (stdio, SSE, HTTP)
+    """
+
     def __init__(self):
-        self.servers: Dict[str, MCPServer] = {}
+        self.servers: Dict[str, MCPServerInstance] = {}
         self._initialized = False
-    
+        self._connection_locks: Dict[str, asyncio.Lock] = {}
+
     async def initialize(self):
-        """Initialize all MCP servers from database"""
+        """Initialize all MCP servers from database."""
         if self._initialized:
             return
+
+        from database.models import get_db
+        from database.crud import get_enabled_mcp_servers
 
         async with get_db() as db:
             server_configs = await get_enabled_mcp_servers(db)
 
         for config in server_configs:
-            await self._start_server(
-                config["name"],
-                config.get("command"),
-                config.get("args", []),
-                config.get("env", {}),
-                config.get("transport_type", "stdio"),
-                config.get("url")
+            server_config = MCPServerConfig(
+                name=config["name"],
+                transport_type=config.get("transport_type", "stdio"),
+                command=config.get("command"),
+                args=config.get("args", []),
+                env=config.get("env", {}),
+                url=config.get("url"),
+                enabled=config.get("enabled", True)
             )
+            
+            if server_config.enabled:
+                await self._connect_server(server_config)
 
         self._initialized = True
-    
-    async def _start_server(
-        self,
-        name: str,
-        command: Optional[str],
-        args: List[str],
-        env: Dict[str, str],
-        transport_type: str = "stdio",
-        url: Optional[str] = None
-    ) -> bool:
-        """Start an MCP server process or connect via HTTP"""
-        try:
-            if transport_type in ("sse", "streamable-http"):
-                # HTTP-based transport
-                if not url:
-                    print(f"Error: URL required for {transport_type} transport")
-                    return False
-                
-                # Create HTTP session
-                http_session = aiohttp.ClientSession()
-                
-                server = MCPServer(
-                    name=name,
-                    transport_type=transport_type,
-                    command=command,
-                    args=args,
-                    env=env,
-                    url=url,
-                    http_session=http_session
-                )
-                
-                # Discover tools from the server
-                await self._discover_tools(server)
-                
-            elif transport_type == "stdio":
-                # Stdio-based transport (existing behavior)
-                if not command:
-                    print(f"Error: Command required for stdio transport")
-                    return False
-                
-                # Prepare environment - inherit from current process to ensure PATH is available
-                import os
-                process_env = os.environ.copy()
-                process_env.update(env)
 
-                # Start the MCP server process
-                process = await asyncio.create_subprocess_exec(
-                    command,
-                    *args,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=process_env
-                )
-
-                server = MCPServer(
-                    name=name,
-                    transport_type=transport_type,
-                    command=command,
-                    args=args,
-                    env=env,
-                    process=process
-                )
-
-                # Discover tools from the server
-                await self._discover_tools(server)
-            else:
-                print(f"Unknown transport type: {transport_type}")
-                return False
-
-            self.servers[name] = server
-            return True
-
-        except Exception as e:
-            print(f"Failed to start MCP server '{name}': {e}")
-            return False
-    
-    async def _discover_tools(self, server: MCPServer):
-        """Discover available tools from an MCP server"""
-        try:
-            if server.transport_type in ("sse", "streamable-http"):
-                # HTTP-based tool discovery
-                await self._discover_tools_http(server)
-            else:
-                # Stdio-based tool discovery (existing behavior)
-                await self._discover_tools_stdio(server)
-        except Exception as e:
-            print(f"Failed to discover tools from '{server.name}': {e}")
-            server.tools = []
-    
-    async def _discover_tools_stdio(self, server: MCPServer):
-        """Discover tools via stdio transport"""
-        try:
-            # Wait a bit for the server to initialize
-            await asyncio.sleep(0.5)
-
-            # Send tools/list request according to MCP protocol
-            request = {
-                "jsonrpc": "2.0",
-                "id": server.get_next_request_id(),
-                "method": "tools/list",
-                "params": {}
-            }
-
-            # Write request to server's stdin
-            request_json = json.dumps(request) + "\n"
-            server.process.stdin.write(request_json.encode())
-            await server.process.stdin.drain()
-
-            # Read response from stdout with timeout
-            try:
-                response_line = await asyncio.wait_for(
-                    server.process.stdout.readline(),
-                    timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                print(f"Timeout waiting for tool list from '{server.name}'")
-                server.tools = []
-                return
-
-            if not response_line:
-                # Check stderr for errors if stdout is empty
-                try:
-                    error_output = await asyncio.wait_for(
-                        server.process.stderr.read(1024),
-                        timeout=1.0
-                    )
-                    print(f"MCP server '{server.name}' closed stdout unexpectedly. Stderr: {error_output.decode()}")
-                except asyncio.TimeoutError:
-                    pass
-                server.tools = []
-                return
-
-            try:
-                response = json.loads(response_line.decode())
-                if "result" in response and "tools" in response["result"]:
-                    server.tools = response["result"]["tools"]
-                    print(f"Discovered {len(server.tools)} tools from '{server.name}'")
-                elif "error" in response:
-                    print(f"MCP tool discovery error from '{server.name}': {response['error']}")
-                    server.tools = []
-                else:
-                    print(f"Unexpected MCP response from '{server.name}': {response}")
-                    server.tools = []
-            except json.JSONDecodeError as e:
-                # Try to read some more from stdout/stderr to see what happened
-                try:
-                    remaining = await asyncio.wait_for(
-                        server.process.stdout.read(1024),
-                        timeout=1.0
-                    )
-                    stderr_output = await asyncio.wait_for(
-                        server.process.stderr.read(1024),
-                        timeout=1.0
-                    )
-                    print(f"Failed to parse JSON from '{server.name}': {e}")
-                    print(f"Raw response line: {response_line.decode()}")
-                    print(f"Remaining stdout: {remaining.decode()}")
-                    print(f"Stderr: {stderr_output.decode()}")
-                except asyncio.TimeoutError:
-                    print(f"Timeout reading additional output from '{server.name}'")
-                server.tools = []
-
-        except Exception as e:
-            print(f"Failed to discover tools from '{server.name}': {e}")
-            server.tools = []
-    
-    async def _discover_tools_http(self, server: MCPServer):
-        """Discover tools via SSE or StreamableHTTP transport - FastMCP compatible"""
-        try:
-            endpoint = server.url.rstrip('/')
+    async def _connect_server(self, config: MCPServerConfig) -> bool:
+        """
+        Connect to an MCP server and discover its tools.
+        
+        Args:
+            config: Server configuration
             
-            request = {
-                "jsonrpc": "2.0",
-                "id": server.get_next_request_id(),
-                "method": "tools/list",
-                "params": {}
-            }
-            
-            if server.transport_type == "sse":
-                # FastMCP SSE transport:
-                # 1. GET /sse - establishes session, returns session_id via SSE
-                # 2. POST /messages/?session_id=XXX - sends request (returns 202)
-                # 3. Response comes back on THE SAME SSE stream (don't close it!)
+        Returns:
+            True if connection and discovery succeeded
+        """
+        try:
+            # Create lock for this server if not exists
+            if config.name not in self._connection_locks:
+                self._connection_locks[config.name] = asyncio.Lock()
+
+            async with self._connection_locks[config.name]:
+                # Build FastMCP client based on transport type
+                client = self._create_client(config)
                 
-                sse_endpoint = f"{endpoint}"
-                messages_endpoint = f"{endpoint}/messages/"
-                session_id = None
+                # Create server instance
+                instance = MCPServerInstance(config=config, client=client)
                 
-                print(f"[FastMCP] Step 1: Connecting to SSE endpoint: {sse_endpoint}")
-                
-                # Create a single session for all requests
-                connector = aiohttp.TCPConnector()
-                session = aiohttp.ClientSession(connector=connector)
-                
-                # Step 1: Get session_id from SSE and KEEP THE CONNECTION OPEN
-                response = await session.get(sse_endpoint, timeout=aiohttp.ClientTimeout(total=10))
-                print(f"[FastMCP] SSE status: {response.status}, Content-Type: {response.headers.get('Content-Type')}")
-                
-                if response.status == 200:
-                    # Read SSE stream until we get session_id
-                    async for line in response.content:
-                        line = line.decode('utf-8').strip()
-                        print(f"[FastMCP] SSE: {line[:150]}")
-                        if line.startswith('data: ') and 'session_id=' in line:
-                            data = line[6:].strip()
-                            session_id = data.split('session_id=')[1].split('&')[0]
-                            messages_path = data.split('?')[0]
-                            if messages_path.startswith('/'):
-                                messages_endpoint = f"{endpoint[:-4] if endpoint.endswith('/sse') else endpoint}{messages_path}"
-                            print(f"[FastMCP] Got session_id: {session_id}")
-                            print(f"[FastMCP] Messages endpoint: {messages_endpoint}")
-                            break
-                    
-                    if not session_id:
-                        print("[FastMCP] Failed to get session_id")
-                        await session.close()
-                        server.tools = []
-                        return
-                    
-                    # Step 2: Send initialize request first (MCP protocol requirement)
-                    print(f"[FastMCP] Step 2: Sending initialize request...")
-                    init_request = {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {"name": "llm-ui", "version": "1.0"}
-                        }
-                    }
-                    async with session.post(
-                        messages_endpoint,
-                        params={"session_id": session_id},
-                        json=init_request,
-                        headers={"Content-Type": "application/json"},
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as init_response:
-                        print(f"[FastMCP] INIT POST status: {init_response.status}")
-                    
-                    # Listen for initialize response
-                    print(f"[FastMCP] Waiting for initialize response...")
-                    init_done = False
-                    async for line in response.content:
-                        line = line.decode('utf-8').strip()
-                        print(f"[FastMCP] SSE: {line[:150]}")
+                # Connect and initialize
+                try:
+                    async with client:
+                        # Discover tools
+                        tools = await client.list_tools()
+                        instance.tools = self._parse_tools(tools, config.name)
+                        instance.is_connected = True
+                        instance.is_initialized = True
+                        instance.error = None
                         
-                        if not line or line.startswith(':'):
-                            continue
-                            
-                        if line.startswith('data: '):
-                            data = line[6:].strip()
-                            if not data:
-                                continue
-                            try:
-                                result = json.loads(data)
-                                if "result" in result:
-                                    print(f"[FastMCP] Initialize successful")
-                                    init_done = True
-                                    break
-                                elif "error" in result:
-                                    print(f"[FastMCP] Init error: {result['error']}")
-                                    break
-                            except json.JSONDecodeError:
-                                continue
-                    
-                    if not init_done:
-                        print("[FastMCP] Initialization failed")
-                        await session.close()
-                        server.tools = []
-                        return
-                    
-                    # Step 3: Now send tools/list request
-                    print(f"[FastMCP] Step 3: Sending tools/list request...")
-                    async with session.post(
-                        messages_endpoint,
-                        params={"session_id": session_id},
-                        json=request,
-                        headers={"Content-Type": "application/json"},
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as post_response:
-                        print(f"[FastMCP] POST status: {post_response.status}")
-                    
-                    # Step 4: Listen for tools/list response on SAME SSE stream
-                    print(f"[FastMCP] Step 4: Listening for tools response...")
-                    try:
-                        async for line in response.content:
-                            line = line.decode('utf-8').strip()
-                            print(f"[FastMCP] SSE response: {line[:150]}")
-                            
-                            if not line or line.startswith(':'):
-                                continue
-                                
-                            if line.startswith('data: '):
-                                data = line[6:].strip()
-                                if not data:
-                                    continue
-                                try:
-                                    result = json.loads(data)
-                                    print(f"[FastMCP] Parsed: {list(result.keys())}")
-                                    if "result" in result and "tools" in result.get("result", {}):
-                                        server.tools = result["result"]["tools"]
-                                        print(f"[FastMCP] SUCCESS: Discovered {len(server.tools)} tools")
-                                        server.session_id = session_id
-                                        await session.close()
-                                        return
-                                    elif "error" in result:
-                                        print(f"[FastMCP] Error: {result['error']}")
-                                        break
-                                except json.JSONDecodeError as e:
-                                    print(f"[FastMCP] JSON error: {e}")
-                                    continue
-                    except Exception as e:
-                        print(f"[FastMCP] SSE listening error: {e}")
-                    
-                    await session.close()
-                    server.tools = []
-                    print("[FastMCP] No tools received")
-                else:
-                    await session.close()
-                    server.tools = []
-                    print("[FastMCP] SSE connection failed")
+                        print(f"Connected to MCP server '{config.name}': {len(instance.tools)} tools available")
+                        
+                except Exception as conn_error:
+                    instance.error = str(conn_error)
+                    instance.is_connected = False
+                    instance.is_initialized = False
+                    print(f"Failed to connect to MCP server '{config.name}': {conn_error}")
                 
-            else:
-                # StreamableHTTP transport
-                async with server.http_session.post(
-                    endpoint,
-                    json=request,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        if "result" in result and "tools" in result["result"]:
-                            server.tools = result["result"]["tools"]
-                    else:
-                        print(f"HTTP tool discovery failed for '{server.name}': {response.status}")
-                        server.tools = []
+                self.servers[config.name] = instance
+                return instance.is_connected
 
         except Exception as e:
-            print(f"Failed to discover tools via HTTP from '{server.name}': {e}")
-            import traceback
-            traceback.print_exc()
-            server.tools = []
-    
+            print(f"Error connecting to MCP server '{config.name}': {e}")
+            return False
+
+    def _create_client(self, config: MCPServerConfig) -> FastMCPClient:
+        """
+        Create a FastMCP client based on transport type.
+        
+        Args:
+            config: Server configuration
+            
+        Returns:
+            FastMCP Client instance
+        """
+        if config.transport_type in ("sse", "http"):
+            # HTTP/SSE transport
+            if not config.url:
+                raise ValueError(f"URL required for {config.transport_type} transport")
+            return FastMCPClient(config.url, timeout=config.timeout)
+            
+        elif config.transport_type == "stdio":
+            # Stdio transport
+            if not config.command:
+                raise ValueError("Command required for stdio transport")
+            
+            # Build connection string for stdio
+            # FastMCP supports command-based connections via string format
+            cmd_parts = [config.command] + config.args
+            cmd_str = " ".join(cmd_parts)
+            
+            # Pass environment variables
+            return FastMCPClient(cmd_str, env=config.env, timeout=config.timeout)
+            
+        else:
+            raise ValueError(f"Unknown transport type: {config.transport_type}")
+
+    def _parse_tools(self, tools_result, server_name: str) -> List[Dict]:
+        """
+        Parse tools from FastMCP list_tools result.
+        
+        Args:
+            tools_result: Result from client.list_tools()
+            server_name: Name of the server
+            
+        Returns:
+            List of tool dictionaries in standard format
+        """
+        parsed_tools = []
+        
+        # Debug: log the type and sample of tools_result
+        print(f"[DEBUG] tools_result type: {type(tools_result)}, length: {len(tools_result) if hasattr(tools_result, '__len__') else 'N/A'}")
+        if len(tools_result) > 0:
+            first_tool = tools_result[0]
+            print(f"[DEBUG] First tool type: {type(first_tool)}")
+            print(f"[DEBUG] First tool dir: {[attr for attr in dir(first_tool) if not attr.startswith('_')][:20]}")
+            if hasattr(first_tool, '__dict__'):
+                print(f"[DEBUG] First tool attrs: {first_tool.__dict__}")
+        
+        # FastMCP returns tools as a list of Tool objects or dicts
+        # Handle both formats
+        for tool in tools_result:
+            try:
+                # Try to get tool attributes - handle both object and dict formats
+                if hasattr(tool, 'name'):
+                    # Tool object format
+                    tool_name = tool.name
+                    tool_description = getattr(tool, 'description', '') or ''
+                    input_schema = getattr(tool, 'inputSchema', None) or getattr(tool, 'input_schema', None) or {"type": "object", "properties": {}}
+                elif isinstance(tool, dict):
+                    # Dict format
+                    tool_name = tool.get('name', '')
+                    tool_description = tool.get('description', '') or ''
+                    input_schema = tool.get('inputSchema', None) or tool.get('input_schema', None) or {"type": "object", "properties": {}}
+                else:
+                    # Unknown format, skip
+                    print(f"Warning: Unknown tool format: {type(tool)}")
+                    continue
+                
+                if not tool_name:
+                    continue
+                    
+                tool_info = {
+                    "server": server_name,
+                    "name": tool_name,
+                    "description": tool_description,
+                    "input_schema": input_schema
+                }
+                parsed_tools.append(tool_info)
+                
+            except Exception as e:
+                print(f"Error parsing tool: {e}, tool: {tool}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        return parsed_tools
+
     async def call_tool(
         self,
         server_name: str,
         tool_name: str,
         arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Call a tool on an MCP server"""
+        """
+        Call a tool on an MCP server.
+        
+        Args:
+            server_name: Name of the MCP server
+            tool_name: Name of the tool to call
+            arguments: Tool arguments
+            
+        Returns:
+            Tool result as dictionary
+            
+        Raises:
+            ValueError: If server not found or not connected
+            Exception: If tool call fails
+        """
         if server_name not in self.servers:
             raise ValueError(f"MCP server '{server_name}' not found")
 
-        server = self.servers[server_name]
+        instance = self.servers[server_name]
         
-        if server.transport_type in ("sse", "streamable-http"):
-            return await self._call_tool_http(server, tool_name, arguments)
-        else:
-            return await self._call_tool_stdio(server, tool_name, arguments)
-    
-    async def _call_tool_stdio(
-        self,
-        server: MCPServer,
-        tool_name: str,
-        arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call a tool via stdio transport"""
-        request = {
-            "jsonrpc": "2.0",
-            "id": server.get_next_request_id(),
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments
-            }
-        }
+        if not instance.is_connected or not instance.client:
+            # Try to reconnect
+            print(f"Reconnecting to MCP server '{server_name}'...")
+            success = await self._connect_server(instance.config)
+            if not success:
+                raise ValueError(f"MCP server '{server_name}' is not connected and reconnection failed")
 
-        request_json = json.dumps(request) + "\n"
-        server.process.stdin.write(request_json.encode())
-        await server.process.stdin.drain()
+        try:
+            # FastMCP requires using the context manager for tool calls
+            # The context manager handles session lifecycle
+            async with instance.client:
+                result: CallToolResult = await instance.client.call_tool(tool_name, arguments)
+            
+            # Parse result - FastMCP returns CallToolResult with content list
+            return self._parse_tool_result(result)
+                
+        except Exception as e:
+            print(f"Tool call failed for '{server_name}:{tool_name}': {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
-        response_line = await server.process.stdout.readline()
-        response = json.loads(response_line.decode())
-
-        if "result" in response:
-            return response["result"]
-        elif "error" in response:
-            raise Exception(f"MCP tool call failed: {response['error']}")
-        else:
-            raise Exception("Invalid MCP response")
-    
-    async def _call_tool_http(
-        self,
-        server: MCPServer,
-        tool_name: str,
-        arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Call a tool via SSE or StreamableHTTP transport"""
-        base_url = server.url.rstrip('/')
+    def _parse_tool_result(self, result: CallToolResult) -> Dict[str, Any]:
+        """
+        Parse FastMCP CallToolResult to dictionary.
         
-        request = {
-            "jsonrpc": "2.0",
-            "id": server.get_next_request_id(),
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments
-            }
+        Args:
+            result: CallToolResult from FastMCP
+            
+        Returns:
+            Dictionary with tool result data
+        """
+        # CallToolResult has:
+        # - content: list of content items (text, image, resource, etc.)
+        # - isError: bool indicating if this is an error
+        # - structuredContent: optional structured content dict
+        
+        parsed = {
+            "content": [],
+            "is_error": result.isError if hasattr(result, 'isError') else False,
+            "structured_content": None
         }
         
-        if server.transport_type == "sse":
-            # Use the session_id from discovery
-            if not server.session_id:
-                raise Exception("No session_id available for SSE transport")
+        # Handle structured content if available
+        if hasattr(result, 'structuredContent') and result.structuredContent:
+            parsed["structured_content"] = result.structuredContent
             
-            messages_endpoint = f"{base_url}/messages/"
-            
-            connector = aiohttp.TCPConnector()
-            async with aiohttp.ClientSession(connector=connector) as session:
-                # Send request
-                async with session.post(
-                    messages_endpoint,
-                    params={"session_id": server.session_id},
-                    json=request,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status == 202:
-                        # Listen on SSE for response
-                        sse_endpoint = f"{base_url}"
-                        async with session.get(sse_endpoint, timeout=aiohttp.ClientTimeout(total=30)) as sse_response:
-                            async for line in sse_response.content:
-                                line = line.decode('utf-8').strip()
-                                if not line or line.startswith(':'):
-                                    continue
-                                if line.startswith('data: '):
-                                    data = line[6:].strip()
-                                    if not data:
-                                        continue
-                                    result = json.loads(data)
-                                    if "result" in result:
-                                        return result["result"]
-                                    elif "error" in result:
-                                        raise Exception(f"MCP error: {result['error']}")
-                    elif response.status == 200:
-                        result = await response.json()
-                        if "result" in result:
-                            return result["result"]
-                        elif "error" in result:
-                            raise Exception(f"MCP error: {result['error']}")
-            
-            raise Exception("No response received")
-        else:
-            async with server.http_session.post(
-                base_url,
-                json=request,
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    if "result" in result:
-                        return result["result"]
-                    elif "error" in result:
-                        raise Exception(f"MCP error: {result['error']}")
+        # Handle content list
+        if result.content:
+            for item in result.content:
+                if hasattr(item, 'type'):
+                    if item.type == "text":
+                        parsed["content"].append({
+                            "type": "text",
+                            "text": item.text if hasattr(item, 'text') else str(item)
+                        })
+                    elif item.type == "image":
+                        parsed["content"].append({
+                            "type": "image",
+                            "data": item.data if hasattr(item, 'data') else None,
+                            "mime_type": item.mimeType if hasattr(item, 'mimeType') else None
+                        })
+                    elif item.type == "resource":
+                        parsed["content"].append({
+                            "type": "resource",
+                            "resource": item.resource if hasattr(item, 'resource') else str(item)
+                        })
+                    else:
+                        parsed["content"].append({
+                            "type": item.type,
+                            "data": str(item)
+                        })
                 else:
-                    raise Exception(f"HTTP error: {response.status}")
-    
+                    parsed["content"].append({"type": "unknown", "data": str(item)})
+                    
+        return parsed
+
     async def list_all_tools(self) -> List[Dict]:
-        """List all tools from all servers"""
+        """
+        List all tools from all connected servers.
+        
+        Returns:
+            List of tool dictionaries with server info
+        """
         all_tools = []
         
-        for server_name, server in self.servers.items():
-            for tool in server.tools:
-                all_tools.append({
-                    "server": server_name,
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "input_schema": tool.get("inputSchema", {})
-                })
-        
+        for server_name, instance in self.servers.items():
+            if instance.is_connected:
+                all_tools.extend(instance.tools)
+                
         return all_tools
-    
+
     async def list_servers(self) -> List[Dict]:
-        """List all active MCP servers"""
+        """
+        List all registered MCP servers with their status.
+        
+        Returns:
+            List of server status dictionaries
+        """
         return [
             {
-                "name": server.name,
-                "transport_type": server.transport_type,
-                "command": server.command,
-                "url": server.url,
-                "tool_count": len(server.tools)
+                "name": instance.config.name,
+                "transport_type": instance.config.transport_type,
+                "command": instance.config.command,
+                "url": instance.config.url,
+                "tool_count": len(instance.tools),
+                "is_connected": instance.is_connected,
+                "is_initialized": instance.is_initialized,
+                "error": instance.error
             }
-            for server in self.servers.values()
+            for instance in self.servers.values()
         ]
-    
+
     async def add_server(
         self,
         name: str,
-        command: str,
-        args: List[str],
-        env: Dict[str, str],
+        command: Optional[str] = None,
+        args: List[str] = None,
+        env: Dict[str, str] = None,
         transport_type: str = "stdio",
-        url: Optional[str] = None
+        url: Optional[str] = None,
+        timeout: float = 30.0
     ) -> bool:
-        """Add a new MCP server"""
-        async with get_db() as db:
-            await db_add_mcp_server(db, name, command, args, env, transport_type, url)
+        """
+        Add and connect to a new MCP server.
+        
+        Args:
+            name: Server name
+            command: Command for stdio transport
+            args: Command arguments
+            env: Environment variables
+            transport_type: Transport type ('stdio', 'sse', 'http')
+            url: URL for HTTP/SSE transport
+            timeout: Connection timeout in seconds
+            
+        Returns:
+            True if server was added and connected successfully
+        """
+        from database.models import get_db
+        from database.crud import add_mcp_server
 
-        return await self._start_server(name, command, args, env, transport_type, url)
-    
+        args = args or []
+        env = env or {}
+        
+        # Save to database
+        async with get_db() as db:
+            await add_mcp_server(db, name, command, args, env, transport_type, url)
+
+        # Create config and connect
+        config = MCPServerConfig(
+            name=name,
+            transport_type=transport_type,
+            command=command,
+            args=args,
+            env=env,
+            url=url,
+            timeout=timeout
+        )
+
+        return await self._connect_server(config)
+
     async def remove_server(self, name: str) -> bool:
-        """Remove an MCP server"""
+        """
+        Remove an MCP server.
+        
+        Args:
+            name: Server name to remove
+            
+        Returns:
+            True if server was removed
+        """
         if name not in self.servers:
             return False
+
+        instance = self.servers[name]
         
-        server = self.servers[name]
-        
-        if server.process:
+        # Disconnect client if connected
+        if instance.client and instance.is_connected:
             try:
-                if server.process.returncode is None:
-                    server.process.terminate()
-                    await server.process.wait()
-            except (ProcessLookupError, Exception) as e:
-                print(f"Error terminating MCP server process: {e}")
-        
+                await instance.client.close()
+            except Exception:
+                pass
+
+        # Remove from registry
         del self.servers[name]
-        
-        from database.crud import remove_mcp_server as db_remove_mcp_server
+
+        # Remove from database
+        from database.crud import remove_mcp_server
+        from database.models import get_db
         async with get_db() as db:
-            await db_remove_mcp_server(db, name)
-        
+            await remove_mcp_server(db, name)
+
         return True
-    
+
+    async def reconnect_server(self, name: str) -> bool:
+        """
+        Reconnect to a server (useful if connection was lost).
+        
+        Args:
+            name: Server name
+            
+        Returns:
+            True if reconnection succeeded
+        """
+        if name not in self.servers:
+            return False
+            
+        instance = self.servers[name]
+        
+        # Close existing connection
+        if instance.client:
+            try:
+                await instance.client.close()
+            except Exception:
+                pass
+                
+        instance.is_connected = False
+        instance.is_initialized = False
+        
+        # Reconnect
+        return await self._connect_server(instance.config)
+
+    async def refresh_tools(self, server_name: str) -> bool:
+        """
+        Refresh tool list for a server.
+        
+        Args:
+            server_name: Server name
+            
+        Returns:
+            True if refresh succeeded
+        """
+        if server_name not in self.servers:
+            return False
+            
+        instance = self.servers[server_name]
+        
+        if not instance.is_connected or not instance.client:
+            return False
+            
+        try:
+            async with instance.client:
+                tools = await instance.client.list_tools()
+                instance.tools = self._parse_tools(tools, server_name)
+            return True
+        except Exception:
+            return False
+
     async def cleanup(self):
-        """Clean up all server processes and HTTP sessions"""
-        for server in self.servers.values():
-            if server.transport_type == "stdio" and server.process:
+        """Clean up all server connections."""
+        for instance in self.servers.values():
+            if instance.client and instance.is_connected:
                 try:
-                    if server.process.returncode is None:
-                        server.process.terminate()
-                        await server.process.wait()
-                except (ProcessLookupError, Exception):
-                    pass
-            elif server.transport_type in ("sse", "streamable-http") and server.http_session:
-                try:
-                    await server.http_session.close()
+                    await instance.client.close()
                 except Exception:
                     pass
-
+                    
         self.servers.clear()
+        self._connection_locks.clear()
+
+    @asynccontextmanager
+    async def get_server_client(self, server_name: str):
+        """
+        Context manager to get a server's client for direct access.
+        
+        Usage:
+            async with manager.get_server_client("my_server") as client:
+                tools = await client.list_tools()
+                
+        Args:
+            server_name: Server name
+            
+        Yields:
+            FastMCP Client instance
+        """
+        if server_name not in self.servers:
+            raise ValueError(f"MCP server '{server_name}' not found")
+            
+        instance = self.servers[server_name]
+        
+        if not instance.client:
+            raise ValueError(f"No client available for '{server_name}'")
+            
+        # The client manages its own context
+        async with instance.client:
+            yield instance.client
+
+
+# Global instance for convenience
+_mcp_manager: Optional[MCPClientManager] = None
+
+
+def get_mcp_manager() -> MCPClientManager:
+    """Get or create the global MCP manager instance."""
+    global _mcp_manager
+    if _mcp_manager is None:
+        _mcp_manager = MCPClientManager()
+    return _mcp_manager

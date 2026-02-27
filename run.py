@@ -30,6 +30,6 @@ if __name__ == "__main__":
         "app.main:app",
         host=APP_HOST,
         port=APP_PORT,
-        reload=DEBUG,
+        reload=True,
         log_level="info" if not DEBUG else "debug"
     )

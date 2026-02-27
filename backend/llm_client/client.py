@@ -53,7 +53,7 @@ class LLMClient:
         Yields:
             Dict with structure:
             {
-                "type": "content",  # or "tool_call"
+                "type": "content",  # or "tool_call" or "thinking"
                 "content": "text chunk",
                 "tool_call": {...}  # if type is "tool_call"
             }
@@ -94,6 +94,10 @@ class LLMClient:
                     
                     # Stream content more immediately
                     buffer = ""
+                    
+                    # Track streaming tool call - accumulate arguments across chunks
+                    streaming_tool_call = None
+                    
                     async for chunk in response.content.iter_any():
                         # Decode chunk and add to buffer
                         text = chunk.decode('utf-8')
@@ -134,18 +138,61 @@ class LLMClient:
                                         await asyncio.sleep(0)
                                     
                                     # Handle tool calls (if model supports it)
+                                    # llama.cpp streams tool calls incrementally
                                     if "tool_calls" in delta:
                                         for tool_call in delta["tool_calls"]:
-                                            yield {
-                                                "type": "tool_call",
-                                                "tool_call": {
-                                                    "name": tool_call["function"]["name"],
-                                                    "arguments": json.loads(
-                                                        tool_call["function"]["arguments"]
-                                                    )
-                                                }
-                                            }
-                                            await asyncio.sleep(0)
+                                            try:
+                                                # Safely extract tool call data
+                                                function_data = tool_call.get("function", {})
+                                                if not function_data:
+                                                    print(f"[DEBUG] tool_call missing 'function' key: {tool_call}")
+                                                    continue
+                                                
+                                                tool_name = function_data.get("name")
+                                                arguments_str = function_data.get("arguments", "")
+                                                
+                                                # If we have a tool name, this is the start of a new tool call
+                                                if tool_name:
+                                                    streaming_tool_call = {
+                                                        "name": tool_name,
+                                                        "arguments_str": arguments_str
+                                                    }
+                                                    print(f"[DEBUG] Starting tool call: {tool_name}")
+                                                
+                                                # If we already have a streaming tool call, accumulate arguments
+                                                elif streaming_tool_call and arguments_str:
+                                                    streaming_tool_call["arguments_str"] += arguments_str
+                                                    print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
+                                                
+                                                # Try to parse accumulated arguments if we have a tool name
+                                                if streaming_tool_call and streaming_tool_call.get("name"):
+                                                    try:
+                                                        parsed_args = json.loads(streaming_tool_call["arguments_str"])
+                                                        print(f"[DEBUG] Successfully parsed tool arguments: {parsed_args}")
+                                                        
+                                                        # Yield complete tool call
+                                                        yield {
+                                                            "type": "tool_call",
+                                                            "tool_call": {
+                                                                "name": streaming_tool_call["name"],
+                                                                "arguments": parsed_args
+                                                            }
+                                                        }
+                                                        
+                                                        # Clear streaming tool call after yielding
+                                                        streaming_tool_call = None
+                                                        await asyncio.sleep(0)
+                                                        
+                                                    except json.JSONDecodeError:
+                                                        # Arguments not complete yet, wait for more chunks
+                                                        print(f"[DEBUG] Arguments not complete yet, waiting...")
+                                                        continue
+                                                    
+                                            except Exception as e:
+                                                print(f"[DEBUG] Error processing tool_call: {e}, tool_call data: {tool_call}")
+                                                import traceback
+                                                traceback.print_exc()
+                                                # Continue processing other tool calls
                                 
                                 except json.JSONDecodeError:
                                     continue

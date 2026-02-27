@@ -204,9 +204,6 @@ async def _core_stream_handler(
             if enable_rag:
                 exclude_tools.append("query_documents")
 
-            # Stream LLM response
-            assistant_message, thinking_content = "", ""
-            
             # Get MCP tools for LLM function calling
             mcp_tools = []
             if mcp_manager:
@@ -222,41 +219,107 @@ async def _core_stream_handler(
                 for tool in mcp_tools:
                     print(f"  - MCP: {tool['name']} from {tool['server']}")
             
-            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
-                chunk_type = chunk.get("type")
-                if chunk_type == "content":
-                    content = chunk.get("content", "")
-                    assistant_message += content
-                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                elif chunk_type == "thinking":
-                    thinking = chunk.get("content", "")
-                    thinking_content += thinking
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
-                elif chunk_type == "tool_call":
-                    tc_data = chunk.get("tool_call")
+            # Main conversation loop - handles multiple tool calls with content in between
+            max_tool_iterations = 15  # Prevent infinite loops
+            tool_iteration = 0
+            
+            while tool_iteration < max_tool_iterations:
+                tool_iteration += 1
+                print(f"[DEBUG] Conversation loop iteration {tool_iteration}")
+                
+                # Stream LLM response
+                assistant_message, thinking_content = "", ""
+                pending_tool_call = None
+                had_content = False
+                
+                async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
+                    try:
+                        chunk_type = chunk.get("type")
+                        print(f"[DEBUG] Chunk received: type={chunk_type}")
+                        
+                        if chunk_type == "content":
+                            content = chunk.get("content", "")
+                            assistant_message += content
+                            had_content = True
+                            yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                        elif chunk_type == "thinking":
+                            thinking = chunk.get("content", "")
+                            thinking_content += thinking
+                            yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
+                        elif chunk_type == "tool_call":
+                            print(f"[DEBUG] Tool call chunk received")
+                            tc_data = chunk.get("tool_call")
+                            print(f"[DEBUG] tc_data: {tc_data}")
+                            
+                            if tc_data:
+                                tool_name = tc_data.get('name')
+                                tool_args = tc_data.get('arguments')
+                                
+                                # Store the pending tool call
+                                if tool_name:
+                                    pending_tool_call = {
+                                        "name": tool_name,
+                                        "arguments": tool_args if isinstance(tool_args, dict) else {},
+                                        "status": "pending",
+                                        "result": None,
+                                        "progress_history": []
+                                    }
+                                    print(f"[DEBUG] Pending tool call: {tool_name}, args: {pending_tool_call['arguments']}")
+                        
+                    except Exception as e:
+                        print(f"[DEBUG] Error processing chunk: {e}")
+                        print(f"[DEBUG] Chunk data: {chunk}")
+                        import traceback
+                        traceback.print_exc()
+                    await asyncio.sleep(0)
+                
+                # If we have a pending tool call, execute it and continue the loop
+                if pending_tool_call:
+                    print(f"Executing tool: {pending_tool_call['name']}")
+                    
                     # Send tool call start event
-                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': tc_data['name'], 'args': tc_data['arguments']})}\n\n"
-                    # Create tool call record
-                    tc_record = {"name": tc_data["name"], "arguments": tc_data["arguments"], "status": "pending", "result": None, "progress_history": []}
-                    tool_calls_history.append(tc_record)
-
+                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': pending_tool_call['name'], 'args': pending_tool_call['arguments']})}\n\n"
+                    tool_calls_history.append(pending_tool_call)
+                    
                     # Execute the tool
-                    async for progress_event in tool_executor.execute_tool(tc_data["name"], tc_data["arguments"], request_id):
+                    tool_result = None
+                    async for progress_event in tool_executor.execute_tool(
+                        pending_tool_call['name'], 
+                        pending_tool_call['arguments'], 
+                        request_id
+                    ):
                         # Forward the progress event
                         yield f"data: {json.dumps(progress_event)}\n\n"
                         if progress_event.get("type") == "tool_progress":
-                            tc_record["status"] = progress_event.get("status", "running")
-                            tc_record["progress"] = progress_event.get("progress", 0)
-                            # Add progress event to history
-                            tc_record["progress_history"].append(progress_event)
+                            pending_tool_call["status"] = progress_event.get("status", "running")
+                            pending_tool_call["progress"] = progress_event.get("progress", 0)
+                            pending_tool_call["progress_history"].append(progress_event)
                             if progress_event.get("result"):
-                                tc_record["result"] = progress_event["result"]
-                                tc_record["status"] = "completed"
+                                pending_tool_call["result"] = progress_event["result"]
+                                pending_tool_call["status"] = "completed"
+                                tool_result = progress_event["result"]
                         elif progress_event.get("type") == "tool_error":
-                            tc_record["status"] = "error"
-                            tc_record["result"] = {"error": progress_event.get("error")}
-                await asyncio.sleep(0)
-
+                            pending_tool_call["status"] = "error"
+                            pending_tool_call["result"] = {"error": progress_event.get("error")}
+                    
+                    # Add tool result to conversation for LLM to continue
+                    # Format for llama.cpp: role=tool with content as string
+                    tool_result_str = json.dumps(tool_result, default=str) if tool_result else "No result"
+                    llm_messages.append({
+                        "role": "tool",
+                        "content": tool_result_str,
+                        "tool_call_id": pending_tool_call['name']
+                    })
+                    
+                    print(f"[DEBUG] Tool executed, continuing conversation with result")
+                    # Continue the while loop to get LLM's response to the tool result
+                    # (LLM may respond with content, thinking, or another tool call)
+                    
+                else:
+                    # No tool call, conversation is complete
+                    print(f"[DEBUG] No pending tool call, conversation complete")
+                    break
+            
             # Save assistant message
             if assistant_message.strip():
                 # Add model info to message metadata
@@ -367,11 +430,93 @@ async def add_mcp_server(request: Request):
 async def remove_mcp_server(server_name: str):
     """Remove an MCP server"""
     success = await mcp_manager.remove_server(server_name)
-    
+
     if success:
         return {"status": "success", "message": f"Server '{server_name}' removed"}
     else:
         raise HTTPException(status_code=404, detail="Server not found")
+
+
+@app.put("/api/mcp/servers/{server_name}")
+async def update_mcp_server(server_name: str, request: Request):
+    """
+    Update an existing MCP server configuration.
+    
+    This updates the server config and reconnects with new settings.
+    """
+    data = await request.json()
+    
+    # Get new configuration
+    new_name = data.get("name", server_name)
+    command = data.get("command")
+    args = data.get("args", [])
+    env = data.get("env", {})
+    transport_type = data.get("transport_type", "stdio")
+    url = data.get("url")
+    timeout = data.get("timeout", 30.0)
+    
+    # Validate based on transport type
+    if transport_type in ("sse", "http"):
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required for SSE/HTTP transport")
+    elif transport_type == "stdio":
+        if not command:
+            raise HTTPException(status_code=400, detail="Command is required for stdio transport")
+    
+    # First remove the old server
+    await mcp_manager.remove_server(server_name)
+    
+    # Add with new configuration (using new name if provided)
+    success = await mcp_manager.add_server(
+        name=new_name,
+        command=command,
+        args=args,
+        env=env,
+        transport_type=transport_type,
+        url=url,
+        timeout=timeout
+    )
+    
+    if success:
+        return {"status": "success", "message": f"Server '{new_name}' updated successfully"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to update server")
+
+
+@app.post("/api/mcp/servers/{server_name}/refresh")
+async def refresh_mcp_server_tools(server_name: str):
+    """
+    Refresh the tool list for a specific MCP server.
+    
+    Useful when server tools have changed without restarting.
+    """
+    if server_name not in [s["name"] for s in await mcp_manager.list_servers()]:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    success = await mcp_manager.refresh_tools(server_name)
+    
+    if success:
+        return {"status": "success", "message": f"Tools refreshed for server '{server_name}'"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to refresh tools")
+
+
+@app.post("/api/mcp/servers/{server_name}/reconnect")
+async def reconnect_mcp_server(server_name: str):
+    """
+    Reconnect to an MCP server.
+    
+    Useful when connection was lost or server was restarted.
+    """
+    if server_name not in [s["name"] for s in await mcp_manager.list_servers()]:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    success = await mcp_manager.reconnect_server(server_name)
+    
+    if success:
+        return {"status": "success", "message": f"Reconnected to server '{server_name}'"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to reconnect to server")
 
 
 # Conversation Management
@@ -425,7 +570,7 @@ async def delete_message_endpoint(message_id: str):
 
 @app.post("/api/conversations/{conversation_id}/regenerate")
 async def regenerate_last_response(conversation_id: str, request: Request):
-    """Regenerate the last assistant response"""
+    """Regenerate the last assistant response by re-sending the previous user message"""
     data = await request.json()
     message_id = data.get("message_id")
     
@@ -453,11 +598,14 @@ async def regenerate_last_response(conversation_id: str, request: Request):
         if msg_index > 0:
             user_message = messages[msg_index - 1]
             if user_message.get("role") == "user":
-                # Delete the old assistant message
-                await db_delete_message(db, message.get("id"))
+                # Delete all messages from this point (the user message and all following messages)
+                # This ensures we regenerate from the correct point
+                messages_to_delete = messages[msg_index:]
+                for msg_to_delete in messages_to_delete:
+                    await db_delete_message(db, msg_to_delete.get("id"))
                 
-                # Get all messages up to the user message (excluding the old assistant response)
-                messages_to_keep = messages[:msg_index]
+                # Re-add the user message (it was deleted but we need it in the conversation)
+                await add_message(db, conversation_id, "user", user_message["content"])
                 
                 # Create new request ID
                 request_id = str(uuid.uuid4())

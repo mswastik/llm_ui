@@ -151,10 +151,10 @@ class ToolExecutor:
             yield {
                 "type": "tool_progress",
                 "tool": tool_name,
-                "status": f"Executing {tool_name}...",
+                "status": f"Starting {tool_name}...",
                 "progress": 0
             }
-            
+
             try:
                 # Parse server name from tool name if formatted as "server:tool"
                 if ":" in tool_name:
@@ -163,7 +163,14 @@ class ToolExecutor:
                     # Try to find which server has this tool
                     server_name = await self._find_tool_server(tool_name)
                     actual_tool_name = tool_name
-                
+
+                yield {
+                    "type": "tool_progress",
+                    "tool": tool_name,
+                    "status": f"Calling {server_name}:{actual_tool_name}...",
+                    "progress": 25
+                }
+
                 # Call MCP tool
                 if self.mcp_manager:
                     result = await self.mcp_manager.call_tool(
@@ -173,7 +180,14 @@ class ToolExecutor:
                     )
                 else:
                     result = {"error": "MCP manager not available"}
-                
+
+                yield {
+                    "type": "tool_progress",
+                    "tool": tool_name,
+                    "status": "Processing result...",
+                    "progress": 75
+                }
+
                 yield {
                     "type": "tool_progress",
                     "tool": tool_name,
@@ -181,7 +195,7 @@ class ToolExecutor:
                     "progress": 100,
                     "result": result
                 }
-                
+
             except Exception as e:
                 yield {
                     "type": "tool_error",

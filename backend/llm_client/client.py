@@ -3,7 +3,7 @@ import asyncio
 import json
 from typing import List, Dict, AsyncGenerator, Any, Optional
 
-from config import LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from config import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 
 
 class LLMClient:
@@ -15,13 +15,29 @@ class LLMClient:
     """
     
     def __init__(self, base_url: str = None, model: str = None):
-        self.base_url = base_url or LLAMA_CPP_BASE_URL
-        self.model = model or LLAMA_CPP_MODEL
+        # Import settings manager here to avoid circular imports
+        from backend.settings import settings_manager
+        self._settings_manager = settings_manager
+        
+        # Use provided values or get from settings
+        settings = self._settings_manager.get_settings()
+        self.base_url = base_url or settings.get('llama_cpp_base_url', 'http://localhost:8080')
+        self.model = model or settings.get('llama_cpp_model', 'glm4.7-30ba3b')
         self._tools: Optional[List[Dict]] = None
     
     def set_tools(self, tools: List[Dict]):
         """Set the tools available for function calling"""
         self._tools = tools
+    
+    def _get_current_base_url(self) -> str:
+        """Get the current base URL from settings (allows dynamic updates)"""
+        settings = self._settings_manager.get_settings()
+        return settings.get('llama_cpp_base_url', self.base_url)
+    
+    def _get_current_model(self) -> str:
+        """Get the current model from settings (allows dynamic updates)"""
+        settings = self._settings_manager.get_settings()
+        return settings.get('llama_cpp_model', self.model)
     
     async def stream_chat(
         self,
@@ -208,10 +224,19 @@ class LLMClient:
     async def list_models(self) -> List[Dict]:
         """List all available models from the LLM server."""
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
+            timeout = aiohttp.ClientTimeout(total=50)
             async with aiohttp.ClientSession(timeout=timeout) as session:
+                # Handle different base URL formats
+                # If base_url already contains /v1 or /v3, don't add /v1 again
+                base = self.base_url #.rstrip('/')
+                print(base)
+                if '/v1' in base or '/v3' in base:
+                    models_url = f"{base}/models"
+                else:
+                    models_url = f"{base}/v1/models"
+                
                 async with session.get(
-                    f"{self.base_url}/v1/models",
+                    models_url,
                     headers={"Content-Type": "application/json"}
                 ) as response:
                     if response.status == 200:

@@ -212,7 +212,17 @@ async def _core_stream_handler(
             if mcp_manager:
                 mcp_tools = await mcp_manager.list_all_tools()
             
-            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=tool_executor.get_tool_definitions(exclude_tools=exclude_tools, mcp_tools=mcp_tools)):
+            # Get all tool definitions
+            all_tools = tool_executor.get_tool_definitions(exclude_tools=exclude_tools, mcp_tools=mcp_tools)
+            
+            # Debug logging
+            print(f"MCP tools discovered: {len(mcp_tools)}")
+            print(f"Total tools sent to LLM: {len(all_tools)}")
+            if mcp_tools:
+                for tool in mcp_tools:
+                    print(f"  - MCP: {tool['name']} from {tool['server']}")
+            
+            async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
                 chunk_type = chunk.get("type")
                 if chunk_type == "content":
                     content = chunk.get("content", "")
@@ -746,6 +756,14 @@ async def update_settings(request: Request):
     """Update application settings"""
     data = await request.json()
     updated_settings = settings_manager.update_settings(data)
+    
+    # Update LLM client with new settings if URL or model changed
+    if 'llama_cpp_base_url' in data or 'llama_cpp_model' in data:
+        settings = settings_manager.get_settings()
+        llm_client.base_url = settings.get('llama_cpp_base_url', llm_client.base_url)
+        llm_client.model = settings.get('llama_cpp_model', llm_client.model)
+        print(f"Updated LLM client: base_url={llm_client.base_url}, model={llm_client.model}")
+    
     return updated_settings
 
 
@@ -753,10 +771,10 @@ async def update_settings(request: Request):
 async def get_audio_file(filename: str):
     """Serve generated TTS audio files"""
     audio_path = os.path.join(UPLOAD_DIR, filename)
-    
+
     if not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
-    
+
     return FileResponse(
         audio_path,
         media_type="audio/mpeg",

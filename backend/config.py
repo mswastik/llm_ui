@@ -10,13 +10,13 @@ os.environ['PYTORCH_ALLOC_CONF']='expandable_segments:True'
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./llm_ui.db")
 
 # llama.cpp Configuration
-LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_URL", "http://localhost:8080")
-LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", "glm4.7-30ba3b")
-QUERY_MODEL = os.getenv("QUERY_MODEL", "qwen3-30ba3b") # Query model should be non-thinking model
+LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3")
+LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", "qwen3-4b")
+QUERY_MODEL = os.getenv("QUERY_MODEL", "qwen3-4b") # Query model should be non-thinking model
 
 # Application Settings
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("APP_PORT", "8000"))
+APP_PORT = int(os.getenv("APP_PORT", "8002"))
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # LLM Generation Defaults

@@ -5,12 +5,8 @@ import { sseService } from '../services/sse.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 import { ttsService } from '../services/tts.js'
 
-console.log('[CHAT] Module loading...')
-
 // Define component factory as global function
 window.chat = () => {
-  console.log('[CHAT] Component factory called')
-  
   // Create reactive component
   const component = {
     // Local state
@@ -39,9 +35,6 @@ window.chat = () => {
 
     // Initialization
     async init() {
-      console.log('[CHAT] init() called')
-      console.log('[CHAT] $store available:', !!this.$store)
-      
       // Sync from store
       this.isLoading = this.$store.chat.isLoading
       this.toolStatus = { ...this.$store.chat.toolStatus }
@@ -50,11 +43,6 @@ window.chat = () => {
       this.enableRAG = this.$store.chat.enableRAG
       this.availableModels = this.$store.chat.availableModels
       this.currentConversationTitle = this.$store.chat.currentConversationTitle
-      
-      console.log('[CHAT] Initial state:', { 
-        messages: this.messages.length, 
-        currentConversationTitle: this.currentConversationTitle 
-      })
       
       await this.loadModels()
       this.$store.chat.loadSavedModel()
@@ -66,19 +54,16 @@ window.chat = () => {
 
     // Models
     async loadModels() {
-      console.log('[CHAT] loadModels() called')
       try {
         const data = await api.get('/api/models')
         this.availableModels = data.models || []
         this.$store.chat.availableModels = this.availableModels
-        console.log('[CHAT] Loaded models:', this.availableModels.length)
       } catch (error) {
-        console.error('[CHAT] Error loading models:', error)
+        console.error('Error loading models:', error)
       }
     },
 
     updateSelectedModel() {
-      console.log('[CHAT] updateSelectedModel() called')
       this.$store.chat.setModel(this.selectedModel)
     },
 
@@ -86,21 +71,19 @@ window.chat = () => {
       const newTitle = event.target.value.trim()
       if (!newTitle) return
       
-      console.log('[CHAT] updateConversationTitle() called with:', newTitle)
       try {
         await api.put(`/api/conversations/${conversationId}`, { title: newTitle })
         this.$store.chat.updateConversation(conversationId, { title: newTitle })
         this.$store.chat.currentConversationTitle = newTitle
         this.currentConversationTitle = newTitle
       } catch (error) {
-        console.error('[CHAT] Error updating title:', error)
+        console.error('Error updating title:', error)
         this.$store.chat.showToast('Failed to update title', 'error')
       }
     },
 
     // Sending messages
     async sendMessage(inputMessage) {
-      console.log('[CHAT] sendMessage() called with:', inputMessage)
       if (!inputMessage?.trim() || this.isLoading) return
       
       const messageText = inputMessage.trim()
@@ -125,7 +108,7 @@ window.chat = () => {
         })
         await this.streamResponse(data.request_id)
       } catch (error) {
-        console.error('[CHAT] Error sending message:', error)
+        console.error('Error sending message:', error)
         this.isLoading = false
         this.$store.chat.isLoading = false
         this.$store.chat.showToast('Failed to send message', 'error')
@@ -133,7 +116,6 @@ window.chat = () => {
     },
 
     async streamResponse(requestId) {
-      console.log('[CHAT] streamResponse() called with requestId:', requestId)
       const options = {
         enableWebSearch: this.enableWebSearch,
         enableRag: this.enableRAG,
@@ -161,8 +143,6 @@ window.chat = () => {
 
     // Core streaming logic
     processStreamEvent(data, msgIndex) {
-      console.log('[CHAT] processStreamEvent:', data.type, data)
-      
       switch (data.type) {
         case 'content':
           this.$store.chat.messages[msgIndex].content += data.content
@@ -180,7 +160,6 @@ window.chat = () => {
           }
           break
         case 'tool_call_start':
-          console.log('[CHAT] Tool call start:', data.tool)
           this.$store.chat.toolStatus.active = true
           this.$store.chat.toolStatus.tool = data.tool
           this.$store.chat.toolStatus.status = 'Starting...'
@@ -219,7 +198,6 @@ window.chat = () => {
             if (data.result) {
               currentToolCall.result = data.result
               currentToolCall.status = 'completed'
-              console.log('[CHAT] Tool completed:', data.tool)
             }
             this.$store.chat.messages[msgIndex] = { 
               ...this.$store.chat.messages[msgIndex], 
@@ -247,7 +225,6 @@ window.chat = () => {
           }
           break
         case 'done':
-          console.log('[CHAT] Stream done')
           sseService.close()
           this.isLoading = false
           this.$store.chat.isLoading = false
@@ -263,20 +240,18 @@ window.chat = () => {
     // Message actions
     async deleteMessage(messageId, event) {
       event?.stopPropagation()
-      console.log('[CHAT] deleteMessage() called')
       if (!confirm('Delete this message?')) return
       try {
         await api.delete(`/api/messages/${messageId}`)
         this.$store.chat.removeMessage(messageId)
         this.messages = this.$store.chat.messages
       } catch (error) {
-        console.error('[CHAT] Error deleting message:', error)
+        console.error('Error deleting message:', error)
         this.$store.chat.showToast('Failed to delete message', 'error')
       }
     },
 
     startEditMessage(messageId, content) {
-      console.log('[CHAT] startEditMessage() called')
       this.editingMessageId = messageId
       this.editContent = content
     },
@@ -287,7 +262,6 @@ window.chat = () => {
     },
 
     async saveEdit(messageId) {
-      console.log('[CHAT] saveEdit() called')
       if (!this.editContent.trim()) {
         this.cancelEdit()
         return
@@ -311,14 +285,13 @@ window.chat = () => {
         })
         msg.content = data.message.content
       } catch (error) {
-        console.error('[CHAT] Error updating message:', error)
+        console.error('Error updating message:', error)
         this.$store.chat.showToast('Failed to update message', 'error')
       }
       this.cancelEdit()
     },
 
     async forkConversation(originalMessageId, newContent) {
-      console.log('[CHAT] forkConversation() called')
       try {
         const data = await api.post('/api/conversations', { 
           title: 'Forked: ' + newContent.substring(0, 30) + '...' 
@@ -342,14 +315,13 @@ window.chat = () => {
         
         await this.streamResponse(streamData.request_id)
       } catch (error) {
-        console.error('[CHAT] Error forking:', error)
+        console.error('Error forking:', error)
         this.$store.chat.showToast('Failed to fork conversation', 'error')
       }
       this.cancelEdit()
     },
 
     async regenerateResponse(messageId) {
-      console.log('[CHAT] regenerateResponse() called')
       if (this.isLoading) return
       
       this.isLoading = true
@@ -381,7 +353,7 @@ window.chat = () => {
         this.messages = this.$store.chat.messages
         handlers.onData((d) => this.processStreamEvent(d, this.messages.length - 1))
       } catch (error) {
-        console.error('[CHAT] Error regenerating:', error)
+        console.error('Error regenerating:', error)
         this.isLoading = false
         this.$store.chat.isLoading = false
         this.$store.chat.showToast('Failed to regenerate', 'error')
@@ -389,7 +361,6 @@ window.chat = () => {
     },
 
     cancelRequest() {
-      console.log('[CHAT] cancelRequest() called')
       sseService.close()
       this.isLoading = false
       this.$store.chat.isLoading = false
@@ -405,7 +376,6 @@ window.chat = () => {
 
     // TTS
     async speakMessage(message) {
-      console.log('[CHAT] speakMessage() called')
       const success = await ttsService.speak(message, (error) => 
         this.$store.chat.showToast(error, 'error')
       )
@@ -440,7 +410,6 @@ window.chat = () => {
     },
 
     toggleToolCallBlock(messageId, blockIndex) {
-      console.log('[CHAT] toggleToolCallBlock() called')
       const key = helpers.createExpansionKey(messageId, blockIndex)
       helpers.toggleExpansion(this.expandedToolCallBlocks, key)
     },
@@ -451,7 +420,6 @@ window.chat = () => {
     },
 
     toggleThinkingBlock(messageId, blockIndex) {
-      console.log('[CHAT] toggleThinkingBlock() called')
       const key = helpers.createExpansionKey(messageId, blockIndex)
       helpers.toggleExpansion(this.expandedThinkingBlocks, key)
     },
@@ -477,8 +445,6 @@ window.chat = () => {
       return helpers.isExpanded(this.expandedSources, messageId)
     }
   }
-  
+
   return component
 }
-
-console.log('[CHAT] window.chat defined:', typeof window.chat)

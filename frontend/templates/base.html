@@ -31,29 +31,17 @@
     <script type="module" src="/static/js/components/settings.js"></script>
     <script type="module" src="/static/js/components/documents.js"></script>
 
-    <!-- 4. Load Alpine LAST - it will find all registered components -->
+    <!-- 4. Load Alpine -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
-    
-    <!-- Debug: Check what's loaded -->
-    <script>
-      console.log('[DEBUG] Base HTML loaded')
-      console.log('[DEBUG] window.sidebar:', typeof window.sidebar)
-      console.log('[DEBUG] window.chat:', typeof window.chat)
-      console.log('[DEBUG] window.settings:', typeof window.settings)
-      console.log('[DEBUG] window.documents:', typeof window.documents)
-      
-      document.addEventListener('alpine:init', () => {
-        console.log('[DEBUG] Alpine initialized')
-        console.log('[DEBUG] Alpine.data registered:', Object.keys(window.Alpine.$data || {}))
-      })
-    </script>
 
     {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-gray-50 h-screen overflow-hidden" {% block body_attrs %}{% endblock %}>
     {% block content %}{% endblock %}
-    
+
+    <!-- Collapse plugin - loads after Alpine, registers automatically -->
+    <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
+
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

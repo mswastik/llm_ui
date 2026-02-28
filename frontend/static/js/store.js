@@ -1,7 +1,6 @@
 /**
  * Alpine.js Store - Shared State Management
  */
-console.log('[STORE] Module loading...')
 
 // Store definitions
 const storeDefinitions = {
@@ -97,14 +96,10 @@ const storeDefinitions = {
 
 // Register stores when Alpine initializes
 document.addEventListener('alpine:init', () => {
-  console.log('[STORE] alpine:init event fired')
-  console.log('[STORE] Alpine available:', typeof window.Alpine !== 'undefined')
   Alpine.store('chat', storeDefinitions.chat)
   Alpine.store('settings', storeDefinitions.settings)
   Alpine.store('documents', storeDefinitions.documents)
   Alpine.store('tts', storeDefinitions.tts)
-  console.log('[STORE] All stores registered')
 })
 
-console.log('[STORE] Module loaded, storeDefinitions:', Object.keys(storeDefinitions))
 export { storeDefinitions }

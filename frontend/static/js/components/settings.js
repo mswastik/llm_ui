@@ -3,12 +3,8 @@
  */
 import { api } from '../utils.js'
 
-console.log('[SETTINGS] Module loading...')
-
 // Define component factory as global function
 window.settings = () => {
-  console.log('[SETTINGS] Component factory called')
-  
   const component = {
     // Local state
     activeTab: 'general',
@@ -27,23 +23,17 @@ window.settings = () => {
 
     // Initialization
     async init() {
-      console.log('[SETTINGS] init() called')
-      console.log('[SETTINGS] $store available:', !!this.$store)
-      
       // Sync from store
       this.activeTab = this.$store.settings.activeTab
       this.settings = this.$store.settings.data
       this.mcpServers = this.$store.settings.mcpServers
       this.newServer = { ...this.$store.settings.newServer }
       
-      console.log('[SETTINGS] Initial state:', { show: this.show, activeTab: this.activeTab })
-      
       await this.loadSettings()
     },
 
     // Settings
     async loadSettings() {
-      console.log('[SETTINGS] loadSettings() called')
       try {
         const data = await api.get('/api/settings')
         this.settings = data
@@ -54,7 +44,6 @@ window.settings = () => {
     },
 
     async saveSettings() {
-      console.log('[SETTINGS] saveSettings() called')
       try {
         const data = await api.put('/api/settings', this.settings)
         this.settings = data
@@ -68,7 +57,6 @@ window.settings = () => {
     },
 
     onTtsEngineChange() {
-      console.log('[SETTINGS] onTtsEngineChange() called')
       if (this.settings.tts_engine === 'kokoro') {
         this.settings.tts_voice = 'af_bella'
         this.settings.kokoro_lang = 'a'
@@ -84,7 +72,6 @@ window.settings = () => {
 
     // MCP Servers
     async loadMCPServers() {
-      console.log('[SETTINGS] loadMCPServers() called')
       try {
         const data = await api.get('/api/mcp/servers')
         this.mcpServers = data.servers
@@ -95,7 +82,6 @@ window.settings = () => {
     },
 
     async loadMCPTools() {
-      console.log('[SETTINGS] loadMCPTools() called')
       try {
         const data = await api.get('/api/mcp/tools')
         this.mcpTools = data.tools || []
@@ -106,7 +92,6 @@ window.settings = () => {
     },
 
     async addMCPServer() {
-      console.log('[SETTINGS] addMCPServer() called')
       try {
         let args = []
         try { 
@@ -146,7 +131,6 @@ window.settings = () => {
     },
 
     async removeMCPServer(serverName) {
-      console.log('[SETTINGS] removeMCPServer() called with:', serverName)
       if (!confirm(`Remove "${serverName}"?`)) return
       try {
         await api.delete(`/api/mcp/servers/${serverName}`)
@@ -159,7 +143,6 @@ window.settings = () => {
     },
 
     async reconnectMCPServer(serverName) {
-      console.log('[SETTINGS] reconnectMCPServer() called with:', serverName)
       try {
         await api.post(`/api/mcp/servers/${serverName}/reconnect`)
         await this.loadMCPServers()
@@ -171,7 +154,6 @@ window.settings = () => {
     },
 
     async refreshMCPServerTools(serverName) {
-      console.log('[SETTINGS] refreshMCPServerTools() called with:', serverName)
       try {
         await api.post(`/api/mcp/servers/${serverName}/refresh`)
         await this.loadMCPServers()
@@ -186,4 +168,3 @@ window.settings = () => {
   return component
 }
 
-console.log('[SETTINGS] window.settings defined:', typeof window.settings)

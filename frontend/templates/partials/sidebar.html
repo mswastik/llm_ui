@@ -31,7 +31,7 @@
     <div class="flex-1 overflow-y-auto p-1 space-y-1" x-show="!sidebarCollapsed">
         <template x-for="conv in conversations" :key="conv.id">
             <div
-                @click="console.log('[CLICK] Conversation clicked:', conv.id, 'currentConversationId:', currentConversationId); loadConversation(conv.id)"
+                @click="loadConversation(conv.id)"
                 :class="currentConversationId === conv.id ? 'bg-blue-100' : 'bg-white hover:bg-gray-50'"
                 class="rounded-lg max-w-xs cursor-pointer transition group">
                 <div class="flex justify-between">

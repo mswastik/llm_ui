@@ -1,0 +1,303 @@
+<!-- Settings Modal -->
+
+<div x-show="show"
+     x-cloak
+     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+     @click.self="show = false"
+     x-data="settings"
+     x-init="init()">
+    <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+
+        <!-- Modal Header -->
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-xl font-semibold">Application Settings</h2>
+            <button @click="show = false" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Modal Tabs -->
+        <div class="border-b border-gray-200">
+            <nav class="flex -mb-px">
+                <button
+                    @click="activeTab = 'general'"
+                    :class="activeTab === 'general' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm">
+                    General
+                </button>
+                <button
+                    @click="activeTab = 'llm'"
+                    :class="activeTab === 'llm' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm">
+                    LLM Settings
+                </button>
+                <button
+                    @click="activeTab = 'tts'"
+                    :class="activeTab === 'tts' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm">
+                    TTS Settings
+                </button>
+                <button
+                    @click="activeTab = 'searxng'"
+                    :class="activeTab === 'searxng' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm">
+                    SearXNG Search
+                </button>
+                <button
+                    @click="activeTab = 'mcp'; loadMCPTools()"
+                    :class="activeTab === 'mcp' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm">
+                    MCP Servers
+                </button>
+            </nav>
+        </div>
+
+        <!-- Modal Body -->
+        <div class="p-6 overflow-y-auto flex-grow" style="max-height: calc(90vh - 180px);">
+
+            <!-- General Settings Tab -->
+            <div x-show="activeTab === 'general'" class="space-y-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">General Settings</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Database URL</label>
+                            <input type="text" x-model="settings.database_url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Application Host</label>
+                            <input type="text" x-model="settings.app_host" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Application Port</label>
+                            <input type="number" x-model.number="settings.app_port" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Max Upload Size (bytes)</label>
+                            <input type="number" x-model.number="settings.max_upload_size" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Upload Directory</label>
+                            <input type="text" x-model="settings.upload_dir" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">CORS Origins (comma-separated)</label>
+                            <input type="text" x-model="settings.cors_origins" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">System Prompt</label>
+                            <textarea x-model="settings.system_prompt" rows="4" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" x-model="settings.debug" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label class="ml-2 block text-sm text-gray-700">Enable Debug Mode</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LLM Settings Tab -->
+            <div x-show="activeTab === 'llm'" class="space-y-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">LLM Configuration</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">LLM Server URL</label>
+                            <input type="text" x-model="settings.llama_cpp_base_url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Default Model</label>
+                            <input type="text" x-model="settings.llama_cpp_model" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Query Model</label>
+                            <input type="text" x-model="settings.query_model" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Temperature</label>
+                            <input type="number" step="0.01" min="0" max="2" x-model.number="settings.default_temperature" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Max Tokens</label>
+                            <input type="number" x-model.number="settings.default_max_tokens" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TTS Settings Tab -->
+            <div x-show="activeTab === 'tts'" class="space-y-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">Text-to-Speech Configuration</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">TTS Engine</label>
+                            <select x-model="settings.tts_engine" @change="onTtsEngineChange()" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="edge-tts">Edge TTS</option>
+                                <option value="pyttsx3">Pyttsx3</option>
+                                <option value="kokoro">Kokoro TTS</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">TTS Voice</label>
+                            <template x-if="settings.tts_engine === 'kokoro'">
+                                <select x-model="settings.tts_voice" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="af_bella">Bella (Female, American)</option>
+                                    <option value="af_sarah">Sarah (Female, American)</option>
+                                    <option value="af_sky">Sky (Female, American)</option>
+                                    <option value="am_adam">Adam (Male, American)</option>
+                                    <option value="am_michael">Michael (Male, American)</option>
+                                    <option value="bf_emma">Emma (Female, British)</option>
+                                    <option value="bf_isabella">Isabella (Female, British)</option>
+                                    <option value="bm_george">George (Male, British)</option>
+                                    <option value="bm_lewis">Lewis (Male, British)</option>
+                                </select>
+                            </template>
+                            <template x-if="settings.tts_engine !== 'kokoro'">
+                                <input type="text" x-model="settings.tts_voice" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </template>
+                        </div>
+                        <div x-show="settings.tts_engine === 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Language</label>
+                            <select x-model="settings.kokoro_lang" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="a">American English</option>
+                                <option value="b">British English</option>
+                            </select>
+                        </div>
+                        <div x-show="settings.tts_engine === 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Device</label>
+                            <select x-model="settings.kokoro_device" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="cpu">CPU</option>
+                                <option value="cuda">CUDA</option>
+                                <option value="cuda:0">CUDA:0</option>
+                                <option value="cuda:1">CUDA:1</option>
+                            </select>
+                        </div>
+                        <div x-show="settings.tts_engine === 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Volume</label>
+                            <input type="number" step="0.01" min="0" max="1" x-model.number="settings.kokoro_volume" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div x-show="settings.tts_engine === 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Speed</label>
+                            <input type="number" step="0.01" min="0.5" max="2" x-model.number="settings.kokoro_speed" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div x-show="settings.tts_engine !== 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Speech Rate</label>
+                            <input type="text" x-model="settings.tts_rate" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div x-show="settings.tts_engine !== 'kokoro'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Volume Level</label>
+                            <input type="number" step="0.01" min="0" max="1" x-model.number="settings.tts_volume" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h4 class="font-medium text-blue-800 mb-2">TTS Engine Information</h4>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Edge TTS:</strong> High quality online TTS service.</p>
+                        <p class="text-sm text-gray-700 mb-2"><strong>Pyttsx3:</strong> Offline TTS service. Lower quality.</p>
+                        <p class="text-sm text-gray-700"><strong>Kokoro TTS:</strong> High-quality local TTS (~300MB).</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SearXNG Settings Tab -->
+            <div x-show="activeTab === 'searxng'" class="space-y-6">
+                <div>
+                    <h3 class="text-lg font-medium mb-4">SearXNG Configuration</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">SearXNG URL</label>
+                            <input type="text" x-model="settings.searxng_url" placeholder="http://localhost:8888/search" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Num Results</label>
+                            <input type="number" x-model.number="settings.searxng_num_results" min="1" max="100" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Chunk Size</label>
+                            <input type="number" x-model.number="settings.searxng_chunk_size" min="100" max="5000" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Similarity Threshold</label>
+                            <input type="number" x-model.number="settings.searxng_similarity_threshold" min="0" max="1" step="0.05" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
+                            <input type="number" x-model.number="settings.searxng_max_retries" min="0" max="10" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="md:col-span-2">
+                            <div class="flex items-center">
+                                <input type="checkbox" x-model="settings.searxng_enable_multi_query" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                <label class="ml-2 block text-sm text-gray-700">Enable Multi-Query</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MCP Servers Tab -->
+            <div x-show="activeTab === 'mcp'" class="space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-medium mb-4">Add MCP Server</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                            <input type="text" x-model="newServer.name" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Transport</label>
+                            <select x-model="newServer.transport_type" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="stdio">stdio</option>
+                                <option value="sse">SSE</option>
+                                <option value="streamable-http">Streamable HTTP</option>
+                            </select>
+                        </div>
+                        <div x-show="newServer.transport_type === 'stdio'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Command</label>
+                            <input type="text" x-model="newServer.command" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div x-show="newServer.transport_type === 'stdio'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Args (JSON)</label>
+                            <input type="text" x-model="newServer.args" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div x-show="newServer.transport_type !== 'stdio'">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                            <input type="url" x-model="newServer.url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    <button @click="addMCPServer()" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Add Server</button>
+                </div>
+                <div>
+                    <h3 class="text-lg font-medium mb-4">Configured Servers</h3>
+                    <template x-if="mcpServers.length === 0">
+                        <p class="text-gray-500 text-sm">No servers configured.</p>
+                    </template>
+                    <div class="space-y-4">
+                        <template x-for="server in mcpServers" :key="server.name">
+                            <div class="border border-gray-200 rounded-lg p-4">
+                                <div class="flex items-start justify-between">
+                                    <div>
+                                        <h4 class="font-medium" x-text="server.name"></h4>
+                                        <p class="text-sm text-gray-500" x-text="server.transport_type"></p>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button @click="refreshMCPServerTools(server.name)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Refresh</button>
+                                        <button @click="reconnectMCPServer(server.name)" class="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200">Reconnect</button>
+                                        <button @click="removeMCPServer(server.name)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">Remove</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+            <button @click="show = false" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">Cancel</button>
+            <button @click="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Changes</button>
+        </div>
+    </div>
+</div>

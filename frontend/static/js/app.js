@@ -153,6 +153,19 @@ function chatApp() {
                 this.currentConversationTitle = data.conversation.title;
                 this.messages = data.messages;
                 
+                // If there's an active stream for this conversation, refresh messages periodically
+                if (this.streamingConversationId === conversationId && this.eventSource) {
+                    // Set up periodic refresh to get latest messages from the stream
+                    const refreshInterval = setInterval(() => {
+                        if (this.currentConversationId === conversationId && this.streamingConversationId === conversationId) {
+                            // Force Alpine to re-render by triggering reactivity
+                            this.messages = [...this.messages];
+                        } else {
+                            clearInterval(refreshInterval);
+                        }
+                    }, 500);
+                }
+                
                 // Scroll to bottom
                 this.$nextTick(() => {
                     this.scrollToBottom();
@@ -270,7 +283,7 @@ function chatApp() {
             if (this.selectedModel) {
                 url += `&model=${encodeURIComponent(this.selectedModel)}`;
             }
-            
+
             // Track which conversation is being streamed
             this.streamingConversationId = this.currentConversationId;
 
@@ -296,16 +309,18 @@ function chatApp() {
             const streamingConvId = this.streamingConversationId;
 
             let streamCompleted = false;
-            
+
             // Track current block being built
             let currentToolCallIndex = -1;
+            
+            // Track thinking state for parsing <think> tags in content stream
+            let isThinking = false;
+            let thinkingBuffer = '';
 
             console.log('[DEBUG] EventSource onmessage handler set');
             this.eventSource.onmessage = (event) => {
-                // Ignore events if conversation has changed
-                if (this.currentConversationId !== streamingConvId) {
-                    return;
-                }
+                // Always process events - update messages array regardless of current view
+                // This ensures data is preserved even if user navigates away
 
                 console.log('[DEBUG] Received SSE event:', event.data.substring(0, 200));
                 try {
@@ -314,7 +329,7 @@ function chatApp() {
 
                     switch (data.type) {
                         case 'content':
-                            // Update message content
+                            // Regular content - append to message content
                             this.messages[msgIndex].content += data.content;
 
                             // Direct DOM update for immediate streaming display
@@ -322,32 +337,34 @@ function chatApp() {
                             if (msgEl) {
                                 msgEl.innerHTML = marked.parse(this.messages[msgIndex].content);
                             }
-                            //this.scrollToBottom();
+                            // Force Alpine reactivity
+                            this.messages = [...this.messages];
+                            this.scrollToBottom();
                             break;
 
                         case 'thinking':
-                            // Thinking content from reasoning models (e.g., DeepSeek)
-                            this.messages[msgIndex].thinking += data.content;
-                            
-                            // Check the last block in tool_calls to decide whether to append or create new
-                            const toolCalls = this.messages[msgIndex].tool_calls;
-                            console.log('[DEBUG] Thinking event received. tool_calls length:', toolCalls.length, 'last block type:', toolCalls.length > 0 ? toolCalls[toolCalls.length - 1].type : 'none');
-                            
-                            if (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].type === 'thinking') {
-                                // Append to the last thinking block
-                                console.log('[DEBUG] Appending to existing thinking block');
-                                toolCalls[toolCalls.length - 1].content += data.content;
+                            // Direct thinking events from backend
+                            const toolCallsThinking = this.messages[msgIndex].tool_calls;
+                            console.log('[DEBUG] Thinking event received. tool_calls length:', toolCallsThinking.length, 'content length:', data.content?.length);
+
+                            // Check if last block is also thinking - if so, append to it for streaming
+                            if (toolCallsThinking.length > 0 && toolCallsThinking[toolCallsThinking.length - 1].type === 'thinking') {
+                                // Append to existing thinking block for streaming effect
+                                toolCallsThinking[toolCallsThinking.length - 1].content += data.content;
+                                console.log('[DEBUG] Appending to existing thinking block, new length:', toolCallsThinking[toolCallsThinking.length - 1].content.length);
                             } else {
-                                // Create a new thinking block
-                                console.log('[DEBUG] Creating new thinking block');
-                                toolCalls.push({
+                                // Create new thinking block
+                                toolCallsThinking.push({
                                     type: 'thinking',
                                     content: data.content
                                 });
+                                console.log('[DEBUG] Creating new thinking block');
                             }
-                            
-                            console.log('[DEBUG] tool_calls after update:', JSON.stringify(toolCalls.map(b => ({type: b.type, contentLen: b.content?.length || 0})), null, 2));
-                            
+
+                            // Force Alpine reactivity by replacing the entire array
+                            this.messages[msgIndex].tool_calls = [...toolCallsThinking];
+                            this.messages = [...this.messages];
+                            console.log('[DEBUG] Thinking block updated/created, tool_calls length:', this.messages[msgIndex].tool_calls.length);
                             this.scrollToBottom();
                             break;
 
@@ -356,7 +373,7 @@ function chatApp() {
                             this.toolStatus.tool = data.tool;
                             this.toolStatus.status = 'Starting...';
                             this.toolStatus.progress = 0;
-                            
+
                             // Create a new tool call block for sequential display
                             const newToolCall = {
                                 type: 'tool_call',
@@ -372,6 +389,9 @@ function chatApp() {
                                 }]
                             };
                             this.messages[msgIndex].tool_calls.push(newToolCall);
+                            // Force Alpine reactivity
+                            this.messages[msgIndex].tool_calls = [...this.messages[msgIndex].tool_calls];
+                            this.messages = [...this.messages];
                             currentToolCallIndex = this.messages[msgIndex].tool_calls.length - 1;
                             break;
 
@@ -410,6 +430,10 @@ function chatApp() {
                                     // Reset current tool call index since this one is done
                                     currentToolCallIndex = -1;
                                 }
+                                
+                                // Force Alpine reactivity for tool call updates
+                                this.messages[msgIndex].tool_calls = [...this.messages[msgIndex].tool_calls];
+                                this.messages = [...this.messages];
                             }
 
                             if (data.result) {

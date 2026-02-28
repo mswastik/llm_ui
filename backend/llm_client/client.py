@@ -97,26 +97,30 @@ class LLMClient:
                     # Track streaming tool call - accumulate arguments across chunks
                     streaming_tool_call = None
                     
+                    # Track thinking buffer for tags that span multiple chunks
+                    thinking_buffer = None
+
                     async for chunk in response.content.iter_any():
                         # Decode chunk and add to buffer
                         text = chunk.decode('utf-8')
+                        print(f"[DEBUG] Raw chunk received: {repr(text[:200])}")
                         buffer += text
-                        
+
                         # Process complete lines
                         while '\n' in buffer:
                             line, buffer = buffer.split('\n', 1)
                             line = line.strip()
-                            
+
                             if not line or line == "data: [DONE]":
                                 continue
-                            
+
                             if line.startswith("data: "):
                                 data = line[6:]  # Remove "data: " prefix
-                                
+
                                 try:
                                     chunk_data = json.loads(data)
                                     delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-                                    
+
                                     # Handle thinking content (for thinking models like DeepSeek)
                                     # Check multiple field names that llama.cpp might use
                                     thinking_content = delta.get("thinking") or delta.get("reasoning_content")
@@ -126,16 +130,79 @@ class LLMClient:
                                             "content": thinking_content
                                         }
                                         await asyncio.sleep(0)
-                                    
-                                    # Handle content
+
+                                    # Handle content - parse for <think> tags with buffering across chunks
                                     if "content" in delta and delta["content"]:
-                                        yield {
-                                            "type": "content",
-                                            "content": delta["content"]
-                                        }
-                                        # Small yield to allow event loop to process
-                                        await asyncio.sleep(0)
-                                    
+                                        content = delta["content"]
+                                        print(f"[DEBUG] Content chunk: {repr(content[:100])}")
+                                        
+                                        # If we're in thinking mode, accumulate content
+                                        if thinking_buffer is not None:
+                                            # Look for end tag in this chunk
+                                            end_pos = content.find('</think>')
+                                            if end_pos != -1:
+                                                # Found end tag - complete the thinking block
+                                                thinking_buffer += content[:end_pos]
+                                                print(f"[DEBUG] </think> found, thinking block complete: {len(thinking_buffer)} chars")
+                                                yield {
+                                                    "type": "thinking",
+                                                    "content": thinking_buffer
+                                                }
+                                                thinking_buffer = None
+                                                # Process remaining content after </think>
+                                                content = content[end_pos + 9:]
+                                            else:
+                                                # No end tag yet, accumulate and wait for more
+                                                thinking_buffer += content
+                                                print(f"[DEBUG] Accumulating thinking: {len(thinking_buffer)} chars so far")
+                                                continue
+                                        
+                                        # Process content for <think> tags
+                                        while content:
+                                            # Look for <think> start tag
+                                            think_start = content.find('<think>')
+                                            
+                                            if think_start != -1:
+                                                print(f"[DEBUG] <think> found at position {think_start}")
+                                                # Yield content before thinking tag
+                                                before_think = content[:think_start]
+                                                if before_think:
+                                                    yield {
+                                                        "type": "content",
+                                                        "content": before_think
+                                                    }
+                                                    await asyncio.sleep(0)
+                                                
+                                                # Check if end tag is in the same chunk
+                                                after_start = content[think_start + 7:]  # Skip '<think>'
+                                                think_end = after_start.find('</think>')
+                                                
+                                                if think_end != -1:
+                                                    # Complete thinking block in same chunk
+                                                    thinking = after_start[:think_end]
+                                                    print(f"[DEBUG] Complete thinking block in one chunk: {len(thinking)} chars")
+                                                    yield {
+                                                        "type": "thinking",
+                                                        "content": thinking
+                                                    }
+                                                    await asyncio.sleep(0)
+                                                    # Continue with remaining content
+                                                    content = after_start[think_end + 9:]  # Skip '</think>'
+                                                else:
+                                                    # Start buffering - thinking continues in next chunks
+                                                    thinking_buffer = after_start
+                                                    print(f"[DEBUG] Started thinking buffer: {len(thinking_buffer)} chars")
+                                                    content = ''
+                                            else:
+                                                # No thinking tag, yield as regular content
+                                                yield {
+                                                    "type": "content",
+                                                    "content": content
+                                                }
+                                                content = ''
+                                            
+                                            await asyncio.sleep(0)
+
                                     # Handle tool calls (if model supports it)
                                     # llama.cpp streams tool calls incrementally
                                     if "tool_calls" in delta:
@@ -146,10 +213,10 @@ class LLMClient:
                                                 if not function_data:
                                                     print(f"[DEBUG] tool_call missing 'function' key: {tool_call}")
                                                     continue
-                                                
+
                                                 tool_name = function_data.get("name")
                                                 arguments_str = function_data.get("arguments", "")
-                                                
+
                                                 # If we have a tool name, this is the start of a new tool call
                                                 if tool_name:
                                                     streaming_tool_call = {
@@ -157,18 +224,18 @@ class LLMClient:
                                                         "arguments_str": arguments_str
                                                     }
                                                     print(f"[DEBUG] Starting tool call: {tool_name}")
-                                                
+
                                                 # If we already have a streaming tool call, accumulate arguments
                                                 elif streaming_tool_call and arguments_str:
                                                     streaming_tool_call["arguments_str"] += arguments_str
                                                     print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
-                                                
+
                                                 # Try to parse accumulated arguments if we have a tool name
                                                 if streaming_tool_call and streaming_tool_call.get("name"):
                                                     try:
                                                         parsed_args = json.loads(streaming_tool_call["arguments_str"])
                                                         print(f"[DEBUG] Successfully parsed tool arguments: {parsed_args}")
-                                                        
+
                                                         # Yield complete tool call
                                                         yield {
                                                             "type": "tool_call",
@@ -177,22 +244,22 @@ class LLMClient:
                                                                 "arguments": parsed_args
                                                             }
                                                         }
-                                                        
+
                                                         # Clear streaming tool call after yielding
                                                         streaming_tool_call = None
                                                         await asyncio.sleep(0)
-                                                        
+
                                                     except json.JSONDecodeError:
                                                         # Arguments not complete yet, wait for more chunks
                                                         print(f"[DEBUG] Arguments not complete yet, waiting...")
                                                         continue
-                                                    
+
                                             except Exception as e:
                                                 print(f"[DEBUG] Error processing tool_call: {e}, tool_call data: {tool_call}")
                                                 import traceback
                                                 traceback.print_exc()
                                                 # Continue processing other tool calls
-                                
+
                                 except json.JSONDecodeError:
                                     continue
         

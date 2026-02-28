@@ -18,6 +18,10 @@ from database.crud import (
     update_message, get_message, create_document, update_document_status, get_documents,
     delete_message as db_delete_message, delete_document as db_delete_document, get_document
 )
+from database.agent_crud import (
+    get_all_agents, get_agent, get_agent_by_name, create_agent,
+    update_agent, delete_agent, get_default_agent
+)
 from mcp_client.client import MCPClientManager
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
@@ -56,6 +60,24 @@ active_connections: Dict[str, asyncio.Queue] = {}
 async def index(request: Request):
     """Render main chat interface"""
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/settings")
+async def settings_page(request: Request):
+    """Render settings page"""
+    return templates.TemplateResponse("settings.html", {"request": request})
+
+
+@app.get("/knowledge")
+async def knowledge_page(request: Request):
+    """Render knowledge base page"""
+    return templates.TemplateResponse("knowledge.html", {"request": request})
+
+
+@app.get("/agents")
+async def agents_page(request: Request):
+    """Render agents management page"""
+    return templates.TemplateResponse("agents.html", {"request": request})
 
 
 @app.get("/api/conversations")
@@ -884,6 +906,200 @@ async def web_search_endpoint(request: Request):
     )
     
     return result
+
+
+# Agent Management
+@app.get("/agents")
+async def agents_page(request: Request):
+    """Render agents management page"""
+    return templates.TemplateResponse("agents.html", {"request": request})
+
+
+@app.get("/api/agents")
+async def list_agents():
+    """List all agents"""
+    async with get_db() as db:
+        agents = await get_all_agents(db)
+        return {
+            "agents": [
+                {
+                    "id": agent.id,
+                    "name": agent.name,
+                    "description": agent.description,
+                    "model": agent.model,
+                    "temperature": agent.temperature,
+                    "top_k": agent.top_k,
+                    "max_tokens": agent.max_tokens,
+                    "system_prompt": agent.system_prompt,
+                    "enabled_tools": agent.enabled_tools,
+                    "enabled_mcp_servers": agent.enabled_mcp_servers,
+                    "enable_rag": bool(agent.enable_rag),
+                    "rag_similarity_threshold": agent.rag_similarity_threshold,
+                    "enable_web_search": bool(agent.enable_web_search),
+                    "conversation_starters": agent.conversation_starters,
+                    "created_at": agent.created_at.isoformat(),
+                    "updated_at": agent.updated_at.isoformat(),
+                    "is_active": bool(agent.is_active)
+                }
+                for agent in agents
+            ]
+        }
+
+
+@app.get("/api/agents/{agent_id}")
+async def get_agent_detail(agent_id: int):
+    """Get agent details"""
+    async with get_db() as db:
+        agent = await get_agent(db, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {
+            "agent": {
+                "id": agent.id,
+                "name": agent.name,
+                "description": agent.description,
+                "model": agent.model,
+                "temperature": agent.temperature,
+                "top_k": agent.top_k,
+                "max_tokens": agent.max_tokens,
+                "system_prompt": agent.system_prompt,
+                "enabled_tools": agent.enabled_tools,
+                "enabled_mcp_servers": agent.enabled_mcp_servers,
+                "enable_rag": bool(agent.enable_rag),
+                "rag_similarity_threshold": agent.rag_similarity_threshold,
+                "enable_web_search": bool(agent.enable_web_search),
+                "conversation_starters": agent.conversation_starters,
+                "created_at": agent.created_at.isoformat(),
+                "updated_at": agent.updated_at.isoformat(),
+                "is_active": bool(agent.is_active)
+            }
+        }
+
+
+@app.post("/api/agents")
+async def create_agent_endpoint(request: Request):
+    """Create a new agent"""
+    data = await request.json()
+    
+    agent_data = {
+        "name": data.get("name"),
+        "description": data.get("description", ""),
+        "model": data.get("model", "qwen3-4b"),
+        "temperature": data.get("temperature", 0.7),
+        "top_k": data.get("top_k", 40),
+        "max_tokens": data.get("max_tokens", 16048),
+        "system_prompt": data.get("system_prompt", ""),
+        "enabled_tools": data.get("enabled_tools", []),
+        "enabled_mcp_servers": data.get("enabled_mcp_servers", []),
+        "enable_rag": 1 if data.get("enable_rag", False) else 0,
+        "rag_similarity_threshold": data.get("rag_similarity_threshold", 0.4),
+        "enable_web_search": 1 if data.get("enable_web_search", False) else 0,
+        "conversation_starters": data.get("conversation_starters", [])
+    }
+    
+    # Validate required fields
+    if not agent_data["name"]:
+        raise HTTPException(status_code=400, detail="Agent name is required")
+    
+    async with get_db() as db:
+        # Check if name already exists
+        existing = await get_agent_by_name(db, agent_data["name"])
+        if existing:
+            raise HTTPException(status_code=400, detail="Agent with this name already exists")
+        
+        agent = await create_agent(db, agent_data)
+        return {
+            "agent": {
+                "id": agent.id,
+                "name": agent.name,
+                "description": agent.description,
+                "model": agent.model,
+                "temperature": agent.temperature,
+                "top_k": agent.top_k,
+                "max_tokens": agent.max_tokens,
+                "system_prompt": agent.system_prompt,
+                "enabled_tools": agent.enabled_tools,
+                "enabled_mcp_servers": agent.enabled_mcp_servers,
+                "enable_rag": bool(agent.enable_rag),
+                "rag_similarity_threshold": agent.rag_similarity_threshold,
+                "enable_web_search": bool(agent.enable_web_search),
+                "conversation_starters": agent.conversation_starters,
+                "created_at": agent.created_at.isoformat(),
+                "updated_at": agent.updated_at.isoformat(),
+                "is_active": bool(agent.is_active)
+            }
+        }
+
+
+@app.put("/api/agents/{agent_id}")
+async def update_agent_endpoint(agent_id: int, request: Request):
+    """Update an agent"""
+    data = await request.json()
+    
+    update_data = {}
+    if "name" in data:
+        update_data["name"] = data["name"]
+    if "description" in data:
+        update_data["description"] = data["description"]
+    if "model" in data:
+        update_data["model"] = data["model"]
+    if "temperature" in data:
+        update_data["temperature"] = data["temperature"]
+    if "top_k" in data:
+        update_data["top_k"] = data["top_k"]
+    if "max_tokens" in data:
+        update_data["max_tokens"] = data["max_tokens"]
+    if "system_prompt" in data:
+        update_data["system_prompt"] = data["system_prompt"]
+    if "enabled_tools" in data:
+        update_data["enabled_tools"] = data["enabled_tools"]
+    if "enabled_mcp_servers" in data:
+        update_data["enabled_mcp_servers"] = data["enabled_mcp_servers"]
+    if "enable_rag" in data:
+        update_data["enable_rag"] = 1 if data["enable_rag"] else 0
+    if "rag_similarity_threshold" in data:
+        update_data["rag_similarity_threshold"] = data["rag_similarity_threshold"]
+    if "enable_web_search" in data:
+        update_data["enable_web_search"] = 1 if data["enable_web_search"] else 0
+    if "conversation_starters" in data:
+        update_data["conversation_starters"] = data["conversation_starters"]
+    
+    async with get_db() as db:
+        agent = await update_agent(db, agent_id, update_data)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        return {
+            "agent": {
+                "id": agent.id,
+                "name": agent.name,
+                "description": agent.description,
+                "model": agent.model,
+                "temperature": agent.temperature,
+                "top_k": agent.top_k,
+                "max_tokens": agent.max_tokens,
+                "system_prompt": agent.system_prompt,
+                "enabled_tools": agent.enabled_tools,
+                "enabled_mcp_servers": agent.enabled_mcp_servers,
+                "enable_rag": bool(agent.enable_rag),
+                "rag_similarity_threshold": agent.rag_similarity_threshold,
+                "enable_web_search": bool(agent.enable_web_search),
+                "conversation_starters": agent.conversation_starters,
+                "created_at": agent.created_at.isoformat(),
+                "updated_at": agent.updated_at.isoformat(),
+                "is_active": bool(agent.is_active)
+            }
+        }
+
+
+@app.delete("/api/agents/{agent_id}")
+async def delete_agent_endpoint(agent_id: int):
+    """Delete an agent (soft delete)"""
+    async with get_db() as db:
+        success = await delete_agent(db, agent_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"status": "success", "message": "Agent deleted"}
 
 
 # TTS Endpoints

@@ -55,10 +55,26 @@ llm-ui-app/
     │   ├── css/
     │   │   └── styles.css       # Custom styles
     │   └── js/
-    │       └── app.js           # Alpine.js app logic
+    │       ├── app.js           # Main entry point (Alpine.js application)
+    │       ├── state/           # State management modules
+    │       │   ├── chatState.js
+    │       │   ├── settingsState.js
+    │       │   └── uiState.js
+    │       ├── services/        # Service layer (API, SSE, TTS)
+    │       │   ├── api.js
+    │       │   ├── sse.js
+    │       │   └── tts.js
+    │       ├── utils/           # Utility functions
+    │       │   ├── markdown.js
+    │       │   ├── formatters.js
+    │       │   └── helpers.js
+    │       └── components/      # UI component logic
+    │           └── chat.js
     └── templates/
-        └── index.html           # Main HTML template with HTMX/Alpine.js
+        └── index.html           # Main HTML template (modularized)
 ```
+
+**See [FRONTEND_ARCHITECTURE.md](FRONTEND_ARCHITECTURE.md) for detailed frontend documentation.**
 
 ## Prerequisites
 

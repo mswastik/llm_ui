@@ -4,36 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLM UI - Advanced Chat Interface</title>
-    
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
+
     <!-- Alpine.js with Collapse plugin -->
     <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    
+
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    
+
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/css/styles.css">
-    
+
     <!-- Marked.js for Markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- JavaScript Application -->
+    <script src="/static/js/app.js"></script>
 </head>
-<body class="bg-gray-50 h-screen overflow-hidden" x-data="chatApp()">
-    
+<body class="bg-gray-50 h-screen overflow-hidden" x-data="chatApp()" x-init="init()">
+
     <!-- Main Container -->
     <div class="flex h-screen">
-        
-        <!-- Sidebar - Conversation List -->
-        <div :class="sidebarCollapsed ? 'w-16' : 'w-70'" 
+
+        <!-- Sidebar -->
+        <div :class="sidebarCollapsed ? 'w-16' : 'w-70'"
              class="bg-white border-r border-gray-200 flex flex-col transition-all duration-300 overflow-hidden">
-            
+
             <!-- Sidebar Header -->
             <div class="p-2 border-b border-gray-200 flex items-center justify-between gap-1">
                 <template x-if="!sidebarCollapsed">
-                    <button 
+                    <button
                         @click="createNewConversation()"
                         class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -42,7 +45,7 @@
                         New Chat
                     </button>
                 </template>
-                <button 
+                <button
                     @click="toggleSidebar()"
                     class="p-2 rounded-lg hover:bg-gray-100 transition text-gray-600"
                     :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'">
@@ -51,20 +54,20 @@
                     </svg>
                 </button>
             </div>
-            
-            <!-- Conversations List -->
+
+            <!-- Conversations List (Expanded) -->
             <div class="flex-1 overflow-y-auto p-1 space-y-1" x-show="!sidebarCollapsed">
                 <template x-for="conv in conversations" :key="conv.id">
-                    <div 
+                    <div
                         @click="loadConversation(conv.id)"
                         :class="currentConversationId === conv.id ? 'bg-blue-100' : 'bg-white hover:bg-gray-50'"
                         class="rounded-lg max-w-xs cursor-pointer transition group">
                         <div class="flex justify-between">
-                            <div class="pl-1 justify-between">
+                            <div class="pl-1">
                                 <div class="p-0.5 font-medium text-sm text-gray-900 truncate" x-text="conv.title"></div>
-                                <div class="text-xs text-gray-500 ml-auto" x-text="formatDate(conv.updated_at)"></div>
+                                <div class="text-xs text-gray-500" x-text="formatDate(conv.updated_at)"></div>
                             </div>
-                            <button 
+                            <button
                                 @click="deleteConversation(conv.id, $event)"
                                 class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition p-1"
                                 title="Delete conversation">
@@ -76,11 +79,11 @@
                     </div>
                 </template>
             </div>
-            
-            <!-- Collapsed sidebar icons -->
+
+            <!-- Quick Access Icons (Collapsed) -->
             <div class="flex-1 overflow-y-auto p-2 space-y-2" x-show="sidebarCollapsed">
                 <template x-for="conv in conversations.slice(0, 5)" :key="conv.id">
-                    <div 
+                    <div
                         @click="loadConversation(conv.id); sidebarCollapsed = false"
                         :class="currentConversationId === conv.id ? 'bg-blue-100' : 'hover:bg-gray-100'"
                         class="p-2 rounded-lg cursor-pointer transition flex items-center justify-center"
@@ -91,10 +94,10 @@
                     </div>
                 </template>
             </div>
-            
-            <!-- Settings & Documents Buttons -->
+
+            <!-- Bottom Actions (Expanded) -->
             <div class="border-t border-gray-200" x-show="!sidebarCollapsed">
-                <button 
+                <button
                     @click="showDocuments = true"
                     class="w-full text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-100 transition flex items-center justify-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -112,10 +115,10 @@
                     Settings
                 </button>
             </div>
-            
-            <!-- Collapsed sidebar bottom icons -->
+
+            <!-- Bottom Actions (Collapsed) -->
             <div class="border-t border-gray-200" x-show="sidebarCollapsed">
-                <button 
+                <button
                     @click="showDocuments = true"
                     class="w-full p-2 text-gray-600 hover:bg-gray-100 transition flex items-center justify-center"
                     title="Knowledge Base">
@@ -134,15 +137,15 @@
                 </button>
             </div>
         </div>
-        
+
         <!-- Main Chat Area -->
         <div class="flex-1 flex flex-col">
-            
+
             <!-- Chat Header -->
             <div class="bg-white border-b border-gray-200 px-6 py-2">
                 <div class="flex items-center justify-between">
-                    <input 
-                        type="text" 
+                    <input
+                        type="text"
                         :value="currentConversationTitle"
                         @change="updateConversationTitle(currentConversationId, $event)"
                         class="text-xl font-semibold text-gray-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-2 py-1 -ml-2 w-full max-w-md"
@@ -152,132 +155,95 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- Messages Area -->
+
+            <!-- Messages Container -->
             <div class="flex-1 overflow-y-auto p-6 space-y-4" x-ref="messagesContainer" id="messages-container">
                 <template x-for="message in messages" :key="message.id">
                     <div :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'" class="group">
-                        <div :class="message.role === 'user' ? 'bg-blue-100 text-black' : 'bg-white border border-gray-200 text-gray-900'" 
+                        <div :class="message.role === 'user' ? 'bg-blue-100 text-black' : 'bg-white border border-gray-200 text-gray-900'"
                              class="max-w-6xl min-w-24 rounded-lg p-4 shadow-sm relative">
                             
                             <!-- Message Actions -->
                             <div class="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition flex gap-1">
-                                <!-- Copy button -->
-                                <button 
-                                    @click="copyMessage(message)"
-                                    class="p-1 rounded hover:bg-gray-100 text-gray-500"
-                                    :class="message.role === 'user' ? 'hover:text-blue-800' : 'hover:text-green-600'"
-                                    title="Copy to clipboard">
+                                <button @click="copyMessage(message)" class="p-1 rounded hover:bg-gray-100 text-gray-500"
+                                    :class="message.role === 'user' ? 'hover:text-blue-800' : 'hover:text-green-600'" title="Copy">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                                     </svg>
                                 </button>
                                 <template x-if="message.role === 'assistant'">
-                                    <button 
-                                        @click="regenerateResponse(message.id)"
-                                        :disabled="isLoading"
-                                        class="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600 disabled:opacity-50"
-                                        title="Regenerate response">
+                                    <button @click="regenerateResponse(message.id)" :disabled="isLoading"
+                                        class="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600 disabled:opacity-50" title="Regenerate">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                                         </svg>
                                     </button>
                                 </template>
-                                <button
-                                    x-show="message.role === 'assistant'"
-                                    @click="speakMessage(message)"
-                                    type="button"
+                                <button x-show="message.role === 'assistant'" @click="speakMessage(message)" type="button"
                                     class="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-purple-600 disabled:opacity-50"
-                                    :class="ttsLoading[message.id] ? 'opacity-50' : ''"
-                                    :disabled="ttsLoading[message.id] || !ttsAvailable"
-                                    :title="!ttsAvailable ? 'TTS service unavailable' : (ttsLoading[message.id] ? 'Generating audio...' : (currentAudioMessageId === message.id && isPlaying ? 'Pause' : 'Read aloud'))">
+                                    :class="ttsLoading[message.id] ? 'opacity-50' : ''" :disabled="ttsLoading[message.id] || !ttsAvailable"
+                                    :title="!ttsAvailable ? 'TTS unavailable' : (ttsLoading[message.id] ? 'Generating...' : (currentAudioMessageId === message.id && isPlaying ? 'Pause' : 'Read aloud'))">
                                     <svg class="w-4 h-4" :class="ttsLoading[message.id] ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" x-show="!(currentAudioMessageId === message.id && isPlaying)"></path>
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6" x-show="currentAudioMessageId === message.id && isPlaying"></path>
                                     </svg>
                                 </button>
-                                <button
-                                    x-show="message.role === 'assistant' && currentAudio && currentAudioMessageId === message.id"
-                                    @click="stopAudio()"
-                                    type="button"
-                                    class="p-1 rounded hover:bg-gray-100 text-red-500 hover:text-red-700"
-                                    title="Stop audio">
+                                <button x-show="message.role === 'assistant' && currentAudio && currentAudioMessageId === message.id"
+                                    @click="stopAudio()" type="button" class="p-1 rounded hover:bg-gray-100 text-red-500 hover:text-red-700" title="Stop">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
                                     </svg>
                                 </button>
-                                <button 
-                                    @click="startEditMessage(message.id, message.content)"
-                                    class="p-1 rounded hover:bg-gray-100 text-gray-500"
-                                    :class="message.role === 'user' ? 'hover:text-blue-800' : 'hover:text-blue-400'"
-                                    title="Edit message">
+                                <button @click="startEditMessage(message.id, message.content)"
+                                    class="p-1 rounded hover:bg-gray-100 text-gray-500" :class="message.role === 'user' ? 'hover:text-blue-800' : 'hover:text-blue-400'" title="Edit">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
                                     </svg>
                                 </button>
-                                <button 
-                                    @click="deleteMessage(message.id, $event)"
-                                    class="p-1 rounded hover:bg-gray-100 text-gray-500"
-                                    :class="message.role === 'user' ? 'hover:text-red-700' : 'hover:text-red-600'"
-                                    title="Delete message">
+                                <button @click="deleteMessage(message.id, $event)"
+                                    class="p-1 rounded hover:bg-gray-100 text-gray-500" :class="message.role === 'user' ? 'hover:text-red-700' : 'hover:text-red-600'" title="Delete">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                     </svg>
                                 </button>
                             </div>
-                            
+
                             <!-- Edit Mode -->
                             <template x-if="editingMessageId === message.id">
                                 <div class="mt-2">
-                                    <textarea 
-                                        x-model="editContent"
-                                        rows="3"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"></textarea>
+                                    <textarea x-model="editContent" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"></textarea>
                                     <div class="flex gap-2 mt-2">
-                                        <button 
-                                            @click="saveEdit(message.id)"
-                                            class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
-                                            Save
-                                        </button>
-                                        <button 
-                                            @click="cancelEdit()"
-                                            class="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm">
-                                            Cancel
-                                        </button>
+                                        <button @click="saveEdit(message.id)" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">Save</button>
+                                        <button @click="cancelEdit()" class="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm">Cancel</button>
                                     </div>
                                 </div>
                             </template>
-                            <!-- Model name display for assistant messages -->
+
+                            <!-- Model Name -->
                             <template x-if="message.role === 'assistant' && message.metadata && message.metadata.model">
-                                <div class="text-md text-amber-800 mb-2 font-bold">
-                                    <span x-text="message.metadata.model"></span>
-                                </div>
+                                <div class="text-md text-amber-800 mb-2 font-bold"><span x-text="message.metadata.model"></span></div>
                             </template>
-                            
-                            <!-- Sequential Message Blocks (Thinking, Tool Calls, and Content displayed as they occur) -->
-                            <template x-if="message.tool_calls && message.tool_calls.length > 0 && editingMessageId !== message.id">
+
+                            <!-- Tool Calls / Thinking / Content Blocks -->
+                            <template x-if="shouldShowToolCalls(message)">
                                 <div class="space-y-3">
                                     <template x-for="(block, index) in message.tool_calls" :key="'block-' + message.id + '-' + index">
-                                        <!-- Thinking Block - Collapsible, displayed sequentially -->
+                                        <!-- Thinking Block -->
                                         <template x-if="block.type === 'thinking'">
                                             <div class="border-l-4 border-purple-500 bg-purple-50 rounded-r-lg">
-                                                <div
-                                                    @click="toggleThinkingBlock(message.id, index)"
-                                                    class="flex items-center gap-2 cursor-pointer select-none px-3 py-2 hover:bg-purple-100 transition rounded-r-lg">
+                                                <div @click="toggleThinkingBlock(message.id, index)" class="flex items-center gap-2 cursor-pointer select-none px-3 py-2 hover:bg-purple-100 transition rounded-r-lg">
                                                     <svg class="w-3 h-3 transition-transform duration-200" :class="isThinkingBlockExpanded(message.id, index) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                                     </svg>
                                                     <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                                                     </svg>
-                                                    <span class="font-semibold text-purple-700 text-sm">Thinking Process</span>
+                                                    <span class="font-semibold text-purple-700 text-sm">Thinking</span>
                                                     <span class="text-purple-400 text-xs" x-text="'(' + (block.content?.length || 0) + ' chars)'"></span>
                                                 </div>
-                                                <!-- Collapsible Thinking Content -->
                                                 <div x-show="isThinkingBlockExpanded(message.id, index)" x-collapse class="px-3 pb-3">
-                                                    <div class="text-sm text-gray-800 prose prose-sm max-w-none"
-                                                         x-html="renderMarkdown(block.content || '')"></div>
+                                                    <div class="text-sm text-gray-800 prose prose-sm max-w-none" x-html="renderMarkdown(block.content || '')"></div>
                                                 </div>
                                             </div>
                                         </template>
@@ -285,9 +251,7 @@
                                         <!-- Tool Call Block -->
                                         <template x-if="block.type === 'tool_call'">
                                             <div class="mb-2 py-1 rounded-md text-sm min-w-16 hover:bg-amber-100 border border-amber-200">
-                                                <div
-                                                    @click="toggleToolCallBlock(message.id, index)"
-                                                    class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-amber-700 hover:text-amber-900 transition px-2 py-1">
+                                                <div @click="toggleToolCallBlock(message.id, index)" class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-amber-700 hover:text-amber-900 transition px-2 py-1">
                                                     <svg class="w-3 h-3 transition-transform duration-200" :class="isToolCallBlockExpanded(message.id, index) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                                     </svg>
@@ -295,96 +259,29 @@
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                                                     </svg>
-                                                    <span class="font-semibold" x-text="block.name || 'Tool Call'"></span>
-                                                    <template x-if="block.status === 'completed'">
-                                                        <span class="text-green-600 text-xs">✓ completed</span>
-                                                    </template>
-                                                    <template x-if="block.status === 'error'">
-                                                        <span class="text-red-600 text-xs">✗ error</span>
-                                                    </template>
-                                                    <template x-if="block.status && block.status !== 'completed' && block.status !== 'error'">
-                                                        <span class="text-amber-600 text-xs" x-text="block.status"></span>
-                                                    </template>
+                                                    <span class="font-semibold" x-text="block.name || 'Tool'"></span>
+                                                    <template x-if="block.status === 'completed'"><span class="text-green-600 text-xs">✓</span></template>
+                                                    <template x-if="block.status === 'error'"><span class="text-red-600 text-xs">✗</span></template>
                                                 </div>
-
-                                                <!-- Expanded Tool Call Content -->
                                                 <div x-show="isToolCallBlockExpanded(message.id, index)" x-collapse class="mt-2 px-2">
-                                                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs">
-                                                        <!-- Arguments -->
+                                                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
                                                         <template x-if="block.arguments">
                                                             <div class="mb-2">
-                                                                <div class="text-xs text-gray-500 mb-1">Arguments:</div>
+                                                                <div class="text-xs text-gray-500 mb-1">Args:</div>
                                                                 <div class="bg-gray-100 rounded p-2 font-mono text-gray-50 overflow-x-auto">
                                                                     <pre x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"></pre>
                                                                 </div>
                                                             </div>
                                                         </template>
-
-                                                        <!-- Progress History -->
-                                                        <template x-if="block.progress_history && block.progress_history.length > 0">
-                                                            <div class="mb-2">
-                                                                <div class="text-xs text-gray-500 mb-1">Progress:</div>
-                                                                <div class="bg-gray-50 rounded p-2 text-xs text-gray-600 max-h-32 overflow-y-auto">
-                                                                    <template x-for="(step, idx) in block.progress_history" :key="idx">
-                                                                        <div class="flex items-center gap-2 py-0.5 border-b border-gray-100 last:border-0">
-                                                                            <span class="text-gray-400" x-text="step.timestamp ? new Date(step.timestamp).toLocaleTimeString() : ''"></span>
-                                                                            <span class="font-medium" x-text="step.status"></span>
-                                                                            <span class="text-blue-500" x-text="step.progress + '%'"></span>
-                                                                        </div>
-                                                                    </template>
-                                                                </div>
-                                                            </div>
-                                                        </template>
-
-                                                        <!-- Result -->
                                                         <template x-if="block.result">
                                                             <div class="mt-2">
                                                                 <div class="text-xs text-gray-500 mb-1">Result:</div>
                                                                 <div class="bg-blue-50 border border-blue-200 rounded p-2">
-                                                                    <!-- Result count for RAG -->
-                                                                    <template x-if="block.result.result_count !== undefined">
-                                                                        <span class="text-gray-700" x-text="block.result.result_count + ' documents found'"></span>
-                                                                    </template>
-                                                                    <!-- Error -->
-                                                                    <template x-if="block.result.error">
-                                                                        <span class="text-red-600" x-text="block.result.error"></span>
-                                                                    </template>
-                                                                    <!-- Generic result display -->
-                                                                    <template x-if="block.result.result_count === undefined && !block.result.error && !block.result.sources">
-                                                                        <pre class="text-xs overflow-x-auto" x-text="JSON.stringify(block.result, null, 2)"></pre>
-                                                                    </template>
-                                                                    <!-- Show summary for sources-based results -->
-                                                                    <template x-if="block.result.sources && block.result.sources.length > 0">
-                                                                        <span class="text-gray-700" x-text="block.result.sources.length + ' sources found'"></span>
-                                                                    </template>
+                                                                    <template x-if="block.result.error"><span class="text-red-600" x-text="block.result.error"></span></template>
+                                                                    <template x-if="!block.result.error"><pre class="text-xs overflow-x-auto" x-text="JSON.stringify(block.result, null, 2)"></pre></template>
                                                                 </div>
                                                             </div>
                                                         </template>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </template>
-
-                                        <!-- Content Block -->
-                                        <template x-if="block.type === 'content'">
-                                            <div class="mb-2 py-1 rounded-md text-sm min-w-16 hover:bg-blue-100 border border-blue-200">
-                                                <div
-                                                    @click="toggleContentBlock(message.id, index)"
-                                                    class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-blue-700 hover:text-blue-900 transition px-2 py-1">
-                                                    <svg class="w-3 h-3 transition-transform duration-200" :class="isContentBlockExpanded(message.id, index) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                                                    </svg>
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                                    </svg>
-                                                    <span>Response</span>
-                                                </div>
-
-                                                <!-- Expanded Content -->
-                                                <div x-show="isContentBlockExpanded(message.id, index)" x-collapse class="mt-2 px-2">
-                                                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
-                                                        <div class="prose prose-sm max-w-none text-gray-800"
-                                                             x-html="renderMarkdown(block.content || '')"></div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -393,12 +290,10 @@
                                 </div>
                             </template>
 
-                            <!-- Legacy Thinking Section (for backward compatibility - shows when thinking exists but no thinking blocks in tool_calls) -->
-                            <template x-if="message.thinking && message.thinking.length > 0 && (!message.tool_calls || message.tool_calls.length === 0 || !message.tool_calls.some(b => b.type === 'thinking'))">
+                            <!-- Legacy Thinking -->
+                            <template x-if="message.thinking && message.thinking.length > 0 && (!message.tool_calls || !message.tool_calls.some(b => b.type === 'thinking'))">
                                 <div class="mb-3 text-sm min-w-16 hover:bg-purple-200 rounded-md py-1">
-                                    <div
-                                        @click="toggleThinking(message.id)"
-                                        class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-purple-600 hover:text-purple-800 transition">
+                                    <div @click="toggleThinking(message.id)" class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-purple-600 hover:text-purple-800 transition">
                                         <svg class="w-3 h-3 transition-transform duration-200" :class="isThinkingExpanded(message.id) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
@@ -408,53 +303,33 @@
                                         <span>Thinking</span>
                                         <span class="text-purple-400 text-xs" x-text="'(' + message.thinking.length + ' chars)'"></span>
                                     </div>
-
-                                    <!-- Expanded Thinking Content -->
                                     <div x-show="isThinkingExpanded(message.id)" x-collapse class="mt-2">
                                         <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs">
-                                            <div class="prose prose-sm max-w-none text-gray-800"
-                                                 :id="'thinking-content-' + message.id"
-                                                 x-html="renderMarkdown(message.thinking)"></div>
+                                            <div class="prose prose-sm max-w-none text-gray-800" x-html="renderMarkdown(message.thinking)"></div>
                                         </div>
                                     </div>
                                 </div>
                             </template>
-                            
+
                             <!-- Message Content -->
                             <template x-if="editingMessageId !== message.id">
                                 <div>
-                                    <div class="prose prose-sm max-w-none"
-                                         x-html="renderMarkdownWithCitations(message.content, getMessageSources(message))"></div>
-
-                                    <!-- Sources Section (Collapsible) -->
+                                    <div class="prose prose-sm max-w-none" x-html="renderMarkdownWithCitations(message.content, getMessageSources(message))"></div>
                                     <template x-if="message.role === 'assistant' && getMessageSources(message).length > 0">
                                         <div class="mt-4 pt-3 border-t border-gray-200">
-                                            <div
-                                                @click="toggleSources(message.id)"
-                                                class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-gray-500 hover:text-gray-700 transition">
+                                            <div @click="toggleSources(message.id)" class="flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-gray-500 hover:text-gray-700 transition">
                                                 <svg class="w-3 h-3 transition-transform duration-200" :class="isSourcesExpanded(message.id) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                                 </svg>
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
-                                                </svg>
-                                                <span>Sources</span>
-                                                <span class="text-gray-400" x-text="'(' + getMessageSources(message).length + ')'"></span>
+                                                <span>Sources (<span x-text="getMessageSources(message).length"></span>)</span>
                                             </div>
-
-                                            <!-- Expanded Sources Content -->
                                             <div x-show="isSourcesExpanded(message.id)" x-collapse class="mt-2">
                                                 <div class="bg-gray-50 border border-gray-200 rounded-lg p-2 max-h-64 overflow-y-auto">
                                                     <ol class="list-decimal list-inside space-y-1 text-xs">
                                                         <template x-for="(source, index) in getMessageSources(message)" :key="index">
                                                             <li class="flex items-start gap-1 py-0.5">
-                                                                <span class="text-gray-500 font-mono min-w-[1.5rem]" x-text="index + 1 + '.'"></span>
-                                                                <a :href="source.url"
-                                                                   target="_blank"
-                                                                   rel="noopener noreferrer"
-                                                                   class="text-blue-600 hover:text-blue-800 hover:underline break-all line-clamp-2">
-                                                                    <span x-text="source.title || source.url"></span>
-                                                                </a>
+                                                                <span class="text-gray-500 font-mono" x-text="(index + 1) + '.'"></span>
+                                                                <a :href="source.url" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 hover:underline break-all" x-text="source.title || source.url"></a>
                                                             </li>
                                                         </template>
                                                     </ol>
@@ -467,44 +342,30 @@
                         </div>
                     </div>
                 </template>
-                
-                <!-- Active Tool Execution Status -->
+
+                <!-- Tool Status -->
                 <template x-if="toolStatus.active">
                     <div class="flex justify-start">
                         <div class="bg-amber-50 border border-amber-200 rounded-lg p-2 max-w-4xl">
                             <div class="flex items-center gap-2">
-                                <div class="animate-spin">
-                                    <svg class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24">
-                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                </div>
+                                <div class="animate-spin"><svg class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>
                                 <div class="flex-1">
                                     <div class="font-medium text-sm text-amber-900" x-text="toolStatus.tool"></div>
                                     <div class="text-sm text-amber-700" x-text="toolStatus.status"></div>
                                     <template x-if="toolStatus.progress !== null">
-                                        <div class="mt-2">
-                                            <div class="bg-amber-200 rounded-full h-2 overflow-hidden">
-                                                <div class="bg-amber-600 h-full transition-all duration-300" 
-                                                     :style="`width: ${toolStatus.progress}%`"></div>
-                                            </div>
-                                        </div>
+                                        <div class="mt-2"><div class="bg-amber-200 rounded-full h-2 overflow-hidden"><div class="bg-amber-600 h-full transition-all duration-300" :style="`width: ${toolStatus.progress}%`"></div></div></div>
                                     </template>
                                 </div>
-                                <button 
-                                    @click="cancelRequest()"
-                                    class="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition text-sm font-medium">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
+                                <button @click="cancelRequest()" class="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition text-sm font-medium">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     Stop
                                 </button>
                             </div>
                         </div>
                     </div>
                 </template>
-                
-                <!-- Loading Indicator with Cancel Button -->
+
+                <!-- Loading -->
                 <template x-if="isLoading && !toolStatus.active">
                     <div class="flex justify-start">
                         <div class="bg-white border border-gray-200 rounded-lg p-4">
@@ -514,12 +375,8 @@
                                     <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
                                     <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
                                 </div>
-                                <button 
-                                    @click="cancelRequest()"
-                                    class="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition text-sm font-medium">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
+                                <button @click="cancelRequest()" class="flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition text-sm font-medium">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     Stop
                                 </button>
                             </div>
@@ -527,11 +384,11 @@
                     </div>
                 </template>
             </div>
-            
+
             <!-- Input Area -->
             <div class="pt-1 pl-2">
                 <form @submit.prevent="sendMessage()" class="flex gap-3">
-                    <textarea 
+                    <textarea
                         x-model="inputMessage"
                         @keydown.enter.prevent="if (!$event.shiftKey) sendMessage()"
                         placeholder="Type your message... (Shift+Enter for new line)"
@@ -539,10 +396,10 @@
                         class="flex-1 px-4 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
                         style="max-height: 200px; height:64px;"
                         :disabled="isLoading"></textarea>
-                    
-                    <!-- Send/Stop button -->
+
+                    <!-- Send/Stop Button -->
                     <template x-if="!isLoading">
-                        <button 
+                        <button
                             type="submit"
                             :disabled="!inputMessage.trim()"
                             class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
@@ -553,7 +410,7 @@
                         </button>
                     </template>
                     <template x-if="isLoading">
-                        <button 
+                        <button
                             type="button"
                             @click="cancelRequest()"
                             class="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
@@ -565,11 +422,12 @@
                         </button>
                     </template>
                 </form>
+
                 <!-- Tool Toggles and Model Selector -->
                 <div class="flex gap-2 m-1 items-center flex-wrap">
                     <!-- Model Selector -->
                     <div class="relative">
-                        <select 
+                        <select
                             x-model="selectedModel"
                             @change="updateSelectedModel()"
                             class="appearance-none bg-gray-50 text-gray-700 border border-gray-200 rounded-lg px-3 py-1 pr-8 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-300 cursor-pointer">
@@ -584,10 +442,11 @@
                             </svg>
                         </div>
                     </div>
-                    
+
                     <div class="h-6 w-px bg-gray-300"></div>
-                    
-                    <button 
+
+                    <!-- Web Search Toggle -->
+                    <button
                         @click="enableWebSearch = !enableWebSearch"
                         :class="enableWebSearch ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-gray-50 text-gray-600 border-gray-200'"
                         class="px-3 py-1 rounded-lg border text-sm font-medium transition flex items-center gap-1">
@@ -596,7 +455,9 @@
                         </svg>
                         Web Search
                     </button>
-                    <button 
+
+                    <!-- RAG Toggle -->
+                    <button
                         @click="enableRAG = !enableRAG"
                         :class="enableRAG ? 'bg-green-100 text-green-700 border-green-300' : 'bg-gray-50 text-gray-600 border-gray-200'"
                         class="px-3 py-1 rounded-lg border text-sm font-medium transition flex items-center gap-1">
@@ -607,8 +468,8 @@
                         <span x-show="documents.length > 0" class="bg-green-200 text-green-800 text-xs px-1.5 rounded-full" x-text="documents.length"></span>
                     </button>
                 </div>
-                
-                <!-- Status indicators -->
+
+                <!-- Status Indicators -->
                 <div class="mt-2 flex gap-2 text-xs text-gray-500">
                     <span x-show="selectedModel" class="flex items-center gap-1">
                         <span class="w-2 h-2 bg-purple-400 rounded-full"></span>
@@ -626,7 +487,19 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- Toast Notification -->
+    <div x-show="toast.show"
+         x-transition
+         class="fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50"
+         :class="{
+             'bg-green-500 text-white': toast.type === 'success',
+             'bg-red-500 text-white': toast.type === 'error',
+             'bg-blue-500 text-white': toast.type === 'info'
+         }"
+         x-text="toast.message">
+    </div>
+
     <!-- Settings Modal -->
     <div x-show="showSettings"
          x-cloak
@@ -682,156 +555,94 @@
 
             <!-- Modal Body -->
             <div class="p-6 overflow-y-auto flex-grow" style="max-height: calc(90vh - 180px);">
-                
+
                 <!-- General Settings Tab -->
                 <div x-show="activeSettingsTab === 'general'" class="space-y-6">
                     <div>
                         <h3 class="text-lg font-medium mb-4">General Settings</h3>
-                        
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Database URL</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.database_url"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.database_url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Application Host</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.app_host"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.app_host" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Application Port</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.app_port"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" x-model.number="settings.app_port" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Max Upload Size (bytes)</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.max_upload_size"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" x-model.number="settings.max_upload_size" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div class="md:col-span-2">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Upload Directory</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.upload_dir"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.upload_dir" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div class="md:col-span-2">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">CORS Origins (comma-separated)</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.cors_origins"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.cors_origins" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div class="md:col-span-2">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">System Prompt</label>
-                                <textarea
-                                    x-model="settings.system_prompt"
-                                    rows="4"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                                <textarea x-model="settings.system_prompt" rows="4" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                             </div>
-                            
                             <div class="flex items-center">
-                                <input
-                                    type="checkbox"
-                                    x-model="settings.debug"
-                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                <input type="checkbox" x-model="settings.debug" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                                 <label class="ml-2 block text-sm text-gray-700">Enable Debug Mode</label>
                             </div>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- LLM Settings Tab -->
                 <div x-show="activeSettingsTab === 'llm'" class="space-y-6">
                     <div>
                         <h3 class="text-lg font-medium mb-4">LLM Configuration</h3>
-                        
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">LLM Server URL</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.llama_cpp_base_url"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.llama_cpp_base_url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Default Model</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.llama_cpp_model"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.llama_cpp_model" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Query Model (for title generation)</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.query_model"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Query Model</label>
+                                <input type="text" x-model="settings.query_model" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Temperature</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    max="2"
-                                    x-model.number="settings.default_temperature"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" step="0.01" min="0" max="2" x-model.number="settings.default_temperature" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Max Tokens</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.default_max_tokens"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" x-model.number="settings.default_max_tokens" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- TTS Settings Tab -->
                 <div x-show="activeSettingsTab === 'tts'" class="space-y-6">
                     <div>
                         <h3 class="text-lg font-medium mb-4">Text-to-Speech Configuration</h3>
-                        
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">TTS Engine</label>
-                                <select
-                                    x-model="settings.tts_engine"
-                                    @change="onTtsEngineChange()"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <select x-model="settings.tts_engine" @change="onTtsEngineChange()" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="edge-tts">Edge TTS</option>
                                     <option value="pyttsx3">Pyttsx3</option>
                                     <option value="kokoro">Kokoro TTS</option>
                                 </select>
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">TTS Voice</label>
                                 <template x-if="settings.tts_engine === 'kokoro'">
-                                    <select
-                                        x-model="settings.tts_voice"
-                                        class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <select x-model="settings.tts_voice" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                         <option value="af_bella">Bella (Female, American)</option>
                                         <option value="af_sarah">Sarah (Female, American)</option>
                                         <option value="af_sky">Sky (Female, American)</option>
@@ -844,377 +655,158 @@
                                     </select>
                                 </template>
                                 <template x-if="settings.tts_engine !== 'kokoro'">
-                                    <input
-                                        type="text"
-                                        x-model="settings.tts_voice"
-                                        class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <input type="text" x-model="settings.tts_voice" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 </template>
                             </div>
-                            
                             <div x-show="settings.tts_engine === 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Language</label>
-                                <select
-                                    x-model="settings.kokoro_lang"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <select x-model="settings.kokoro_lang" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="a">American English</option>
                                     <option value="b">British English</option>
                                 </select>
                             </div>
-
                             <div x-show="settings.tts_engine === 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Device</label>
-                                <select
-                                    x-model="settings.kokoro_device"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="cpu">CPU (slower but no VRAM usage)</option>
-                                    <option value="cuda">CUDA (auto-select GPU)</option>
-                                    <option value="cuda:0">CUDA:0 (first GPU)</option>
-                                    <option value="cuda:1">CUDA:1 (second GPU)</option>
+                                <select x-model="settings.kokoro_device" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="cpu">CPU</option>
+                                    <option value="cuda">CUDA</option>
+                                    <option value="cuda:0">CUDA:0</option>
+                                    <option value="cuda:1">CUDA:1</option>
                                 </select>
                             </div>
-
                             <div x-show="settings.tts_engine === 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Volume</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    max="1"
-                                    x-model.number="settings.kokoro_volume"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" step="0.01" min="0" max="1" x-model.number="settings.kokoro_volume" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-
                             <div x-show="settings.tts_engine === 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Kokoro Speed</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0.5"
-                                    max="2"
-                                    x-model.number="settings.kokoro_speed"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" step="0.01" min="0.5" max="2" x-model.number="settings.kokoro_speed" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-
                             <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Speech Rate</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.tts_rate"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="text" x-model="settings.tts_rate" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-
                             <div x-show="settings.tts_engine !== 'kokoro'">
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Volume Level</label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    max="1"
-                                    x-model.number="settings.tts_volume"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <input type="number" step="0.01" min="0" max="1" x-model.number="settings.tts_volume" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
                         </div>
-                        
                         <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                             <h4 class="font-medium text-blue-800 mb-2">TTS Engine Information</h4>
-                            <p class="text-sm text-gray-700 mb-2">
-                                <strong>Edge TTS:</strong> High quality online TTS service. Requires internet connection. Voices: en-US, en-GB, en-IN, etc.
-                            </p>
-                            <p class="text-sm text-gray-700 mb-2">
-                                <strong>Pyttsx3:</strong> Offline TTS service. Lower quality but works without internet.
-                            </p>
-                            <p class="text-sm text-gray-700">
-                                <strong>Kokoro TTS:</strong> High-quality local TTS. Requires model download from HuggingFace (~300MB). Works offline after download.
-                            </p>
+                            <p class="text-sm text-gray-700 mb-2"><strong>Edge TTS:</strong> High quality online TTS service.</p>
+                            <p class="text-sm text-gray-700 mb-2"><strong>Pyttsx3:</strong> Offline TTS service. Lower quality.</p>
+                            <p class="text-sm text-gray-700"><strong>Kokoro TTS:</strong> High-quality local TTS (~300MB).</p>
                         </div>
                     </div>
                 </div>
-                
-                <!-- SearXNG Search Settings Tab -->
+
+                <!-- SearXNG Settings Tab -->
                 <div x-show="activeSettingsTab === 'searxng'" class="space-y-6">
                     <div>
-                        <h3 class="text-lg font-medium mb-4">SearXNG Web Search Configuration</h3>
-                        
+                        <h3 class="text-lg font-medium mb-4">SearXNG Configuration</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div class="md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700 mb-1">SearXNG Search URL</label>
-                                <input
-                                    type="text"
-                                    x-model="settings.searxng_url"
-                                    placeholder="http://localhost:8888/search"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">The URL of your SearXNG instance search endpoint</p>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">SearXNG URL</label>
+                                <input type="text" x-model="settings.searxng_url" placeholder="http://localhost:8888/search" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Number of Search Results</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.searxng_num_results"
-                                    min="1"
-                                    max="100"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">Maximum results to fetch per query (default: 25)</p>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Num Results</label>
+                                <input type="number" x-model.number="settings.searxng_num_results" min="1" max="100" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">Text Chunk Size</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.searxng_chunk_size"
-                                    min="100"
-                                    max="5000"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">Words per chunk for processing (default: 1200)</p>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Chunk Size</label>
+                                <input type="number" x-model.number="settings.searxng_chunk_size" min="100" max="5000" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Similarity Threshold</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.searxng_similarity_threshold"
-                                    min="0"
-                                    max="1"
-                                    step="0.05"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">Minimum similarity score for results (0.0-1.0, default: 0.4)</p>
+                                <input type="number" x-model.number="settings.searxng_similarity_threshold" min="0" max="1" step="0.05" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Max Retries</label>
-                                <input
-                                    type="number"
-                                    x-model.number="settings.searxng_max_retries"
-                                    min="0"
-                                    max="10"
-                                    class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <p class="text-xs text-gray-500 mt-1">Maximum retry attempts for failed requests (default: 3)</p>
+                                <input type="number" x-model.number="settings.searxng_max_retries" min="0" max="10" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                             </div>
-                            
                             <div class="md:col-span-2">
                                 <div class="flex items-center">
-                                    <input
-                                        type="checkbox"
-                                        x-model="settings.searxng_enable_multi_query"
-                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                                    <label class="ml-2 block text-sm text-gray-700">Enable Multi-Query Search</label>
+                                    <input type="checkbox" x-model="settings.searxng_enable_multi_query" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                    <label class="ml-2 block text-sm text-gray-700">Enable Multi-Query</label>
                                 </div>
-                                <p class="text-xs text-gray-500 mt-1">Generate multiple search queries for better coverage</p>
                             </div>
-                        </div>
-                        
-                        <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                            <h4 class="font-medium text-blue-800 mb-2">SearXNG Setup Information</h4>
-                            <p class="text-sm text-gray-700 mb-2">
-                                <strong>SearXNG</strong> is a privacy-respecting metasearch engine. To use web search:
-                            </p>
-                            <ol class="text-sm text-gray-700 list-decimal list-inside space-y-1">
-                                <li>Install SearXNG: <code class="bg-gray-100 px-1 rounded">docker run -d -p 8888:80 searxng/searxng</code></li>
-                                <li>Configure your SearXNG instance URL above</li>
-                                <li>Enable "Web Search" toggle in the chat interface</li>
-                            </ol>
-                            <p class="text-sm text-gray-700 mt-2">
-                                The search uses semantic similarity and reranking to find the most relevant results for your queries.
-                            </p>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- MCP Servers Tab -->
                 <div x-show="activeSettingsTab === 'mcp'" class="space-y-6">
+                    <div class="border-b border-gray-200 pb-4">
+                        <h3 class="text-lg font-medium mb-4">Add MCP Server</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                                <input type="text" x-model="newServer.name" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Transport</label>
+                                <select x-model="newServer.transport_type" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="stdio">stdio</option>
+                                    <option value="sse">SSE</option>
+                                    <option value="streamable-http">Streamable HTTP</option>
+                                </select>
+                            </div>
+                            <div x-show="newServer.transport_type === 'stdio'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Command</label>
+                                <input type="text" x-model="newServer.command" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div x-show="newServer.transport_type === 'stdio'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Args (JSON)</label>
+                                <input type="text" x-model="newServer.args" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div x-show="newServer.transport_type !== 'stdio'">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                                <input type="url" x-model="newServer.url" class="w-full px-2 py-1 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+                        <button @click="addMCPServer()" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Add Server</button>
+                    </div>
                     <div>
-                        <h3 class="text-lg font-medium mb-4">MCP Servers</h3>
-
-                        <!-- Server List -->
-                        <div class="space-y-3 mb-6">
+                        <h3 class="text-lg font-medium mb-4">Configured Servers</h3>
+                        <template x-if="mcpServers.length === 0">
+                            <p class="text-gray-500 text-sm">No servers configured.</p>
+                        </template>
+                        <div class="space-y-4">
                             <template x-for="server in mcpServers" :key="server.name">
                                 <div class="border border-gray-200 rounded-lg p-4">
-                                    <div class="flex justify-between items-start">
-                                        <div class="flex-1">
-                                            <div class="flex items-center gap-2">
-                                                <div class="font-medium text-gray-900" x-text="server.name"></div>
-                                                <span :class="server.is_connected ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
-                                                      class="px-2 py-0.5 rounded-full text-xs font-medium">
-                                                    <span x-text="server.is_connected ? 'Connected' : 'Disconnected'"></span>
-                                                </span>
-                                            </div>
-                                            <div class="text-sm text-gray-600 mt-1">
-                                                <span x-text="server.transport_type === 'stdio' ? server.command : server.url"></span>
-                                            </div>
-                                            <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                                                <span><span x-text="server.tool_count"></span> tools</span>
-                                                <span x-show="server.transport_type !== 'stdio'" class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded" x-text="server.transport_type.toUpperCase()"></span>
-                                                <span x-show="server.error" class="text-red-600" x-text="'Error: ' + server.error"></span>
-                                            </div>
+                                    <div class="flex items-start justify-between">
+                                        <div>
+                                            <h4 class="font-medium" x-text="server.name"></h4>
+                                            <p class="text-sm text-gray-500" x-text="server.transport_type"></p>
                                         </div>
-                                        <div class="flex items-center gap-1">
-                                            <!-- Refresh tools button -->
-                                            <button
-                                                @click="refreshMCPServerTools(server.name)"
-                                                class="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
-                                                title="Refresh tools">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                                </svg>
-                                            </button>
-                                            <!-- Reconnect button -->
-                                            <button
-                                                @click="reconnectMCPServer(server.name)"
-                                                class="p-1.5 text-amber-600 hover:bg-amber-50 rounded"
-                                                title="Reconnect">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                                                </svg>
-                                            </button>
-                                            <!-- Delete button -->
-                                            <button
-                                                @click="removeMCPServer(server.name)"
-                                                class="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                                                title="Remove server">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                                </svg>
-                                            </button>
+                                        <div class="flex gap-2">
+                                            <button @click="refreshMCPServerTools(server.name)" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Refresh</button>
+                                            <button @click="reconnectMCPServer(server.name)" class="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200">Reconnect</button>
+                                            <button @click="removeMCPServer(server.name)" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">Remove</button>
                                         </div>
                                     </div>
                                 </div>
                             </template>
-                            <div x-show="mcpServers.length === 0" class="text-gray-500 text-center py-4">
-                                No MCP servers configured
-                            </div>
-                        </div>
-
-                        <!-- Add New Server Form -->
-                        <div>
-                            <h3 class="font-medium mb-4">Add New MCP Server</h3>
-                            <form @submit.prevent="addMCPServer()" class="space-y-3">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Server Name</label>
-                                    <input
-                                        type="text"
-                                        x-model="newServer.name"
-                                        placeholder="my-mcp-server"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Transport Type</label>
-                                    <select
-                                        x-model="newServer.transport_type"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                        <option value="stdio">Stdio (npx/uvx command)</option>
-                                        <option value="sse">SSE (Server-Sent Events)</option>
-                                        <option value="streamable-http">Streamable HTTP</option>
-                                    </select>
-                                </div>
-
-                                <!-- Show URL field for SSE and StreamableHTTP -->
-                                <div x-show="newServer.transport_type !== 'stdio'">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
-                                    <input
-                                        type="url"
-                                        x-model="newServer.url"
-                                        placeholder="http://localhost:8080/mcp"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                </div>
-
-                                <!-- Show Command/Args fields for stdio -->
-                                <div x-show="newServer.transport_type === 'stdio'">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Command</label>
-                                    <input
-                                        type="text"
-                                        x-model="newServer.command"
-                                        placeholder="npx"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                </div>
-                                <div x-show="newServer.transport_type === 'stdio'">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">Arguments (JSON array)</label>
-                                    <input
-                                        type="text"
-                                        x-model="newServer.args"
-                                        placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                </div>
-                                <button
-                                    type="submit"
-                                    class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
-                                    Add Server
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                    
-                    <!-- Available Tools Section -->
-                    <div class="mt-6 pt-6 border-t border-gray-200">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-lg font-medium">Available MCP Tools</h3>
-                            <button
-                                @click="loadMCPTools()"
-                                class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-1">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                </svg>
-                                Refresh
-                            </button>
-                        </div>
-                        
-                        <div class="space-y-3">
-                            <template x-if="mcpTools && mcpTools.length > 0">
-                                <template x-for="tool in mcpTools" :key="tool.server + ':' + tool.name">
-                                    <div class="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                                        <div class="flex items-start justify-between">
-                                            <div class="flex-1">
-                                                <div class="flex items-center gap-2 mb-1">
-                                                    <span class="font-semibold text-gray-800" x-text="tool.name"></span>
-                                                    <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium" x-text="tool.server"></span>
-                                                </div>
-                                                <p class="text-sm text-gray-600 mb-2" x-text="tool.description || 'No description'"></p>
-                                                
-                                                <!-- Input schema preview -->
-                                                <div class="text-xs text-gray-500">
-                                                    <span class="font-medium">Parameters:</span>
-                                                    <pre class="mt-1 bg-white border border-gray-200 rounded p-2 overflow-x-auto text-xs" x-text="JSON.stringify(tool.input_schema?.properties || {}, null, 2)"></pre>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </template>
-                            </template>
-                            <div x-show="!mcpTools || mcpTools.length === 0" class="text-gray-500 text-center py-8">
-                                <svg class="w-12 h-12 text-gray-300 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                </svg>
-                                <p>No MCP tools available. Add an MCP server to see available tools.</p>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- Modal Footer -->
-            <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-3">
-                <button
-                    @click="showSettings = false"
-                    class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition">
-                    Cancel
-                </button>
-                <button
-                    @click="saveSettings()"
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
-                    Save Settings
-                </button>
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+                <button @click="showSettings = false" class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">Cancel</button>
+                <button @click="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save Changes</button>
             </div>
         </div>
     </div>
-    
-    <!-- Knowledge Base Modal (Documents) -->
-    <div x-show="showDocuments" 
+
+    <!-- Documents Modal -->
+    <div x-show="showDocuments"
          x-cloak
          class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
          @click.self="showDocuments = false">
-        <div class="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
-            
-            <!-- Modal Header -->
+        <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                 <h2 class="text-xl font-semibold">Knowledge Base</h2>
                 <button @click="showDocuments = false" class="text-gray-400 hover:text-gray-600">
@@ -1223,111 +815,38 @@
                     </svg>
                 </button>
             </div>
-            
-            <!-- Modal Body -->
-            <div class="p-6 overflow-y-auto" style="max-height: calc(80vh - 140px);">
-                
-                <!-- Upload Area -->
-                <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Upload Document</label>
-                    <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 transition cursor-pointer relative">
-                        <input 
-                            type="file" 
-                            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                            @change="uploadDocument($event.target.files[0])"
-                            accept=".txt,.md,.pdf,.doc,.docx,.json,.yaml,.yml">
-                        <svg class="w-10 h-10 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                        </svg>
-                        <p class="text-sm text-gray-600">Click or drag file to upload</p>
-                        <p class="text-xs text-gray-400 mt-1">Supports: txt, md, pdf, doc, docx, json, yaml, yml</p>
-                    </div>
+            <div class="p-6 overflow-y-auto flex-grow">
+                <div class="mb-4">
+                    <input type="file" @change="uploadDocument($event.target.files[0])" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
                 </div>
-                
-                <!-- Documents List -->
-                <div class="space-y-3">
+                <div class="space-y-2">
                     <template x-for="doc in documents" :key="doc.id">
-                        <div class="border border-gray-200 rounded-lg p-4 flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <div class="bg-blue-100 p-2 rounded">
-                                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                    </svg>
-                                </div>
-                                <div>
-                                    <div class="font-medium text-gray-900" x-text="doc.filename"></div>
-                                    <div class="text-xs text-gray-500">
-                                        <span x-text="doc.file_type"></span> • 
-                                        <span x-text="formatFileSize(doc.size_bytes)"></span> • 
-                                        <span x-text="formatDate(doc.uploaded_at)"></span>
-                                    </div>
-                                </div>
+                        <div class="flex items-center justify-between p-3 border rounded-lg">
+                            <div>
+                                <p class="font-medium" x-text="doc.filename"></p>
+                                <p class="text-sm text-gray-500" x-text="formatFileSize(doc.file_size) + ' • ' + doc.content_type"></p>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <span :class="doc.status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'" 
-                                      class="px-2 py-1 rounded-full text-xs font-medium">
-                                    <span x-text="doc.status"></span>
-                                </span>
-                                <button 
-                                    @click="deleteDocument(doc.id)"
-                                    class="text-red-600 hover:text-red-700 p-1">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                    </svg>
-                                </button>
-                            </div>
+                            <button @click="deleteDocument(doc.id)" class="text-red-500 hover:text-red-700">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                </svg>
+                            </button>
                         </div>
                     </template>
-                    <div x-show="documents.length === 0" class="text-gray-500 text-center py-8">
-                        <svg class="w-12 h-12 text-gray-300 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        <p>No documents uploaded yet</p>
-                    </div>
                 </div>
             </div>
         </div>
     </div>
-    
-    <!-- Toast Notification -->
-    <div x-show="toast.show"
-         x-cloak
-         x-transition:enter="transition ease-out duration-300"
-         x-transition:enter-start="opacity-0 transform translate-y-2"
-         x-transition:enter-end="opacity-100 transform translate-y-0"
-         x-transition:leave="transition ease-in duration-200"
-         x-transition:leave-start="opacity-100 transform translate-y-0"
-         x-transition:leave-end="opacity-0 transform translate-y-2"
-         class="fixed bottom-4 right-4 z-50">
-        <div :class="{
-            'bg-green-100 text-green-800 border-green-300': toast.type === 'success',
-            'bg-red-100 text-red-800 border-red-300': toast.type === 'error',
-            'bg-blue-100 text-blue-800 border-blue-300': toast.type === 'info'
-        }" class="px-4 py-3 rounded-lg border shadow-lg flex items-center gap-2">
-            <template x-if="toast.type === 'success'">
-                <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                </svg>
-            </template>
-            <template x-if="toast.type === 'error'">
-                <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-            </template>
-            <template x-if="toast.type === 'info'">
-                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-            </template>
-            <span x-text="toast.message" class="font-medium"></span>
+
+    <!-- Message Template (for Alpine.js to render) -->
+    <template id="message-template">
+        <div class="flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+            <div class="max-w-6xl rounded-lg p-4 shadow-sm relative"
+                 :class="message.role === 'user' ? 'bg-blue-100 text-black' : 'bg-white border border-gray-200'">
+                <!-- Message content rendered by Alpine.js -->
+            </div>
         </div>
-    </div>
-    
-    <!-- Alpine.js Component -->
-    <script src="/static/js/app.js"></script>
-    
-    <style>
-        [x-cloak] { display: none !important; }
-    </style>
+    </template>
+
 </body>
 </html>

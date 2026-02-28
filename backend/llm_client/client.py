@@ -125,43 +125,23 @@ class LLMClient:
                                     # Check multiple field names that llama.cpp might use
                                     thinking_content = delta.get("thinking") or delta.get("reasoning_content")
                                     if thinking_content:
+                                        print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
                                         yield {
                                             "type": "thinking",
                                             "content": thinking_content
                                         }
                                         await asyncio.sleep(0)
 
-                                    # Handle content - parse for <think> tags with buffering across chunks
+                                    # Handle content - parse for <think> tags with streaming
                                     if "content" in delta and delta["content"]:
                                         content = delta["content"]
                                         print(f"[DEBUG] Content chunk: {repr(content[:100])}")
-                                        
-                                        # If we're in thinking mode, accumulate content
-                                        if thinking_buffer is not None:
-                                            # Look for end tag in this chunk
-                                            end_pos = content.find('</think>')
-                                            if end_pos != -1:
-                                                # Found end tag - complete the thinking block
-                                                thinking_buffer += content[:end_pos]
-                                                print(f"[DEBUG] </think> found, thinking block complete: {len(thinking_buffer)} chars")
-                                                yield {
-                                                    "type": "thinking",
-                                                    "content": thinking_buffer
-                                                }
-                                                thinking_buffer = None
-                                                # Process remaining content after </think>
-                                                content = content[end_pos + 9:]
-                                            else:
-                                                # No end tag yet, accumulate and wait for more
-                                                thinking_buffer += content
-                                                print(f"[DEBUG] Accumulating thinking: {len(thinking_buffer)} chars so far")
-                                                continue
-                                        
-                                        # Process content for <think> tags
+
+                                        # Process content for <think> tags - stream thinking as it arrives
                                         while content:
                                             # Look for <think> start tag
                                             think_start = content.find('<think>')
-                                            
+
                                             if think_start != -1:
                                                 print(f"[DEBUG] <think> found at position {think_start}")
                                                 # Yield content before thinking tag
@@ -172,11 +152,11 @@ class LLMClient:
                                                         "content": before_think
                                                     }
                                                     await asyncio.sleep(0)
-                                                
+
                                                 # Check if end tag is in the same chunk
                                                 after_start = content[think_start + 7:]  # Skip '<think>'
                                                 think_end = after_start.find('</think>')
-                                                
+
                                                 if think_end != -1:
                                                     # Complete thinking block in same chunk
                                                     thinking = after_start[:think_end]
@@ -189,15 +169,39 @@ class LLMClient:
                                                     # Continue with remaining content
                                                     content = after_start[think_end + 9:]  # Skip '</think>'
                                                 else:
-                                                    # Start buffering - thinking continues in next chunks
+                                                    # Start streaming thinking - yield content as it arrives
                                                     thinking_buffer = after_start
-                                                    print(f"[DEBUG] Started thinking buffer: {len(thinking_buffer)} chars")
+                                                    print(f"[DEBUG] Started thinking stream: {len(thinking_buffer)} chars")
+                                                    # Yield what we have so far
+                                                    if thinking_buffer:
+                                                        yield {
+                                                            "type": "thinking",
+                                                            "content": thinking_buffer
+                                                        }
+                                                        await asyncio.sleep(0)
                                                     content = ''
                                             else:
-                                                # No thinking tag, yield as regular content
-                                                yield {
-                                                    "type": "content",
-                                                    "content": content
+                                                # If we're in thinking mode, this is continuation of thinking
+                                                if thinking_buffer is not None:
+                                                    thinking_buffer += content
+                                                    print(f"[DEBUG] Streaming thinking continuation: {len(thinking_buffer)} chars total")
+                                                    # Stream the new content immediately
+                                                    yield {
+                                                        "type": "thinking",
+                                                        "content": content
+                                                    }
+                                                    await asyncio.sleep(0)
+                                                    # Check if this chunk contains the end tag
+                                                    end_pos = content.find('</think>')
+                                                    if end_pos != -1:
+                                                        print(f"[DEBUG] </think> found in streaming, clearing buffer")
+                                                        thinking_buffer = None
+                                                    content = ''
+                                                else:
+                                                    # No thinking tag, yield as regular content
+                                                    yield {
+                                                        "type": "content",
+                                                        "content": content
                                                 }
                                                 content = ''
                                             

@@ -8,14 +8,22 @@ console.log('[SETTINGS] Module loading...')
 // Define component factory as global function
 window.settings = () => {
   console.log('[SETTINGS] Component factory called')
-  return {
+  
+  const component = {
     // Local state
-    show: false,
     activeTab: 'general',
     settings: {},
     mcpServers: [],
     mcpTools: [],
     newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' },
+    
+    // show is a getter/setter that syncs with store
+    get show() {
+      return this.$store?.settings?.show || false
+    },
+    set show(val) {
+      this.$store.settings.show = val
+    },
 
     // Initialization
     async init() {
@@ -23,7 +31,6 @@ window.settings = () => {
       console.log('[SETTINGS] $store available:', !!this.$store)
       
       // Sync from store
-      this.show = this.$store.settings.show
       this.activeTab = this.$store.settings.activeTab
       this.settings = this.$store.settings.data
       this.mcpServers = this.$store.settings.mcpServers
@@ -175,6 +182,8 @@ window.settings = () => {
       }
     }
   }
+  
+  return component
 }
 
 console.log('[SETTINGS] window.settings defined:', typeof window.settings)

@@ -8,10 +8,18 @@ console.log('[DOCUMENTS] Module loading...')
 // Define component factory as global function
 window.documents = () => {
   console.log('[DOCUMENTS] Component factory called')
-  return {
+  
+  const component = {
     // Local state
-    show: false,
     list: [],
+    
+    // show is a getter/setter that syncs with store
+    get show() {
+      return this.$store?.documents?.show || false
+    },
+    set show(val) {
+      this.$store.documents.show = val
+    },
 
     // Initialization
     async init() {
@@ -19,7 +27,6 @@ window.documents = () => {
       console.log('[DOCUMENTS] $store available:', !!this.$store)
       
       // Sync from store
-      this.show = this.$store.documents.show
       this.list = this.$store.documents.list
       
       console.log('[DOCUMENTS] Initial state:', { show: this.show, list: this.list?.length })
@@ -85,6 +92,8 @@ window.documents = () => {
     formatFileSize: (bytes) => formatters.formatFileSize(bytes),
     formatDate: (isoString) => formatters.formatDate(isoString)
   }
+  
+  return component
 }
 
 console.log('[DOCUMENTS] window.documents defined:', typeof window.documents)

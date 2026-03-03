@@ -105,7 +105,105 @@ document.addEventListener('alpine:init', () => {
         const data = await api.get(`/api/conversations/${conversationId}`)
         this.$store.chat.currentConversationId = conversationId
         this.$store.chat.currentConversationTitle = data.conversation.title
-        this.$store.chat.messages = data.messages
+
+        console.log('[loadConversation] Raw messages from API:', JSON.stringify(data.messages, null, 2))
+
+        // Normalize messages - ensure tool_calls is always an array and extract search_steps from progress_history
+        const normalizedMessages = data.messages.map(msg => {
+          console.log('[loadConversation] Processing message:', msg.role, 'tool_calls:', msg.tool_calls)
+
+          // Filter to only actual tool calls (not content or thinking blocks)
+          const actualToolCalls = (msg.tool_calls || []).filter(tc => 
+            tc.type === 'tool_call' || tc.name === 'search_web' || tc.name === 'query_documents' || tc.type === 'thinking'
+          )
+          
+          console.log('[loadConversation] Filtered tool calls:', actualToolCalls.length, 'from', msg.tool_calls?.length)
+
+          const normalizedToolCalls = actualToolCalls.map((toolCall, idx) => {
+            console.log('[loadConversation] toolCall[' + idx + ']:', JSON.stringify(toolCall, null, 2))
+
+            // Handle different data structures
+            // Structure 1: Direct properties (new format)
+            let searchSteps = toolCall.search_steps || []
+            let searchTerms = toolCall.search_terms || []
+            let reasoning = toolCall.reasoning
+            let coverageScore = toolCall.coverage_score
+            let sources = toolCall.sources || []
+            let name = toolCall.name || toolCall.type || 'tool'
+
+            // Check if this is the result-based format
+            if (toolCall.result) {
+              sources = toolCall.result.sources || sources
+              if (toolCall.result.search_steps) {
+                searchSteps = toolCall.result.search_steps
+              }
+              if (toolCall.result.search_terms_used) {
+                searchTerms = toolCall.result.search_terms_used
+              }
+            }
+
+            console.log('[loadConversation] Processing toolCall:', name, 'has progress_history:', !!toolCall.progress_history)
+
+            // Extract data from progress_history for legacy messages
+            if (toolCall.progress_history && toolCall.progress_history.length > 0) {
+              // Find the LAST progress event that contains search_steps (most complete data)
+              for (let i = toolCall.progress_history.length - 1; i >= 0; i--) {
+                const progress = toolCall.progress_history[i]
+                console.log('[loadConversation] Checking progress event:', progress.type, progress.tool, 'data:', progress.data)
+
+                if (progress.data) {
+                  // Get search_steps from this progress event
+                  if (progress.data.search_steps && progress.data.search_steps.length > 0) {
+                    searchSteps = progress.data.search_steps
+                    console.log('[loadConversation] Found search_steps:', searchSteps.length, 'steps')
+                  }
+                  // Get search_terms
+                  if (progress.data.search_terms && progress.data.search_terms.length > 0) {
+                    searchTerms = progress.data.search_terms
+                  }
+                  // Get reasoning
+                  if (progress.data.reasoning && !reasoning) {
+                    reasoning = progress.data.reasoning
+                  }
+                  // Get coverage_score
+                  if (progress.data.coverage_score !== undefined && coverageScore === undefined) {
+                    coverageScore = progress.data.coverage_score
+                  }
+                  // Get sources from result
+                  if (progress.result?.sources && progress.result.sources.length > 0) {
+                    sources = progress.result.sources
+                  }
+                }
+              }
+            }
+            
+            console.log('[loadConversation] Normalized toolCall:', {
+              name: name,
+              type: toolCall.type,
+              search_steps: searchSteps?.length,
+              search_terms: searchTerms?.length,
+              has_reasoning: !!reasoning
+            })
+            
+            return {
+              ...toolCall,
+              name: name,
+              search_steps: searchSteps,
+              search_terms: searchTerms,
+              reasoning: reasoning,
+              coverage_score: coverageScore,
+              sources: sources
+            }
+          })
+          
+          return {
+            ...msg,
+            tool_calls: normalizedToolCalls
+          }
+        })
+        
+        console.log('[loadConversation] Normalized messages:', normalizedMessages)
+        this.$store.chat.messages = normalizedMessages
 
         // Update local state
         this.currentConversationId = conversationId

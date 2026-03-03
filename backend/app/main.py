@@ -154,6 +154,11 @@ async def _core_stream_handler(
             llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
             context_additions = []
             tool_calls_history = []
+            
+            # Track message blocks for sequential display (content, thinking, tool calls)
+            message_blocks = []
+            current_content_block = ""
+            current_thinking_block = ""
 
             # Execute pre-processing tools (web search, RAG) if enabled
             if enable_web_search:
@@ -161,7 +166,7 @@ async def _core_stream_handler(
                 # Send tool call start event
                 yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
                 # Create tool call record
-                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
+                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": [], "type": "tool_call"}
                 tool_calls_history.append(web_search_tool_call)
 
                 async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
@@ -177,12 +182,26 @@ async def _core_stream_handler(
                         if progress_event.get("result"):
                             web_search_tool_call["result"] = progress_event["result"]
                             web_search_tool_call["status"] = "completed"
+                            # Extract search_steps from result for display
+                            if progress_event["result"].get("search_steps"):
+                                web_search_tool_call["search_steps"] = progress_event["result"]["search_steps"]
+                            if progress_event["result"].get("search_terms_used"):
+                                web_search_tool_call["search_terms"] = progress_event["result"]["search_terms_used"]
+                            if progress_event["result"].get("sources"):
+                                web_search_tool_call["sources"] = progress_event["result"]["sources"]
+                            if progress_event.get("data", {}).get("reasoning"):
+                                web_search_tool_call["reasoning"] = progress_event["data"]["reasoning"]
+                            if progress_event.get("data", {}).get("coverage_score") is not None:
+                                web_search_tool_call["coverage_score"] = progress_event["data"]["coverage_score"]
                             if progress_event["result"].get("content"):
                                 context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
                     elif progress_event.get("type") == "tool_error":
                         web_search_tool_call["status"] = "error"
                         web_search_tool_call["result"] = {"error": progress_event.get("error")}
                     await asyncio.sleep(0)
+                
+                # Add the completed search tool call to message blocks for display
+                message_blocks.append(web_search_tool_call)
 
             if enable_rag:
                 query_text = llm_messages[-1]["content"] if llm_messages else ""
@@ -244,11 +263,6 @@ async def _core_stream_handler(
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 15  # Prevent infinite loops
             tool_iteration = 0
-            
-            # Track message blocks for sequential display (content, thinking, tool calls)
-            message_blocks = []
-            current_content_block = ""
-            current_thinking_block = ""
 
             while tool_iteration < max_tool_iterations:
                 tool_iteration += 1
@@ -393,6 +407,9 @@ async def _core_stream_handler(
                 message_extra_metadata = {"model": model} if model else {}
                 # Store message_blocks in tool_calls field for backward compatibility
                 # Each block has a "type" field: "content", "thinking", or "tool_call"
+                print(f"[DEBUG] Saving message with {len(message_blocks)} blocks")
+                for i, block in enumerate(message_blocks):
+                    print(f"[DEBUG] Block {i}: type={block.get('type')}, name={block.get('name')}, has_result={bool(block.get('result'))}, has_progress_history={bool(block.get('progress_history'))}")
                 await add_message(db, conversation_id, "assistant", assistant_message, message_blocks or None, thinking_content or None, extra_metadata=message_extra_metadata)
 
             # Title Generation Logic (only for first exchange)

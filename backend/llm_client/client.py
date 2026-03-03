@@ -82,11 +82,17 @@ class LLMClient:
 
         # Retry logic for transient server errors
         last_error = None
+        request_completed = False  # Track if request completed successfully
+        
         for attempt in range(max_retries):
+            if request_completed:
+                break  # Don't retry if already completed successfully
+                
             try:
                 # Increased timeout for long-running requests with web search context
                 timeout = aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=120)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
+                    print(f"[DEBUG] Starting LLM request (attempt {attempt + 1}/{max_retries})")
                     async with session.post(
                         f"{self.base_url}/v1/chat/completions",
                         json=payload,
@@ -102,6 +108,8 @@ class LLMClient:
                             error_text = await response.text()
                             raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
 
+                        print(f"[DEBUG] LLM request successful, streaming response")
+                        
                         # Stream content more immediately
                         buffer = ""
 
@@ -114,7 +122,9 @@ class LLMClient:
                         async for chunk in response.content.iter_any():
                             # Decode chunk and add to buffer
                             text = chunk.decode('utf-8')
-                            print(f"[DEBUG] Raw chunk received: {repr(text[:200])}")
+                            # Only log first 100 chars to reduce log spam
+                            #if len(buffer) < 100 or len(text.strip()) > 10:
+                            #    print(f"[DEBUG] Raw chunk received: {repr(text[:100])}")
                             buffer += text
 
                             # Process complete lines
@@ -304,19 +314,23 @@ class LLMClient:
                                                 "type": "error",
                                                 "error": str(e)
                                             }
-                                    break  # Success - exit retry loop
+                                    # Successfully completed streaming - mark as completed and exit retry loop
+                                    request_completed = True
+                                    break  # Exit retry loop
             except Exception as e:
                 # Handle exceptions that occur before/during request setup
-                if "status 500" in str(e) and attempt < max_retries - 1:
+                # Only retry if request didn't complete successfully
+                if not request_completed and "status 500" in str(e) and attempt < max_retries - 1:
                     last_error = e
                     print(f"Server error (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
                     continue
                 else:
-                    yield {
-                        "type": "error",
-                        "error": str(e)
-                    }
+                    if not request_completed:
+                        yield {
+                            "type": "error",
+                            "error": str(e)
+                        }
                     break
     
     async def _get_available_tools(self) -> List[Dict]:

@@ -76,7 +76,7 @@
         </div>
 
         <!-- Custom Tools Section -->
-        <div class="pt-4 border-t border-gray-200">
+        <div class="pt-4 border-t border-gray-200" x-show="mcpServers.length > 0 || customTools.length > 0">
             <h4 class="text-sm font-medium text-gray-700 mb-2">Built-in Tools</h4>
             
             <template x-if="customTools.length === 0">
@@ -85,7 +85,7 @@
                 </div>
             </template>
             
-            <template x-for="tool in customTools" :key="tool.name">
+            <template x-for="tool in (customTools || [])" :key="tool.name">
                 <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
                     <div>
                         <div class="text-sm font-medium text-gray-900" x-text="tool.name"></div>
@@ -112,9 +112,11 @@ window.mcpPanel = () => {
     showMcpPanel: false,
     mcpServers: [],
     customTools: [],
+    initialized: false,
 
     async init() {
       await this.loadMCPData()
+      this.initialized = true
 
       // Expose toggle method globally for sidebar button
       window.toggleMcpPanel = () => {
@@ -138,7 +140,7 @@ window.mcpPanel = () => {
         // Process servers - add tools to each server
         const allTools = toolsData.tools || []
         const servers = serversData.servers || []
-        
+
         // Group tools by server
         this.mcpServers = servers.map(server => {
           const serverTools = allTools.filter(tool => tool.server === server.name)
@@ -148,12 +150,15 @@ window.mcpPanel = () => {
             enabled: server.enabled !== false
           }
         })
-        
+
         this.customTools = toolsData.custom_tools || []
-        
+
         console.log('[MCP Panel] Loaded servers:', this.mcpServers.length, 'custom tools:', this.customTools.length)
       } catch (error) {
         console.error('Error loading MCP data:', error)
+        // Initialize with empty arrays to prevent template errors
+        this.mcpServers = []
+        this.customTools = []
       }
     },
 

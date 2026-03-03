@@ -926,16 +926,17 @@ class SearXNGSearchTool:
                     all_source_indices.extend(search_result.get("source_indices", []))
                     iteration_results.append(search_result)
                     
-                    # Record this search step
+                    # Record this search step with the current search terms used
                     search_steps.append({
                         "iteration": iteration + 1,
                         "query": current_query,
                         "sources_found": sources_count,
                         "chunks_created": chunks_count,
-                        "status": "completed"
+                        "status": "completed",
+                        "search_terms": list(search_terms)  # Include current search terms at this step
                     })
-                    
-                    await report_progress(f"Found {sources_count} sources, {chunks_count} chunks", 
+
+                    await report_progress(f"Found {sources_count} sources, {chunks_count} chunks",
                                          10 + (iteration * 25) + 15, {
                         "step": "search",
                         "iteration": iteration + 1,
@@ -943,57 +944,85 @@ class SearXNGSearchTool:
                         "status": "completed",
                         "sources_found": sources_count,
                         "chunks_created": chunks_count,
-                        "search_steps": search_steps
+                        "search_steps": search_steps,
+                        "search_terms": search_terms
                     })
                 
                 # Step 3: Reason over results (skip on last iteration)
+                step_reasoning = None
                 if iteration < self.config.max_search_iterations - 1 and self.config.enable_result_reasoning:
                     await report_progress("Analyzing search results coverage...", 85 + (iteration * 5), {
                         "step": "reasoning",
                         "iteration": iteration + 1,
-                        "status": "in_progress"
+                        "status": "in_progress",
+                        "search_steps": search_steps  # Include current search steps
                     })
-                    
+
                     reasoning = await self._reason_over_search_results(
                         original_query=query,
                         search_results=search_result,
                         progress_callback=progress_callback
                     )
-                    
+
                     # Store reasoning for metadata
                     search_result["reasoning"] = reasoning
-                    
+                    step_reasoning = reasoning  # Store for adding to search step
+
+                    # Update the last search step with reasoning immediately
+                    if search_steps:
+                        search_steps[-1]["reasoning"] = reasoning.get("reasoning")
+                        search_steps[-1]["coverage_score"] = reasoning.get("coverage_score")
+                        search_steps[-1]["needs_more_search"] = reasoning.get("needs_more_search", False)
+
+                    # Send progress update with reasoning added to the step
                     await report_progress(f"Coverage score: {reasoning['coverage_score']:.1f}", 90 + (iteration * 5), {
                         "step": "reasoning",
                         "iteration": iteration + 1,
                         "status": "completed",
                         "coverage_score": reasoning["coverage_score"],
                         "needs_more_search": reasoning["needs_more_search"],
-                        "reasoning": reasoning["reasoning"]
+                        "reasoning": reasoning["reasoning"],
+                        "search_steps": search_steps  # Include updated search steps with reasoning
                     })
-                    
+
                     # Check if more search is needed
                     if not reasoning["needs_more_search"] or reasoning["coverage_score"] >= 0.8:
                         await report_progress("Results adequately cover the query - stopping search", 92, {
                             "step": "reasoning",
                             "decision": "stop",
                             "reason": "adequate_coverage",
-                            "coverage_score": reasoning["coverage_score"]
+                            "coverage_score": reasoning["coverage_score"],
+                            "search_steps": search_steps  # Include final search steps
                         })
                         break
-                    
+
                     # Get follow-up queries
                     if reasoning["follow_up_queries"]:
                         search_terms = reasoning["follow_up_queries"]
+                        # Add follow_up_queries to the step
+                        if search_steps:
+                            search_steps[-1]["follow_up_queries"] = reasoning["follow_up_queries"]
+                        
                         await report_progress(f"Need more info - follow-up: {search_terms}", 95, {
                             "step": "reasoning",
                             "decision": "continue",
                             "follow_up_queries": search_terms,
-                            "reason": reasoning["reasoning"]
+                            "reason": reasoning["reasoning"],
+                            "search_steps": search_steps  # Include updated search steps
                         })
                     else:
                         break
                 else:
+                    # No reasoning performed, mark step as final
+                    if search_steps:
+                        search_steps[-1]["reasoning"] = "Search completed - no further analysis needed"
+                        search_steps[-1]["coverage_score"] = 1.0
+                        search_steps[-1]["needs_more_search"] = False
+                        # Send update with final step info
+                        await report_progress("Search completed", 100, {
+                            "step": "complete",
+                            "search_steps": search_steps
+                        })
                     break
             
             # Combine results

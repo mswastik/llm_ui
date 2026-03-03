@@ -174,13 +174,43 @@
                                                                     <span x-text="'📄 ' + step.sources_found + ' sources'"></span>
                                                                     <span x-text="'📝 ' + step.chunks_created + ' chunks'"></span>
                                                                 </div>
+                                                                <!-- Search Terms for this step -->
+                                                                <template x-if="step.search_terms && step.search_terms.length > 0">
+                                                                    <div class="mt-2 pt-2 border-t border-amber-100">
+                                                                        <div class="font-semibold text-blue-800 mb-1">📌 Extracted Search Terms</div>
+                                                                        <div class="flex flex-wrap gap-1">
+                                                                            <template x-for="(term, termIdx) in step.search_terms" :key="termIdx">
+                                                                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs" x-text="term"></span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </div>
+                                                                </template>
+                                                                <!-- Reasoning/Analysis for this step -->
+                                                                <template x-if="step.reasoning">
+                                                                    <div class="mt-2 pt-2 border-t border-purple-100">
+                                                                        <div class="font-semibold text-purple-800 mb-1">🧠 Analysis</div>
+                                                                        <div class="text-gray-700 text-xs" x-text="step.reasoning"></div>
+                                                                        <template x-if="step.coverage_score">
+                                                                            <div class="mt-1 text-xs">
+                                                                                <span class="text-gray-500">Coverage Score: </span>
+                                                                                <span :class="step.coverage_score >= 0.8 ? 'text-green-600' : 'text-amber-600'" x-text="(step.coverage_score * 100).toFixed(0) + '%'"></span>
+                                                                            </div>
+                                                                        </template>
+                                                                        <template x-if="step.follow_up_queries">
+                                                                            <div class="mt-1 text-xs text-amber-700">
+                                                                                <span class="font-medium">→ Continuing search with:</span>
+                                                                                <span x-text="step.follow_up_queries.join(', ')"></span>
+                                                                            </div>
+                                                                        </template>
+                                                                    </div>
+                                                                </template>
                                                             </div>
                                                         </template>
                                                     </div>
                                                 </template>
-                                                
-                                                <!-- Search Terms Display -->
-                                                <template x-if="block.search_terms && block.search_terms.length > 0">
+
+                                                <!-- Search Terms Display (legacy - shows all terms if step-specific terms not available) -->
+                                                <template x-if="block.search_terms && block.search_terms.length > 0 && (!block.search_steps || block.search_steps.length === 0)">
                                                     <div class="bg-blue-50 border border-blue-200 rounded p-2">
                                                         <div class="font-semibold text-blue-800 mb-1">📌 Extracted Search Terms</div>
                                                         <div class="flex flex-wrap gap-1">
@@ -188,20 +218,6 @@
                                                                 <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs" x-text="term"></span>
                                                             </template>
                                                         </div>
-                                                    </div>
-                                                </template>
-                                                
-                                                <!-- Reasoning Display -->
-                                                <template x-if="block.reasoning">
-                                                    <div class="bg-purple-50 border border-purple-200 rounded p-2">
-                                                        <div class="font-semibold text-purple-800 mb-1">🧠 Analysis</div>
-                                                        <div class="text-gray-700" x-text="block.reasoning"></div>
-                                                        <template x-if="block.coverage_score">
-                                                            <div class="mt-1 text-xs">
-                                                                <span class="text-gray-500">Coverage Score: </span>
-                                                                <span :class="block.coverage_score >= 0.8 ? 'text-green-600' : 'text-amber-600'" x-text="(block.coverage_score * 100).toFixed(0) + '%'"></span>
-                                                            </div>
-                                                        </template>
                                                     </div>
                                                 </template>
                                                 

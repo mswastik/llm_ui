@@ -12,7 +12,7 @@ window.settings = () => {
     mcpServers: [],
     mcpTools: [],
     newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' },
-    
+
     // show is a getter/setter that syncs with store
     get show() {
       return this.$store?.settings?.show || false
@@ -28,8 +28,9 @@ window.settings = () => {
       this.settings = this.$store.settings.data
       this.mcpServers = this.$store.settings.mcpServers
       this.newServer = { ...this.$store.settings.newServer }
-      
+
       await this.loadSettings()
+      await this.loadMCPServers()
     },
 
     // Settings
@@ -45,14 +46,17 @@ window.settings = () => {
 
     async saveSettings() {
       try {
+        console.log('[SETTINGS] Saving settings:', this.settings)
         const data = await api.put('/api/settings', this.settings)
+        console.log('[SETTINGS] Settings saved:', data)
         this.settings = data
         this.$store.settings.data = { ...data }
         this.$store.chat.showToast('Settings saved!', 'success')
         this.show = false
         this.$store.settings.show = false
       } catch (error) {
-        this.$store.chat.showToast('Error saving settings', 'error')
+        console.error('[SETTINGS] Error saving settings:', error)
+        this.$store.chat.showToast('Error saving settings: ' + error.message, 'error')
       }
     },
 
@@ -74,8 +78,8 @@ window.settings = () => {
     async loadMCPServers() {
       try {
         const data = await api.get('/api/mcp/servers')
-        this.mcpServers = data.servers
-        this.$store.settings.mcpServers = data.servers
+        this.mcpServers = data.servers || []
+        this.$store.settings.mcpServers = data.servers || []
       } catch (error) {
         console.error('[SETTINGS] Error loading MCP servers:', error)
       }
@@ -94,23 +98,23 @@ window.settings = () => {
     async addMCPServer() {
       try {
         let args = []
-        try { 
-          args = JSON.parse(this.newServer.args) 
+        try {
+          args = JSON.parse(this.newServer.args)
         } catch {
           this.$store.chat.showToast('Invalid JSON for args', 'error')
           return
         }
-        
+
         if (this.newServer.transport_type !== 'stdio' && !this.newServer.url) {
           this.$store.chat.showToast('URL required for SSE/HTTP', 'error')
           return
         }
-        
+
         if (this.newServer.transport_type === 'stdio' && !this.newServer.command) {
           this.$store.chat.showToast('Command required for stdio', 'error')
           return
         }
-        
+
         await api.post('/api/mcp/servers', {
           name: this.newServer.name,
           transport_type: this.newServer.transport_type,
@@ -119,10 +123,10 @@ window.settings = () => {
           env: {},
           url: this.newServer.url || null
         })
-        
+
         await this.loadMCPServers()
         await this.loadMCPTools()
-        
+
         this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' }
         this.$store.chat.showToast('Server added!', 'success')
       } catch (error) {
@@ -164,7 +168,6 @@ window.settings = () => {
       }
     }
   }
-  
+
   return component
 }
-

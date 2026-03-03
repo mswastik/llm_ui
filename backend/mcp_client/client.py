@@ -336,16 +336,19 @@ class MCPClientManager:
     async def list_all_tools(self) -> List[Dict]:
         """
         List all tools from all connected servers.
-        
+
         Returns:
             List of tool dictionaries with server info
         """
         all_tools = []
-        
+
         for server_name, instance in self.servers.items():
             if instance.is_connected:
-                all_tools.extend(instance.tools)
-                
+                for tool in instance.tools:
+                    # Add server name to each tool
+                    tool_with_server = {**tool, 'server': server_name}
+                    all_tools.append(tool_with_server)
+
         return all_tools
 
     async def list_servers(self) -> List[Dict]:

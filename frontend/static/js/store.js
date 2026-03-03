@@ -24,6 +24,11 @@ const storeDefinitions = {
     expandedThinking: {},
     expandedSources: {},
     toast: { show: false, message: '', type: 'success' },
+    
+    // Agent selection state
+    availableAgents: [],
+    selectedAgentId: null,
+    currentAgentConfig: null, // Stores the full agent config when selected
 
     addConversation(conv) {
       this.conversations.unshift(conv)
@@ -58,6 +63,23 @@ const storeDefinitions = {
         this.selectedModel = saved
       }
     },
+    
+    // Agent selection methods
+    setAgent(agentId) {
+      this.selectedAgentId = agentId
+      // Find and store the full agent config
+      const agent = this.availableAgents.find(a => a.id === agentId)
+      this.currentAgentConfig = agent || null
+      localStorage.setItem('selectedAgentId', agentId)
+    },
+    loadSavedAgent() {
+      const saved = localStorage.getItem('selectedAgentId')
+      if (saved && this.availableAgents.some(a => a.id === parseInt(saved))) {
+        this.selectedAgentId = parseInt(saved)
+        this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId)
+      }
+    },
+    
     showToast(message, type = 'success') {
       this.toast.message = message
       this.toast.type = type

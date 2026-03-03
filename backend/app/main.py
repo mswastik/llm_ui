@@ -464,8 +464,41 @@ async def stream_regenerate_response(request_id: str, conversation_id: str, mode
 @app.get("/api/mcp/servers")
 async def list_mcp_servers():
     """List all available MCP servers"""
-    servers = await mcp_manager.list_servers()
-    return {"servers": servers}
+    from database.crud import get_enabled_mcp_servers
+    from database.models import get_db
+    
+    # Get runtime server status from MCP manager
+    runtime_servers = await mcp_manager.list_servers()
+    
+    # Get enabled status from database
+    async with get_db() as db:
+        db_servers = await get_enabled_mcp_servers(db)
+        db_enabled = {s["name"]: True for s in db_servers}
+    
+    # Merge runtime info with enabled status
+    servers_with_status = []
+    for server in runtime_servers:
+        servers_with_status.append({
+            **server,
+            "enabled": db_enabled.get(server["name"], True)
+        })
+    
+    # Also include servers from DB that might not be connected
+    for db_server in db_servers:
+        if not any(s["name"] == db_server["name"] for s in runtime_servers):
+            servers_with_status.append({
+                "name": db_server["name"],
+                "transport_type": db_server.get("transport_type", "stdio"),
+                "command": db_server.get("command"),
+                "url": db_server.get("url"),
+                "tool_count": 0,
+                "is_connected": False,
+                "is_initialized": False,
+                "error": "Server not loaded (may be disabled)",
+                "enabled": True
+            })
+    
+    return {"servers": servers_with_status}
 
 
 @app.post("/api/mcp/servers")
@@ -574,18 +607,34 @@ async def refresh_mcp_server_tools(server_name: str):
 async def reconnect_mcp_server(server_name: str):
     """
     Reconnect to an MCP server.
-    
+
     Useful when connection was lost or server was restarted.
     """
     if server_name not in [s["name"] for s in await mcp_manager.list_servers()]:
         raise HTTPException(status_code=404, detail="Server not found")
-    
+
     success = await mcp_manager.reconnect_server(server_name)
-    
+
     if success:
         return {"status": "success", "message": f"Reconnected to server '{server_name}'"}
     else:
         raise HTTPException(status_code=500, detail="Failed to reconnect to server")
+
+
+@app.post("/api/mcp/servers/{server_name}/toggle")
+async def toggle_mcp_server_endpoint(server_name: str, request: Request):
+    """
+    Enable or disable an MCP server.
+    """
+    from database.crud import toggle_mcp_server as db_toggle_mcp_server
+    
+    data = await request.json()
+    enabled = data.get("enabled", True)
+
+    async with get_db() as db:
+        await db_toggle_mcp_server(db, server_name, enabled)
+
+    return {"status": "success", "message": f"Server '{server_name}' {'enabled' if enabled else 'disabled'}"}
 
 
 # Conversation Management

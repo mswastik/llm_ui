@@ -13,18 +13,22 @@ window.chat = () => {
     isLoading: false,
     toolStatus: { active: false, tool: '', status: '', progress: null, data: null },
     selectedModel: '',
+    selectedAgentId: null,
+    selectedDocumentIds: 'all',
     enableWebSearch: false,
     enableRAG: false,
     editingMessageId: null,
     editContent: '',
     inputMessage: '',
     availableModels: [],
+    availableAgents: [],
+    documents: [],
     expandedToolCallBlocks: {},
     expandedThinkingBlocks: {},
     expandedThinking: {},
     expandedSources: {},
     currentConversationTitle: 'New Chat',
-    
+
     // Messages is a getter that always reads from store
     get messages() {
       return this.$store?.chat?.messages || []
@@ -39,15 +43,21 @@ window.chat = () => {
       this.isLoading = this.$store.chat.isLoading
       this.toolStatus = { ...this.$store.chat.toolStatus }
       this.selectedModel = this.$store.chat.selectedModel
+      this.selectedAgentId = this.$store.chat.selectedAgentId
       this.enableWebSearch = this.$store.chat.enableWebSearch
       this.enableRAG = this.$store.chat.enableRAG
       this.availableModels = this.$store.chat.availableModels
+      this.availableAgents = this.$store.chat.availableAgents
       this.currentConversationTitle = this.$store.chat.currentConversationTitle
-      
-      await this.loadModels()
+      this.documents = this.$store.documents.list || []
+
+      await Promise.all([this.loadModels(), this.loadAgents(), this.loadDocuments()])
       this.$store.chat.loadSavedModel()
       this.selectedModel = this.$store.chat.selectedModel
-      
+      this.$store.chat.loadSavedAgent()
+      this.selectedAgentId = this.$store.chat.selectedAgentId
+      this.applyAgentConfig()
+
       await ttsService.checkAvailability()
       this.$store.tts.available = ttsService.ttsAvailable
     },
@@ -65,6 +75,48 @@ window.chat = () => {
 
     updateSelectedModel() {
       this.$store.chat.setModel(this.selectedModel)
+    },
+
+    // Agents
+    async loadAgents() {
+      try {
+        const data = await api.get('/api/agents')
+        this.availableAgents = data.agents || []
+        this.$store.chat.availableAgents = this.availableAgents
+      } catch (error) {
+        console.error('Error loading agents:', error)
+      }
+    },
+
+    updateSelectedAgent() {
+      this.$store.chat.setAgent(this.selectedAgentId)
+      this.applyAgentConfig()
+    },
+
+    applyAgentConfig() {
+      const agent = this.$store.chat.currentAgentConfig
+      if (!agent) return
+
+      // Apply agent configuration to current chat settings
+      if (agent.model && this.availableModels.some(m => m.id === agent.model)) {
+        this.selectedModel = agent.model
+        this.$store.chat.selectedModel = agent.model
+      }
+      this.enableWebSearch = !!agent.enable_web_search
+      this.enableRAG = !!agent.enable_rag
+      this.$store.chat.enableWebSearch = this.enableWebSearch
+      this.$store.chat.enableRAG = this.enableRAG
+    },
+
+    // Documents
+    async loadDocuments() {
+      try {
+        const data = await api.get('/api/documents')
+        this.documents = data.documents || []
+        this.$store.documents.list = this.documents
+      } catch (error) {
+        console.error('Error loading documents:', error)
+      }
     },
 
     async updateConversationTitle(conversationId, event) {

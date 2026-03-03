@@ -159,21 +159,58 @@
                                             <template x-if="block.status === 'error'"><span class="text-red-600 text-xs">✗</span></template>
                                         </div>
                                         <div x-show="isToolCallBlockExpanded(message.id, index)" x-collapse class="mt-2 px-2">
-                                            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs">
-                                                <template x-if="block.arguments">
+                                            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs space-y-3">
+                                                <!-- Search Steps Display for search_web tool -->
+                                                <template x-if="block.name === 'search_web' && block.search_steps && block.search_steps.length > 0">
+                                                    <div class="space-y-2">
+                                                        <div class="font-semibold text-amber-800 border-b border-amber-200 pb-1">🔍 Search Steps</div>
+                                                        <template x-for="(step, idx) in block.search_steps" :key="idx">
+                                                            <div class="bg-white border border-amber-100 rounded p-2">
+                                                                <div class="flex items-center gap-2 mb-1">
+                                                                    <span class="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-xs font-medium" x-text="'Step ' + (idx + 1)"></span>
+                                                                    <span class="text-gray-600" x-text="step.query"></span>
+                                                                </div>
+                                                                <div class="flex gap-3 text-gray-500">
+                                                                    <span x-text="'📄 ' + step.sources_found + ' sources'"></span>
+                                                                    <span x-text="'📝 ' + step.chunks_created + ' chunks'"></span>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                
+                                                <!-- Search Terms Display -->
+                                                <template x-if="block.search_terms && block.search_terms.length > 0">
+                                                    <div class="bg-blue-50 border border-blue-200 rounded p-2">
+                                                        <div class="font-semibold text-blue-800 mb-1">📌 Extracted Search Terms</div>
+                                                        <div class="flex flex-wrap gap-1">
+                                                            <template x-for="(term, idx) in block.search_terms" :key="idx">
+                                                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs" x-text="term"></span>
+                                                            </template>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                
+                                                <!-- Reasoning Display -->
+                                                <template x-if="block.reasoning">
+                                                    <div class="bg-purple-50 border border-purple-200 rounded p-2">
+                                                        <div class="font-semibold text-purple-800 mb-1">🧠 Analysis</div>
+                                                        <div class="text-gray-700" x-text="block.reasoning"></div>
+                                                        <template x-if="block.coverage_score">
+                                                            <div class="mt-1 text-xs">
+                                                                <span class="text-gray-500">Coverage Score: </span>
+                                                                <span :class="block.coverage_score >= 0.8 ? 'text-green-600' : 'text-amber-600'" x-text="(block.coverage_score * 100).toFixed(0) + '%'"></span>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                
+                                                <!-- Args Display -->
+                                                <template x-if="block.arguments && Object.keys(block.arguments).length > 0">
                                                     <div class="mb-2">
                                                         <div class="text-xs text-gray-500 mb-1">Args:</div>
                                                         <div class="bg-gray-100 rounded p-2 font-mono text-gray-50 overflow-x-auto">
                                                             <pre x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"></pre>
-                                                        </div>
-                                                    </div>
-                                                </template>
-                                                <template x-if="block.result">
-                                                    <div class="mt-2">
-                                                        <div class="text-xs text-gray-500 mb-1">Result:</div>
-                                                        <div class="bg-blue-50 border border-blue-200 rounded p-2">
-                                                            <template x-if="block.result.error"><span class="text-red-600" x-text="block.result.error"></span></template>
-                                                            <template x-if="!block.result.error"><pre class="text-xs overflow-x-auto" x-text="JSON.stringify(block.result, null, 2)"></pre></template>
                                                         </div>
                                                     </div>
                                                 </template>

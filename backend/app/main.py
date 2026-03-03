@@ -421,9 +421,15 @@ async def _core_stream_handler(
         import traceback
         traceback.print_exc()
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    except asyncio.CancelledError:
+        # Request was cancelled by client - this is normal, don't log as error
+        print(f"Request {request_id} cancelled by client")
     finally:
         if request_id in active_connections:
-            del active_connections[request_id]
+            try:
+                del active_connections[request_id]
+            except KeyError:
+                pass
 
 
 @app.get("/api/stream/{request_id}")

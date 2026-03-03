@@ -44,11 +44,13 @@ class LLMClient:
         temperature: float = None,
         max_tokens: int = None,
         tools: List[Dict] = None,
-        model: str = None
+        model: str = None,
+        max_retries: int = 3,
+        retry_delay: float = 2.0
     ) -> AsyncGenerator[Dict, None]:
         """
-        Stream chat completion from llama.cpp.
-        
+        Stream chat completion from llama.cpp with retry logic.
+
         Yields:
             Dict with structure:
             {
@@ -57,10 +59,10 @@ class LLMClient:
                 "tool_call": {...}  # if type is "tool_call"
             }
         """
-        
+
         # Use provided model or fall back to default
         active_model = model or self.model
-        
+
         # Use provided values or fall back to defaults from config
         active_temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE
         active_max_tokens = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
@@ -72,220 +74,250 @@ class LLMClient:
             "temperature": active_temperature,
             "max_tokens": active_max_tokens,
         }
-        
+
         # Add tool definitions if available
         active_tools = tools or self._tools
         if active_tools:
             payload["tools"] = active_tools
-        
-        try:
-            # Increased timeout for long-running requests with web search context
-            timeout = aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=120)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    f"{self.base_url}/v1/chat/completions",
-                    json=payload,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
-                    
-                    # Stream content more immediately
-                    buffer = ""
-                    
-                    # Track streaming tool call - accumulate arguments across chunks
-                    streaming_tool_call = None
-                    
-                    # Track thinking buffer for tags that span multiple chunks
-                    thinking_buffer = None
 
-                    async for chunk in response.content.iter_any():
-                        # Decode chunk and add to buffer
-                        text = chunk.decode('utf-8')
-                        print(f"[DEBUG] Raw chunk received: {repr(text[:200])}")
-                        buffer += text
+        # Retry logic for transient server errors
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Increased timeout for long-running requests with web search context
+                timeout = aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=120)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        f"{self.base_url}/v1/chat/completions",
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                        timeout=360
+                    ) as response:
+                        if response.status == 500:
+                            # Server error - likely temporary overload, retry
+                            error_text = await response.text()
+                            raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
+                        elif response.status != 200:
+                            # Other errors - don't retry
+                            error_text = await response.text()
+                            raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
 
-                        # Process complete lines
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            line = line.strip()
+                        # Stream content more immediately
+                        buffer = ""
 
-                            if not line or line == "data: [DONE]":
-                                continue
+                        # Track streaming tool call - accumulate arguments across chunks
+                        streaming_tool_call = None
 
-                            if line.startswith("data: "):
-                                data = line[6:]  # Remove "data: " prefix
+                        # Track thinking buffer for tags that span multiple chunks
+                        thinking_buffer = None
 
-                                try:
-                                    chunk_data = json.loads(data)
-                                    delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                        async for chunk in response.content.iter_any():
+                            # Decode chunk and add to buffer
+                            text = chunk.decode('utf-8')
+                            print(f"[DEBUG] Raw chunk received: {repr(text[:200])}")
+                            buffer += text
 
-                                    # Handle thinking content (for thinking models like DeepSeek)
-                                    # Check multiple field names that llama.cpp might use
-                                    thinking_content = delta.get("thinking") or delta.get("reasoning_content")
-                                    if thinking_content:
-                                        print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
-                                        yield {
-                                            "type": "thinking",
-                                            "content": thinking_content
-                                        }
-                                        await asyncio.sleep(0)
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line = line.strip()
 
-                                    # Handle content - parse for <think> tags with streaming
-                                    if "content" in delta and delta["content"]:
-                                        content = delta["content"]
-                                        print(f"[DEBUG] Content chunk: {repr(content[:100])}")
+                                if not line or line == "data: [DONE]":
+                                    continue
 
-                                        # Process content for <think> tags - stream thinking as it arrives
-                                        while content:
-                                            # Look for <think> start tag
-                                            think_start = content.find('<think>')
+                                if line.startswith("data: "):
+                                    data = line[6:]  # Remove "data: " prefix
 
-                                            if think_start != -1:
-                                                print(f"[DEBUG] <think> found at position {think_start}")
-                                                # Yield content before thinking tag
-                                                before_think = content[:think_start]
-                                                if before_think:
-                                                    yield {
-                                                        "type": "content",
-                                                        "content": before_think
-                                                    }
-                                                    await asyncio.sleep(0)
+                                    try:
+                                        chunk_data = json.loads(data)
+                                        delta = chunk_data.get("choices", [{}])[0].get("delta", {})
 
-                                                # Check if end tag is in the same chunk
-                                                after_start = content[think_start + 7:]  # Skip '<think>'
-                                                think_end = after_start.find('</think>')
-
-                                                if think_end != -1:
-                                                    # Complete thinking block in same chunk
-                                                    thinking = after_start[:think_end]
-                                                    print(f"[DEBUG] Complete thinking block in one chunk: {len(thinking)} chars")
-                                                    yield {
-                                                        "type": "thinking",
-                                                        "content": thinking
-                                                    }
-                                                    await asyncio.sleep(0)
-                                                    # Continue with remaining content
-                                                    content = after_start[think_end + 9:]  # Skip '</think>'
-                                                else:
-                                                    # Start streaming thinking - yield content as it arrives
-                                                    thinking_buffer = after_start
-                                                    print(f"[DEBUG] Started thinking stream: {len(thinking_buffer)} chars")
-                                                    # Yield what we have so far
-                                                    if thinking_buffer:
-                                                        yield {
-                                                            "type": "thinking",
-                                                            "content": thinking_buffer
-                                                        }
-                                                        await asyncio.sleep(0)
-                                                    content = ''
-                                            else:
-                                                # If we're in thinking mode, this is continuation of thinking
-                                                if thinking_buffer is not None:
-                                                    thinking_buffer += content
-                                                    print(f"[DEBUG] Streaming thinking continuation: {len(thinking_buffer)} chars total")
-                                                    # Stream the new content immediately
-                                                    yield {
-                                                        "type": "thinking",
-                                                        "content": content
-                                                    }
-                                                    await asyncio.sleep(0)
-                                                    # Check if this chunk contains the end tag
-                                                    end_pos = content.find('</think>')
-                                                    if end_pos != -1:
-                                                        print(f"[DEBUG] </think> found in streaming, clearing buffer")
-                                                        thinking_buffer = None
-                                                    content = ''
-                                                else:
-                                                    # No thinking tag, yield as regular content
-                                                    yield {
-                                                        "type": "content",
-                                                        "content": content
-                                                }
-                                                content = ''
-                                            
+                                        # Handle thinking content (for thinking models like DeepSeek)
+                                        # Check multiple field names that llama.cpp might use
+                                        thinking_content = delta.get("thinking") or delta.get("reasoning_content")
+                                        if thinking_content:
+                                            print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
+                                            yield {
+                                                "type": "thinking",
+                                                "content": thinking_content
+                                            }
                                             await asyncio.sleep(0)
 
-                                    # Handle tool calls (if model supports it)
-                                    # llama.cpp streams tool calls incrementally
-                                    if "tool_calls" in delta:
-                                        for tool_call in delta["tool_calls"]:
-                                            try:
-                                                # Safely extract tool call data
-                                                function_data = tool_call.get("function", {})
-                                                if not function_data:
-                                                    print(f"[DEBUG] tool_call missing 'function' key: {tool_call}")
-                                                    continue
+                                        # Handle content - parse for <think> tags with streaming
+                                        if "content" in delta and delta["content"]:
+                                            content = delta["content"]
+                                            print(f"[DEBUG] Content chunk: {repr(content[:100])}")
 
-                                                tool_name = function_data.get("name")
-                                                arguments_str = function_data.get("arguments", "")
+                                            # Process content for <think> tags - stream thinking as it arrives
+                                            while content:
+                                                # Look for <think> start tag
+                                                think_start = content.find('<think>')
 
-                                                # If we have a tool name, this is the start of a new tool call
-                                                if tool_name:
-                                                    streaming_tool_call = {
-                                                        "name": tool_name,
-                                                        "arguments_str": arguments_str
-                                                    }
-                                                    print(f"[DEBUG] Starting tool call: {tool_name}")
-
-                                                # If we already have a streaming tool call, accumulate arguments
-                                                elif streaming_tool_call and arguments_str:
-                                                    streaming_tool_call["arguments_str"] += arguments_str
-                                                    print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
-
-                                                # Try to parse accumulated arguments if we have a tool name
-                                                if streaming_tool_call and streaming_tool_call.get("name"):
-                                                    try:
-                                                        parsed_args = json.loads(streaming_tool_call["arguments_str"])
-                                                        print(f"[DEBUG] Successfully parsed tool arguments: {parsed_args}")
-
-                                                        # Yield complete tool call
+                                                if think_start != -1:
+                                                    print(f"[DEBUG] <think> found at position {think_start}")
+                                                    # Yield content before thinking tag
+                                                    before_think = content[:think_start]
+                                                    if before_think:
                                                         yield {
-                                                            "type": "tool_call",
-                                                            "tool_call": {
-                                                                "name": streaming_tool_call["name"],
-                                                                "arguments": parsed_args
-                                                            }
+                                                            "type": "content",
+                                                            "content": before_think
                                                         }
-
-                                                        # Clear streaming tool call after yielding
-                                                        streaming_tool_call = None
                                                         await asyncio.sleep(0)
 
-                                                    except json.JSONDecodeError:
-                                                        # Arguments not complete yet, wait for more chunks
-                                                        print(f"[DEBUG] Arguments not complete yet, waiting...")
+                                                    # Check if end tag is in the same chunk
+                                                    after_start = content[think_start + 7:]  # Skip '<think>'
+                                                    think_end = after_start.find('</think>')
+
+                                                    if think_end != -1:
+                                                        # Complete thinking block in same chunk
+                                                        thinking = after_start[:think_end]
+                                                        print(f"[DEBUG] Complete thinking block in one chunk: {len(thinking)} chars")
+                                                        yield {
+                                                            "type": "thinking",
+                                                            "content": thinking
+                                                        }
+                                                        await asyncio.sleep(0)
+                                                        # Continue with remaining content
+                                                        content = after_start[think_end + 9:]  # Skip '</think>'
+                                                    else:
+                                                        # Start streaming thinking - yield content as it arrives
+                                                        thinking_buffer = after_start
+                                                        print(f"[DEBUG] Started thinking stream: {len(thinking_buffer)} chars")
+                                                        # Yield what we have so far
+                                                        if thinking_buffer:
+                                                            yield {
+                                                                "type": "thinking",
+                                                                "content": thinking_buffer
+                                                            }
+                                                            await asyncio.sleep(0)
+                                                        content = ''
+                                                else:
+                                                    # If we're in thinking mode, this is continuation of thinking
+                                                    if thinking_buffer is not None:
+                                                        thinking_buffer += content
+                                                        print(f"[DEBUG] Streaming thinking continuation: {len(thinking_buffer)} chars total")
+                                                        # Stream the new content immediately
+                                                        yield {
+                                                            "type": "thinking",
+                                                            "content": content
+                                                        }
+                                                        await asyncio.sleep(0)
+                                                        # Check if this chunk contains the end tag
+                                                        end_pos = content.find('</think>')
+                                                        if end_pos != -1:
+                                                            print(f"[DEBUG] </think> found in streaming, clearing buffer")
+                                                            thinking_buffer = None
+                                                        content = ''
+                                                    else:
+                                                        # No thinking tag, yield as regular content
+                                                        yield {
+                                                            "type": "content",
+                                                            "content": content
+                                                    }
+                                                    content = ''
+
+                                                await asyncio.sleep(0)
+
+                                        # Handle tool calls (if model supports it)
+                                        # llama.cpp streams tool calls incrementally
+                                        if "tool_calls" in delta:
+                                            for tool_call in delta["tool_calls"]:
+                                                try:
+                                                    # Safely extract tool call data
+                                                    function_data = tool_call.get("function", {})
+                                                    if not function_data:
+                                                        print(f"[DEBUG] tool_call missing 'function' key: {tool_call}")
                                                         continue
 
-                                            except Exception as e:
-                                                print(f"[DEBUG] Error processing tool_call: {e}, tool_call data: {tool_call}")
-                                                import traceback
-                                                traceback.print_exc()
-                                                # Continue processing other tool calls
+                                                    tool_name = function_data.get("name")
+                                                    arguments_str = function_data.get("arguments", "")
 
-                                except json.JSONDecodeError:
-                                    continue
-        
-        except asyncio.CancelledError:
-            # Client cancelled the request
-            raise
-        except aiohttp.ClientConnectorError:
-            yield {
-                "type": "error",
-                "error": f"Cannot connect to llama.cpp at {self.base_url}. Make sure it's running."
-            }
-        except asyncio.TimeoutError:
-            yield {
-                "type": "error",
-                "error": "Request to llama.cpp timed out"
-            }
-        except Exception as e:
-            print(f"Error in LLM streaming: {e}")
-            yield {
-                "type": "error",
-                "error": str(e)
-            }
+                                                    # If we have a tool name, this is the start of a new tool call
+                                                    if tool_name:
+                                                        streaming_tool_call = {
+                                                            "name": tool_name,
+                                                            "arguments_str": arguments_str
+                                                        }
+                                                        print(f"[DEBUG] Starting tool call: {tool_name}")
+
+                                                    # If we already have a streaming tool call, accumulate arguments
+                                                    elif streaming_tool_call and arguments_str:
+                                                        streaming_tool_call["arguments_str"] += arguments_str
+                                                        print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
+
+                                                    # Try to parse accumulated arguments if we have a tool name
+                                                    if streaming_tool_call and streaming_tool_call.get("name"):
+                                                        try:
+                                                            parsed_args = json.loads(streaming_tool_call["arguments_str"])
+                                                            print(f"[DEBUG] Successfully parsed tool arguments: {parsed_args}")
+
+                                                            # Yield complete tool call
+                                                            yield {
+                                                                "type": "tool_call",
+                                                                "tool_call": {
+                                                                    "name": streaming_tool_call["name"],
+                                                                    "arguments": parsed_args
+                                                                }
+                                                            }
+
+                                                            # Clear streaming tool call after yielding
+                                                            streaming_tool_call = None
+                                                            await asyncio.sleep(0)
+
+                                                        except json.JSONDecodeError:
+                                                            # Arguments not complete yet, wait for more chunks
+                                                            print(f"[DEBUG] Arguments not complete yet, waiting...")
+                                                            continue
+
+                                                except Exception as e:
+                                                    print(f"[DEBUG] Error processing tool_call: {e}, tool_call data: {tool_call}")
+                                                    import traceback
+                                                    traceback.print_exc()
+                                                    # Continue processing other tool calls
+
+                                    except json.JSONDecodeError:
+                                        continue
+
+                                    except asyncio.CancelledError:
+                                        # Client cancelled the request
+                                        raise
+                                    except aiohttp.ClientConnectorError:
+                                        yield {
+                                            "type": "error",
+                                            "error": f"Cannot connect to llama.cpp at {self.base_url}. Make sure it's running."
+                                        }
+                                    except asyncio.TimeoutError:
+                                        yield {
+                                            "type": "error",
+                                            "error": "Request to llama.cpp timed out"
+                                        }
+                                    except Exception as e:
+                                        print(f"Error in LLM streaming: {e}")
+                                        # If this is a 500 error and we have retries left, retry
+                                        if "status 500" in str(e) and attempt < max_retries - 1:
+                                            last_error = e
+                                            print(f"Server error (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                                            await asyncio.sleep(retry_delay)
+                                            continue
+                                        else:
+                                            yield {
+                                                "type": "error",
+                                                "error": str(e)
+                                            }
+                                    break  # Success - exit retry loop
+            except Exception as e:
+                # Handle exceptions that occur before/during request setup
+                if "status 500" in str(e) and attempt < max_retries - 1:
+                    last_error = e
+                    print(f"Server error (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    yield {
+                        "type": "error",
+                        "error": str(e)
+                    }
+                    break
     
     async def _get_available_tools(self) -> List[Dict]:
         """

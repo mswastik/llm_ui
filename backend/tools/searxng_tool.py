@@ -3,6 +3,11 @@ SearXNG Web Search Tool - Adapter for the open-webui tool.
 
 This module adapts the open-webui-tool.py SearXNG search functionality
 for use with the LLM UI application.
+
+Features:
+1. LLM-based search term extraction from user queries (handles paragraphs)
+2. Thinking model support - waits for thinking to complete before extracting search terms
+3. Reasoning over search results to determine if additional searches are needed
 """
 
 import requests
@@ -11,7 +16,9 @@ from bs4 import BeautifulSoup
 import re
 import asyncio
 import json
-from typing import List, Dict, Tuple, Callable, Any
+import inspect
+import warnings
+from typing import List, Dict, Tuple, Callable, Any, Optional
 from dataclasses import dataclass, field
 from tools.base import SharedLLMUtils
 from backend.settings import settings_manager
@@ -21,17 +28,24 @@ from backend.settings import settings_manager
 class SearchConfig:
     """Configuration for SearXNG search"""
     searxng_url: str = "http://localhost:8888/search"
-    embeddings_api: str = "http://localhost:8001/v3/embeddings"
-    rerank_api: str = "http://localhost:8001/v3/rerank"
-    llm_base_url: str = "http://localhost:8001/v3"
+    embeddings_api: str = "http://localhost:8080/v1/embeddings"
+    rerank_api: str = "http://localhost:8080/v1/rerank"
+    llm_base_url: str = "http://localhost:8080/v1"
     llm_model: str = "qwen3-4b"
     query_model: str = "qwen3-4b"
     llm_api_key: str = "sk-12"
-    num_search_results: int = 25
+    num_search_results: int = 20
     chunk_size: int = 1200
     similarity_threshold: float = 0.4
     max_retries: int = 3
     enable_multi_query: bool = True
+    enable_search_term_extraction: bool = True  # Extract search terms from paragraphs
+    enable_result_reasoning: bool = True  # Reason over results to determine if more searches needed
+    max_search_iterations: int = 3  # Maximum iterations of search + reasoning
+    thinking_timeout: int = 120  # Timeout for thinking models in seconds
+    embedding_timeout: int = 120  # Timeout for embedding requests
+    #embedding_batch_size: int = 5  # Max concurrent embedding requests
+    #embedding_max_retries: int = 5  # Max retries for embedding requests
 
     @classmethod
     def from_settings(cls, settings: dict = None):
@@ -62,15 +76,22 @@ class SearchConfig:
 class SearXNGSearchTool:
     """
     SearXNG-based web search tool with semantic reranking.
-    
+
     This tool performs multi-query web searches, extracts content from
     results, and uses embeddings + reranking to return the most relevant
     information.
     """
-    
+
     def __init__(self, config: SearchConfig = None):
         self.config = config or SearchConfig()
         self.model_lock = asyncio.Lock()
+
+    async def _run_sync_request(self, func):
+        """Helper to run sync requests with suppressed deprecation warnings"""
+        loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return await loop.run_in_executor(None, func)
     
     async def search(
         self,
@@ -97,7 +118,7 @@ class SearXNGSearchTool:
                 if progress_callback:
                     try:
                         result = progress_callback(status, progress)
-                        if asyncio.iscoroutine(result):
+                        if inspect.iscoroutinefunction(progress_callback):
                             await result
                     except Exception as e:
                         print(f"Progress callback error: {e}")
@@ -264,7 +285,7 @@ class SearXNGSearchTool:
             output = self._format_results(final_chunks, final_source_indices, sources, query)
             
             if progress_callback:
-                progress_callback("Search complete!", 100)
+                await progress_callback("Search complete!", 100)
             
             return {
                 "sources": sources,
@@ -308,23 +329,21 @@ class SearXNGSearchTool:
                 "model": self.config.query_model,
                 "messages": messages,
                 "temperature": 0.7,
-                "max_tokens": 580,
+                "max_tokens": 1580,
                 "stream": False,
             }
             
             headers = {"Content-Type": "application/json"}
             if self.config.llm_api_key:
                 headers["Authorization"] = f"Bearer {self.config.llm_api_key}"
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
+
+            response = await self._run_sync_request(
                 lambda: requests.post(
                     f"{self.config.llm_base_url}/v1/chat/completions",
                     headers=headers,
                     json=payload,
-                    timeout=60,
-                ),
+                    timeout=360,
+                )
             )
             
             if response.status_code != 200:
@@ -412,15 +431,18 @@ class SearXNGSearchTool:
         
         try:
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    f"{self.config.llm_base_url}/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=120,
-                ),
-            )
+            # Suppress deprecation warnings from run_in_executor
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        f"{self.config.llm_base_url}/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=160,
+                    ),
+                )
             
             if response.status_code != 200:
                 print("Adaptive query LLM error:", response.text)
@@ -447,35 +469,625 @@ class SearXNGSearchTool:
         except Exception as e:
             print("Adaptive query generation exception:", e)
             return []
-    
+
+    async def _extract_search_terms_from_query(self, user_query: str) -> List[str]:
+        """
+        Extract focused search terms from a user query (especially paragraphs).
+        
+        This method uses an LLM to analyze the user's query and extract concise
+        search terms that can be used for web search. It handles:
+        - Long paragraphs by extracting key concepts
+        - Multiple questions by identifying the core topics
+        - Complex queries by breaking them into searchable terms
+        
+        Args:
+            user_query: The original user query (can be a paragraph)
+            
+        Returns:
+            List of search terms (1-3 terms)
+        """
+        try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract search terms from user queries.\n"
+                        "Your task is to identify the KEY search terms that should be used for web search.\n\n"
+                        "Guidelines:\n"
+                        "- Extract 1-3 focused search terms (2-6 words each)\n"
+                        "- Focus on the main topic/concept, not the question format\n"
+                        "- Remove conversational elements\n"
+                        "- Keep technical terms intact\n"
+                        "- Return ONLY the search terms, one per line\n"
+                        "- No explanations, no numbering, no quotes"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f'User query: "{user_query}"\n\n'
+                        "Extract the key search terms for web search:"
+                    ),
+                },
+            ]
+            
+            payload = {
+                "model": self.config.query_model,
+                "messages": messages,
+                "temperature": 0.3,  # Lower temperature for more focused extraction
+                "max_tokens": 1200,
+                "stream": False,
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            if self.config.llm_api_key:
+                headers["Authorization"] = f"Bearer {self.config.llm_api_key}"
+
+            # Run with timeout to avoid blocking
+            response = await asyncio.wait_for(
+                self._run_sync_request(
+                    lambda: requests.post(
+                        f"{self.config.llm_base_url}/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=160,
+                    )
+                ),
+                timeout=self.config.thinking_timeout
+            )
+            
+            if response.status_code != 200:
+                print("Search term extraction LLM error:", response.text)
+                return [user_query]  # Fallback to original query
+            
+            content = (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            
+            # Parse extracted terms
+            lines = [l.strip() for l in content.split("\n") if l.strip()]
+            
+            search_terms = []
+            for line in lines:
+                # Clean up the line
+                line = re.sub(r"^[\-\*\d\.\)]\s*", "", line)
+                line = line.strip('"\'')
+                
+                # Validate term length
+                if 2 <= len(line.split()) <= 10:
+                    search_terms.append(line)
+            
+            # Return extracted terms or fallback to original
+            return search_terms[:3] if search_terms else [user_query]
+            
+        except asyncio.TimeoutError:
+            print("Search term extraction timed out")
+            return [user_query]
+        except Exception as e:
+            print(f"Search term extraction exception: {e}")
+            return [user_query]
+
+    async def _wait_for_thinking_completion(
+        self, 
+        messages: List[Dict], 
+        progress_callback=None
+    ) -> str:
+        """
+        Wait for a thinking model to complete its reasoning before proceeding.
+        
+        This method handles models that output thinking/reasoning content
+        before the actual response. It waits for the thinking to complete
+        and returns the final non-thinking content.
+        
+        Args:
+            messages: The conversation messages
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            The final content after thinking completes
+        """
+        try:
+            from tools.base import SharedLLMUtils
+            
+            # Report progress
+            if progress_callback:
+                progress_callback("Model is thinking...", 5)
+            
+            # Make the LLM call and wait for complete response
+            payload = {
+                "model": self.config.query_model,
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 1500,
+                "stream": False,
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            if self.config.llm_api_key:
+                headers["Authorization"] = f"Bearer {self.config.llm_api_key}"
+            
+            loop = asyncio.get_event_loop()
+            
+            # Run with timeout
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        f"{self.config.llm_base_url}/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=160,
+                    ),
+                ),
+                timeout=self.config.thinking_timeout
+            )
+            
+            if response.status_code != 200:
+                print("Thinking completion LLM error:", response.text)
+                return ""
+            
+            content = (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            
+            # Remove any <think> tags if present in the response
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+            content = content.strip()
+            
+            if progress_callback:
+                progress_callback("Thinking complete", 10)
+            
+            return content
+            
+        except asyncio.TimeoutError:
+            print("Thinking completion timed out")
+            if progress_callback:
+                progress_callback("Thinking timed out, proceeding...", 10)
+            return ""
+        except Exception as e:
+            print(f"Thinking completion exception: {e}")
+            if progress_callback:
+                progress_callback("Thinking error, proceeding...", 10)
+            return ""
+
+    async def _reason_over_search_results(
+        self,
+        original_query: str,
+        search_results: Dict,
+        progress_callback=None
+    ) -> Dict:
+        """
+        Reason over search results to determine if additional searches are needed.
+        
+        This method analyzes the search results and determines:
+        1. Whether the results adequately answer the user's query
+        2. What aspects are missing or need more specific information
+        3. Whether additional searches should be performed
+        4. What specific follow-up searches would be most helpful
+        
+        Args:
+            original_query: The original user query
+            search_results: The search results dict with 'sources' and 'content'
+            progress_callback: Optional callback for progress updates
+            
+        Returns:
+            Dict with keys:
+            - 'needs_more_search': bool
+            - 'reasoning': str (explanation of the decision)
+            - 'follow_up_queries': List[str] (suggested queries if more search needed)
+            - 'coverage_score': float (0-1, how well results cover the query)
+        """
+        try:
+            if progress_callback:
+                progress_callback("Analyzing search results coverage...", 85)
+            
+            # Build compact summary of results
+            sources = search_results.get("sources", [])
+            content = search_results.get("content", "")
+            
+            # Create summary of what we found
+            result_summary = []
+            for source in sources[:5]:  # Limit to top 5 sources
+                title = source.get("title", "")
+                snippet = source.get("snippet", "")[:200]
+                result_summary.append(f"- {title}: {snippet}")
+            
+            results_text = "\n".join(result_summary)
+            
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You analyze search results to determine if they adequately answer a user's query.\n\n"
+                        "Your task:\n"
+                        "1. Evaluate if the search results cover the key aspects of the query\n"
+                        "2. Identify what information is missing or incomplete\n"
+                        "3. Decide if additional searches are needed\n"
+                        "4. If yes, suggest specific follow-up search queries\n\n"
+                        "Respond in this EXACT JSON format:\n"
+                        '{\n'
+                        '  "needs_more_search": true/false,\n'
+                        '  "reasoning": "Your analysis of result coverage",\n'
+                        '  "follow_up_queries": ["query1", "query2"],\n'
+                        '  "coverage_score": 0.8\n'
+                        '}\n\n'
+                        'coverage_score: 0.0 (no coverage) to 1.0 (complete coverage)'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f'Original query: "{original_query}"\n\n'
+                        f"Search results found ({len(sources)} sources):\n{results_text}\n\n"
+                        f"Full content summary:\n{content[:2000]}\n\n"
+                        "Analyze whether these results adequately answer the query."
+                    ),
+                },
+            ]
+            
+            payload = {
+                "model": self.config.query_model,
+                "messages": messages,
+                "temperature": 0.2,  # Low temperature for consistent JSON
+                "max_tokens": 800,
+                "stream": False,
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            if self.config.llm_api_key:
+                headers["Authorization"] = f"Bearer {self.config.llm_api_key}"
+
+            response = await asyncio.wait_for(
+                self._run_sync_request(
+                    lambda: requests.post(
+                        f"{self.config.llm_base_url}/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=190,
+                    )
+                ),
+                timeout=self.config.thinking_timeout
+            )
+            
+            if response.status_code != 200:
+                print("Result reasoning LLM error:", response.text)
+                # Return default: no more search needed
+                return {
+                    "needs_more_search": False,
+                    "reasoning": "Could not analyze results, assuming adequate coverage",
+                    "follow_up_queries": [],
+                    "coverage_score": 0.5
+                }
+            
+            content = (
+                response.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            
+            # Parse JSON response
+            try:
+                # Extract JSON from response (may have markdown formatting)
+                json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+                if json_match:
+                    content = json_match.group()
+                
+                reasoning_result = json.loads(content)
+                
+                # Validate response structure
+                return {
+                    "needs_more_search": reasoning_result.get("needs_more_search", False),
+                    "reasoning": reasoning_result.get("reasoning", "No reasoning provided"),
+                    "follow_up_queries": reasoning_result.get("follow_up_queries", [])[:2],
+                    "coverage_score": reasoning_result.get("coverage_score", 0.5)
+                }
+                
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse reasoning JSON: {e}")
+                print(f"Raw content: {content}")
+                # Return conservative default
+                return {
+                    "needs_more_search": False,
+                    "reasoning": "Could not parse analysis, assuming adequate coverage",
+                    "follow_up_queries": [],
+                    "coverage_score": 0.5
+                }
+            
+        except asyncio.TimeoutError:
+            print("Result reasoning timed out")
+            if progress_callback:
+                progress_callback("Analysis timed out", 85)
+            return {
+                "needs_more_search": False,
+                "reasoning": "Analysis timed out",
+                "follow_up_queries": [],
+                "coverage_score": 0.5
+            }
+        except Exception as e:
+            print(f"Result reasoning exception: {e}")
+            if progress_callback:
+                progress_callback("Analysis error", 85)
+            return {
+                "needs_more_search": False,
+                "reasoning": f"Analysis error: {str(e)}",
+                "follow_up_queries": [],
+                "coverage_score": 0.5
+            }
+
+    async def search_with_reasoning(
+        self,
+        query: str,
+        max_results: int = 30,
+        top_k: int = 22,
+        progress_callback=None,
+        wait_for_thinking: bool = True
+    ) -> Dict:
+        """
+        Enhanced search with thinking model support and result reasoning.
+        
+        This method:
+        1. Extracts search terms from paragraph queries
+        2. Waits for thinking models to complete before searching
+        3. Performs iterative search with reasoning over results
+        4. Determines if additional searches are needed
+        
+        Args:
+            query: The user's query (can be a paragraph)
+            max_results: Maximum results per query
+            top_k: Final number of top chunks to return
+            progress_callback: Callback for progress updates
+            wait_for_thinking: Whether to wait for thinking models
+            
+        Returns:
+            Enhanced search results with reasoning metadata
+        """
+        try:
+            # Helper to report progress with detailed data
+            async def report_progress(status: str, progress: int, data: Dict = None):
+                if progress_callback:
+                    try:
+                        result = progress_callback(status, progress, data)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as e:
+                        print(f"Progress callback error: {e}")
+            
+            # Step 1: Wait for thinking to complete if enabled
+            if wait_for_thinking and self.config.enable_search_term_extraction:
+                await report_progress("Analyzing query and extracting search terms...", 2, {
+                    "step": "query_analysis",
+                    "status": "in_progress"
+                })
+                
+                # Extract search terms from the query
+                search_terms = await self._extract_search_terms_from_query(query)
+                
+                if len(search_terms) > 1:
+                    await report_progress(f"Extracted {len(search_terms)} search terms", 4, {
+                        "step": "query_analysis",
+                        "status": "completed",
+                        "search_terms": search_terms,
+                        "original_query": query
+                    })
+                else:
+                    await report_progress(f"Using search term: {search_terms[0]}", 4, {
+                        "step": "query_analysis",
+                        "status": "completed",
+                        "search_terms": search_terms,
+                        "original_query": query
+                    })
+            else:
+                search_terms = [query]
+                await report_progress("Using original query for search", 4, {
+                    "step": "query_analysis",
+                    "status": "skipped",
+                    "search_terms": search_terms
+                })
+            
+            # Step 2: Perform initial search with extracted terms
+            all_sources = []
+            all_chunks = []
+            all_source_indices = []
+            iteration_results = []
+            search_steps = []  # Track all search steps for display
+            
+            for iteration in range(self.config.max_search_iterations):
+                current_query = search_terms[iteration] if iteration < len(search_terms) else search_terms[-1]
+                
+                await report_progress(f"Search {iteration + 1}/{self.config.max_search_iterations}: \"{current_query[:50]}...\"", 
+                                     10 + (iteration * 25), {
+                    "step": "search",
+                    "iteration": iteration + 1,
+                    "query": current_query,
+                    "status": "in_progress"
+                })
+                
+                search_result = await self.search(
+                    query=current_query,
+                    max_results=max_results,
+                    top_k=top_k // (iteration + 1),
+                    progress_callback=progress_callback
+                )
+                
+                # Collect results
+                if "error" not in search_result:
+                    sources_count = len(search_result.get("sources", []))
+                    chunks_count = len(search_result.get("chunks", []))
+                    
+                    all_sources.extend(search_result.get("sources", []))
+                    all_chunks.extend(search_result.get("chunks", []))
+                    all_source_indices.extend(search_result.get("source_indices", []))
+                    iteration_results.append(search_result)
+                    
+                    # Record this search step
+                    search_steps.append({
+                        "iteration": iteration + 1,
+                        "query": current_query,
+                        "sources_found": sources_count,
+                        "chunks_created": chunks_count,
+                        "status": "completed"
+                    })
+                    
+                    await report_progress(f"Found {sources_count} sources, {chunks_count} chunks", 
+                                         10 + (iteration * 25) + 15, {
+                        "step": "search",
+                        "iteration": iteration + 1,
+                        "query": current_query,
+                        "status": "completed",
+                        "sources_found": sources_count,
+                        "chunks_created": chunks_count,
+                        "search_steps": search_steps
+                    })
+                
+                # Step 3: Reason over results (skip on last iteration)
+                if iteration < self.config.max_search_iterations - 1 and self.config.enable_result_reasoning:
+                    await report_progress("Analyzing search results coverage...", 85 + (iteration * 5), {
+                        "step": "reasoning",
+                        "iteration": iteration + 1,
+                        "status": "in_progress"
+                    })
+                    
+                    reasoning = await self._reason_over_search_results(
+                        original_query=query,
+                        search_results=search_result,
+                        progress_callback=progress_callback
+                    )
+                    
+                    # Store reasoning for metadata
+                    search_result["reasoning"] = reasoning
+                    
+                    await report_progress(f"Coverage score: {reasoning['coverage_score']:.1f}", 90 + (iteration * 5), {
+                        "step": "reasoning",
+                        "iteration": iteration + 1,
+                        "status": "completed",
+                        "coverage_score": reasoning["coverage_score"],
+                        "needs_more_search": reasoning["needs_more_search"],
+                        "reasoning": reasoning["reasoning"]
+                    })
+                    
+                    # Check if more search is needed
+                    if not reasoning["needs_more_search"] or reasoning["coverage_score"] >= 0.8:
+                        await report_progress("Results adequately cover the query - stopping search", 92, {
+                            "step": "reasoning",
+                            "decision": "stop",
+                            "reason": "adequate_coverage",
+                            "coverage_score": reasoning["coverage_score"]
+                        })
+                        break
+                    
+                    # Get follow-up queries
+                    if reasoning["follow_up_queries"]:
+                        search_terms = reasoning["follow_up_queries"]
+                        await report_progress(f"Need more info - follow-up: {search_terms}", 95, {
+                            "step": "reasoning",
+                            "decision": "continue",
+                            "follow_up_queries": search_terms,
+                            "reason": reasoning["reasoning"]
+                        })
+                    else:
+                        break
+                else:
+                    break
+            
+            # Combine results
+            if not all_sources:
+                return {
+                    "sources": [],
+                    "content": "No search results found.",
+                    "search_iterations": len(iteration_results),
+                    "reasoning": "No results from any iteration",
+                    "search_steps": search_steps
+                }
+
+            # Deduplicate sources by URL and remap indices
+            seen_urls = {}
+            unique_sources = []
+            unique_chunks = []
+            unique_source_indices = []  # New indices (0, 1, 2, ...)
+            
+            for source, chunk in zip(all_sources, all_chunks):
+                url = source.get("url", "")
+                if url not in seen_urls:
+                    # New unique source
+                    new_idx = len(unique_sources)
+                    seen_urls[url] = new_idx
+                    unique_sources.append(source)
+                    unique_chunks.append(chunk)
+                    unique_source_indices.append(new_idx)
+                else:
+                    # Duplicate source - still add chunk but map to existing source
+                    existing_idx = seen_urls[url]
+                    unique_chunks.append(chunk)
+                    unique_source_indices.append(existing_idx)
+
+            # Format final results
+            await report_progress("Formatting final results with citations...", 95, {
+                "step": "formatting",
+                "total_sources": len(unique_sources),
+                "total_chunks": len(unique_chunks)
+            })
+
+            output = self._format_results(unique_chunks, unique_source_indices, unique_sources, query)
+
+            await report_progress("Search complete!", 100, {
+                "step": "complete",
+                "total_sources": len(unique_sources),
+                "search_iterations": len(iteration_results),
+                "search_steps": search_steps
+            })
+
+            return {
+                "sources": unique_sources,
+                "content": output,
+                "chunks": unique_chunks,
+                "source_indices": unique_source_indices,
+                "search_iterations": len(iteration_results),
+                "original_query": query,
+                "search_terms_used": search_terms,
+                "search_steps": search_steps
+            }
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error in search_with_reasoning: {e}\n{error_details}")
+            return {
+                "sources": [],
+                "content": f"Error during search: {str(e)}",
+                "error": str(e)
+            }
+
     async def _fetch_searxng_results(self, query: str) -> List[Tuple[str, str, str]]:
         """Fetch search results from SearXNG"""
         params = {"q": query, "format": "json", "categories": "general"}
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: requests.get(self.config.searxng_url, params=params, timeout=40),
+        response = await self._run_sync_request(
+            lambda: requests.get(self.config.searxng_url, params=params, timeout=40)
         )
-        
+
         if response.status_code == 200:
             results = response.json().get("results", [])[:self.config.num_search_results]
             return [(r["title"], r["url"], r.get("content", "")) for r in results]
-        
+
         raise Exception(f"SearXNG query failed: {response.status_code}")
-    
+
     async def _extract_page_content(self, url: str) -> str:
         """Extract main content from a webpage"""
         try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
+            response = await self._run_sync_request(
                 lambda: requests.get(
                     url,
-                    timeout=20,
+                    timeout=30,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     },
-                ),
+                )
             )
             
             if response.status_code != 200:

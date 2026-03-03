@@ -236,24 +236,45 @@ window.chat = () => {
           this.$store.chat.toolStatus.status = data.status
           this.$store.chat.toolStatus.progress = data.progress || null
           this.toolStatus = { ...this.$store.chat.toolStatus }
-          
+
           const currentToolCalls = this.$store.chat.messages[msgIndex].tool_calls
-          const currentToolCall = currentToolCalls.find(tc => 
-            tc.type === 'tool_call' && 
-            tc.status !== 'completed' && 
+          const currentToolCall = currentToolCalls.find(tc =>
+            tc.type === 'tool_call' &&
+            tc.status !== 'completed' &&
             tc.status !== 'error'
           )
-          
+
           if (currentToolCall) {
             currentToolCall.status = data.status
             currentToolCall.progress = data.progress || 0
+            
+            // Store search steps if available
+            if (data.data) {
+              if (data.data.search_steps) {
+                currentToolCall.search_steps = data.data.search_steps
+              }
+              if (data.data.search_terms) {
+                currentToolCall.search_terms = data.data.search_terms
+              }
+              if (data.data.reasoning) {
+                currentToolCall.reasoning = data.data.reasoning
+              }
+              if (data.data.coverage_score) {
+                currentToolCall.coverage_score = data.data.coverage_score
+              }
+            }
+            
             if (data.result) {
               currentToolCall.result = data.result
               currentToolCall.status = 'completed'
+              // Store sources from result for citation display at the bottom
+              if (data.result.sources && data.result.sources.length > 0) {
+                currentToolCall.sources = data.result.sources
+              }
             }
-            this.$store.chat.messages[msgIndex] = { 
-              ...this.$store.chat.messages[msgIndex], 
-              tool_calls: [...currentToolCalls] 
+            this.$store.chat.messages[msgIndex] = {
+              ...this.$store.chat.messages[msgIndex],
+              tool_calls: [...currentToolCalls]
             }
           }
           if (data.result) {

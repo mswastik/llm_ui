@@ -63,15 +63,26 @@ export const markdownUtils = {
     if (!message?.tool_calls || message.tool_calls.length === 0) return []
     const allSources = []
     message.tool_calls.forEach(toolCall => {
-      if (toolCall.result?.sources) {
-        toolCall.result.sources.forEach(source => {
+      // Check for sources in multiple locations for backward compatibility
+      const sources = toolCall.sources || toolCall.result?.sources || []
+      if (sources && sources.length > 0) {
+        sources.forEach(source => {
+          // Only add unique sources by URL
           if (!allSources.some(s => s.url === source.url)) {
-            allSources.push(source)
+            // Add citation index to source for proper citation tracking
+            const existingIndex = allSources.findIndex(s => s.url === source.url)
+            if (existingIndex === -1) {
+              allSources.push({
+                ...source,
+                citationId: allSources.length + 1
+              })
+            }
           }
         })
       }
     })
-    return allSources
+    // Assign sequential citation IDs
+    return allSources.map((source, idx) => ({ ...source, citationId: idx + 1 }))
   }
 }
 

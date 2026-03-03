@@ -228,12 +228,17 @@ class ToolExecutor:
     ) -> AsyncGenerator[Dict, None]:
         """
         Web search tool with detailed progress updates.
-        
+
         Uses SearXNG for search, with semantic reranking.
+        Features:
+        1. Extracts search terms from paragraph queries
+        2. Waits for thinking models to complete before searching  
+        3. Reasons over results to determine if more searches are needed
+        4. Displays detailed steps and sources
         """
         query = arguments.get("query", "")
         max_results = arguments.get("max_results", 15)
-        
+
         if not query:
             yield {
                 "type": "tool_error",
@@ -241,10 +246,10 @@ class ToolExecutor:
                 "error": "Query is required"
             }
             return
-        
+
         # Create progress tracker for collecting intermediate updates
         progress_tracker = AsyncProgressTracker()
-        
+
         # Yield initial status
         yield {
             "type": "tool_progress",
@@ -252,41 +257,49 @@ class ToolExecutor:
             "status": "Starting web search...",
             "progress": 5
         }
-        
+
         try:
-            # Start the search task
+            # Start the search task with reasoning support
             search_task = asyncio.create_task(
-                self.search_tool.search(
+                self.search_tool.search_with_reasoning(
                     query=query,
                     max_results=max_results,
                     top_k=max_results,
-                    progress_callback=progress_tracker.async_callback
+                    progress_callback=progress_tracker.async_callback,
+                    wait_for_thinking=True  # Enable thinking model support
                 )
             )
-            
+
             # Yield intermediate progress updates while search is running
             while not search_task.done():
                 try:
                     # Wait for progress updates with a timeout
                     update = await asyncio.wait_for(
-                        progress_tracker.queue.get(), 
+                        progress_tracker.queue.get(),
                         timeout=0.1
                     )
                     if update:
+                        # Extract key data for display (with null safety)
+                        data = update.get("data") or {}
                         yield {
                             "type": "tool_progress",
                             "tool": "search_web",
                             "status": update["status"],
                             "progress": update["progress"],
-                            "data": update.get("data")
+                            "data": {
+                                "search_steps": data.get("search_steps", []),
+                                "search_terms": data.get("search_terms"),
+                                "reasoning": data.get("reasoning"),
+                                "coverage_score": data.get("coverage_score")
+                            }
                         }
                 except asyncio.TimeoutError:
                     # No update available, continue waiting
                     await asyncio.sleep(0)
-            
+
             # Get the final result
             result = search_task.result()
-            
+
             # Process any remaining updates in the queue
             while not progress_tracker.queue.empty():
                 try:
@@ -297,19 +310,11 @@ class ToolExecutor:
                             "tool": "search_web",
                             "status": update["status"],
                             "progress": update["progress"],
-                            "data": update.get("data")
+                            "data": update.get("data", {})
                         }
                 except asyncio.QueueEmpty:
                     break
-            
-            # Yield final processing status
-            yield {
-                "type": "tool_progress",
-                "tool": "search_web",
-                "status": "Processing search results...",
-                "progress": 95
-            }
-            
+
             # Check for errors
             if "error" in result:
                 yield {
@@ -318,24 +323,34 @@ class ToolExecutor:
                     "error": result["error"]
                 }
                 return
-            
-            # Format result for LLM consumption
+
+            # Format result for LLM consumption - include sources for citation display
             formatted_result = {
                 "query": query,
                 "sources": result.get("sources", []),
                 "content": result.get("content", "No results found"),
-                "chunk_count": len(result.get("chunks", []))
+                "chunk_count": len(result.get("chunks", [])),
+                "search_iterations": result.get("search_iterations", 1),
+                "search_terms_used": result.get("search_terms_used", [query]),
+                "search_steps": result.get("search_steps", [])
             }
-            
-            # Final result
+
+            # Final result with sources - sources go in result for citation display
             yield {
                 "type": "tool_progress",
                 "tool": "search_web",
                 "status": "Search complete",
                 "progress": 100,
-                "result": formatted_result
+                "result": formatted_result,
+                "data": {
+                    "sources": result.get("sources", []),
+                    "search_steps": result.get("search_steps", []),
+                    "search_terms": result.get("search_terms_used", [query]),
+                    "reasoning": result.get("reasoning"),
+                    "coverage_score": result.get("coverage_score")
+                }
             }
-        
+
         except Exception as e:
             import traceback
             traceback.print_exc()

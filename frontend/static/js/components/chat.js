@@ -307,7 +307,7 @@ window.chat = () => {
       }
       
       this.messages = [...this.$store.chat.messages]
-      this.$nextTick(() => helpers.scrollToBottom(this.$refs?.messagesContainer))
+      //this.$nextTick(() => helpers.scrollToBottom(this.$refs?.messagesContainer))
     },
 
     // Message actions

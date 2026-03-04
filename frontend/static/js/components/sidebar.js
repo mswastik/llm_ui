@@ -275,6 +275,14 @@ document.addEventListener('alpine:init', () => {
     toggleSidebar() {
       this.sidebarCollapsed = !this.sidebarCollapsed
       this.$store.chat.sidebarCollapsed = this.sidebarCollapsed
+      if (this.sidebarCollapsed===true) {
+        this.sidebarWidth = 60;
+        localStorage.setItem('sidebarWidth', 60);
+      }
+      else {
+        this.sidebarWidth = 220;
+        localStorage.setItem('sidebarWidth', 220);
+      }
     },
 
     formatDate: (isoString) => formatters.formatDate(isoString)

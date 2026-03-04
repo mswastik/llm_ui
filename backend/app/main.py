@@ -276,7 +276,7 @@ async def _core_stream_handler(
                 async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
                     try:
                         chunk_type = chunk.get("type")
-                        print(f"[DEBUG] Chunk received: type={chunk_type}")
+                        #print(f"[DEBUG] Chunk received: type={chunk_type}")
 
                         if chunk_type == "content":
                             content = chunk.get("content", "")

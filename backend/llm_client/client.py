@@ -146,7 +146,7 @@ class LLMClient:
                                         # Check multiple field names that llama.cpp might use
                                         thinking_content = delta.get("thinking") or delta.get("reasoning_content")
                                         if thinking_content:
-                                            print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
+                                            #print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
                                             yield {
                                                 "type": "thinking",
                                                 "content": thinking_content
@@ -156,7 +156,7 @@ class LLMClient:
                                         # Handle content - parse for <think> tags with streaming
                                         if "content" in delta and delta["content"]:
                                             content = delta["content"]
-                                            print(f"[DEBUG] Content chunk: {repr(content[:100])}")
+                                            #print(f"[DEBUG] Content chunk: {repr(content[:100])}")
 
                                             # Process content for <think> tags - stream thinking as it arrives
                                             while content:
@@ -253,7 +253,7 @@ class LLMClient:
                                                     # If we already have a streaming tool call, accumulate arguments
                                                     elif streaming_tool_call and arguments_str:
                                                         streaming_tool_call["arguments_str"] += arguments_str
-                                                        print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
+                                                        #print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
 
                                                     # Try to parse accumulated arguments if we have a tool name
                                                     if streaming_tool_call and streaming_tool_call.get("name"):
@@ -276,7 +276,7 @@ class LLMClient:
 
                                                         except json.JSONDecodeError:
                                                             # Arguments not complete yet, wait for more chunks
-                                                            print(f"[DEBUG] Arguments not complete yet, waiting...")
+                                                            #print(f"[DEBUG] Arguments not complete yet, waiting...")
                                                             continue
 
                                                 except Exception as e:

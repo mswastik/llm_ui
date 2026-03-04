@@ -59,7 +59,7 @@
         <template x-for="message in messages" :key="message.id">
             <div :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'" class="group">
                 <div :class="message.role === 'user' ? 'bg-blue-100 text-black' : 'bg-white border border-gray-200 text-gray-900'"
-                     class="max-w-6xl min-w-24 rounded-lg p-4 shadow-sm relative">
+                     class="max-w-6xl w-full rounded-lg p-4 shadow-sm relative">
 
                     <!-- Message Actions -->
                     <div class="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 transition flex gap-1">

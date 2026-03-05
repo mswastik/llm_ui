@@ -60,12 +60,14 @@ class LLMClient:
             }
         """
 
-        # Use provided model or fall back to default
-        active_model = model or self.model
+        # Use provided model or get current from settings (allows dynamic updates)
+        active_model = model or self._get_current_model()
 
-        # Use provided values or fall back to defaults from config
-        active_temperature = temperature if temperature is not None else DEFAULT_TEMPERATURE
-        active_max_tokens = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
+        # Use provided values or fall back to defaults from settings
+        # Get current settings for temperature and max tokens (allows dynamic updates)
+        settings = self._settings_manager.get_settings()
+        active_temperature = temperature if temperature is not None else settings.get('default_temperature', DEFAULT_TEMPERATURE)
+        active_max_tokens = max_tokens if max_tokens is not None else settings.get('default_max_tokens', DEFAULT_MAX_TOKENS)
 
         payload = {
             "model": active_model,
@@ -83,18 +85,21 @@ class LLMClient:
         # Retry logic for transient server errors
         last_error = None
         request_completed = False  # Track if request completed successfully
-        
+
         for attempt in range(max_retries):
             if request_completed:
                 break  # Don't retry if already completed successfully
-                
+
             try:
+                # Get current base URL from settings (allows dynamic updates)
+                current_base_url = self._get_current_base_url()
+                
                 # Increased timeout for long-running requests with web search context
                 timeout = aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=120)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     print(f"[DEBUG] Starting LLM request (attempt {attempt + 1}/{max_retries})")
                     async with session.post(
-                        f"{self.base_url}/v1/chat/completions",
+                        f"{current_base_url}/v1/chat/completions",
                         json=payload,
                         headers={"Content-Type": "application/json"},
                         timeout=360

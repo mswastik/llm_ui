@@ -21,17 +21,17 @@
     <script type="module" src="/static/js/utils.js"></script>
     <script type="module" src="/static/js/services/sse.js"></script>
     <script type="module" src="/static/js/services/tts.js"></script>
-    
+
     <!-- 2. Load store (registers Alpine.store) -->
     <script type="module" src="/static/js/store.js"></script>
-    
+
     <!-- 3. Load components (register Alpine.data) -->
     <script type="module" src="/static/js/components/sidebar.js"></script>
     <script type="module" src="/static/js/components/chat.js"></script>
     <script type="module" src="/static/js/components/settings.js"></script>
     <script type="module" src="/static/js/components/documents.js"></script>
 
-    <!-- 4. Load Alpine -->
+    <!-- 4. Load Alpine (after components so they can register) -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
     {% block extra_head %}{% endblock %}

@@ -18,37 +18,37 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 DEFAULTS = {
     # Database Configuration
     "database_url": os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./llm_ui.db"),
-    
+
     # Llama.cpp Configuration
     "llama_cpp_base_url": os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3"),
     "llama_cpp_model": os.getenv("LLAMA_CPP_MODEL", "qwen3-4b"),
     "query_model": os.getenv("QUERY_MODEL", "qwen3-4b"),
-    
+
     # Application Settings
     "app_host": os.getenv("APP_HOST", "0.0.0.0"),
     "app_port": int(os.getenv("APP_PORT", "8002")),
     "debug": os.getenv("DEBUG", "false").lower() == "true",
-    
+
     # LLM Generation Defaults
     "default_temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
     "default_max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "16048")),
-    
+
     # File Upload Settings
     "max_upload_size": int(os.getenv("MAX_UPLOAD_SIZE", "10485760")),
     "upload_dir": os.getenv("UPLOAD_DIR", "./uploads"),
-    
+
     # CORS Settings
     "cors_origins": os.getenv("CORS_ORIGINS", "*"),
-    
+
     # System Prompt
     "system_prompt": os.getenv(
         "SYSTEM_PROMPT",
         "You are a helpful AI assistant. When you use tools, explain what you're doing and why."
     ),
-    
+
     # SQLAlchemy Logging
     "sqlalchemy_echo": os.getenv("SQLALCHEMY_ECHO", "false").lower() == "true",
-    
+
     # TTS Settings
     "tts_engine": "edge-tts",
     "tts_voice": "en-IN-NeerjaNeural",
@@ -58,7 +58,7 @@ DEFAULTS = {
     "kokoro_device": "cpu",
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
-    
+
     # SearXNG Settings
     "searxng_url": "http://localhost:8888/search",
     "searxng_num_results": 25,
@@ -121,6 +121,45 @@ class Settings(BaseModel):
     searxng_similarity_threshold: float = Field(default=DEFAULTS["searxng_similarity_threshold"], description="Similarity threshold for filtering results")
     searxng_max_retries: int = Field(default=DEFAULTS["searxng_max_retries"], description="Maximum retries for search requests")
     searxng_enable_multi_query: bool = Field(default=DEFAULTS["searxng_enable_multi_query"], description="Enable multi-query search")
+
+
+# Module-level variables (will be updated after settings_manager is initialized)
+DATABASE_URL = None
+LLAMA_CPP_BASE_URL = None
+LLAMA_CPP_MODEL = None
+QUERY_MODEL = None
+APP_HOST = None
+APP_PORT = None
+DEBUG = None
+DEFAULT_TEMPERATURE = None
+DEFAULT_MAX_TOKENS = None
+MAX_UPLOAD_SIZE = None
+UPLOAD_DIR = None
+CORS_ORIGINS = None
+SYSTEM_PROMPT = None
+SQLALCHEMY_ECHO = None
+
+
+def _update_module_constants(settings_mgr):
+    """Update module-level constants from settings manager"""
+    global DATABASE_URL, LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
+    global APP_HOST, APP_PORT, DEBUG, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+    global MAX_UPLOAD_SIZE, UPLOAD_DIR, CORS_ORIGINS, SYSTEM_PROMPT, SQLALCHEMY_ECHO
+
+    DATABASE_URL = settings_mgr.settings.database_url
+    LLAMA_CPP_BASE_URL = settings_mgr.settings.llama_cpp_base_url
+    LLAMA_CPP_MODEL = settings_mgr.settings.llama_cpp_model
+    QUERY_MODEL = settings_mgr.settings.query_model
+    APP_HOST = settings_mgr.settings.app_host
+    APP_PORT = settings_mgr.settings.app_port
+    DEBUG = settings_mgr.settings.debug
+    DEFAULT_TEMPERATURE = settings_mgr.settings.default_temperature
+    DEFAULT_MAX_TOKENS = settings_mgr.settings.default_max_tokens
+    MAX_UPLOAD_SIZE = settings_mgr.settings.max_upload_size
+    UPLOAD_DIR = settings_mgr.settings.upload_dir
+    CORS_ORIGINS = settings_mgr.settings.cors_origins.split(',')
+    SYSTEM_PROMPT = settings_mgr.settings.system_prompt
+    SQLALCHEMY_ECHO = settings_mgr.settings.sqlalchemy_echo
 
 
 class SettingsManager:
@@ -204,6 +243,9 @@ class SettingsManager:
         # Save settings to file
         self.save_settings_to_file()
 
+        # Refresh module-level constants to ensure all imports get updated values
+        _update_module_constants(self)
+
         return self.get_settings()
 
     def load_settings_from_file(self):
@@ -243,6 +285,9 @@ class SettingsManager:
                     os.environ['SYSTEM_PROMPT'] = saved_settings['system_prompt']
                 if 'cors_origins' in saved_settings:
                     os.environ['CORS_ORIGINS'] = saved_settings['cors_origins']
+
+                # Refresh module-level constants after loading from file
+                _update_module_constants(self)
             except Exception as e:
                 print(f"Error loading settings from file: {e}")
 
@@ -258,23 +303,8 @@ class SettingsManager:
 # Global settings manager instance
 settings_manager = SettingsManager()
 
-
-# Convenience exports for backward compatibility
-# These are populated from the settings manager after initialization
-DATABASE_URL = settings_manager.settings.database_url
-LLAMA_CPP_BASE_URL = settings_manager.settings.llama_cpp_base_url
-LLAMA_CPP_MODEL = settings_manager.settings.llama_cpp_model
-QUERY_MODEL = settings_manager.settings.query_model
-APP_HOST = settings_manager.settings.app_host
-APP_PORT = settings_manager.settings.app_port
-DEBUG = settings_manager.settings.debug
-DEFAULT_TEMPERATURE = settings_manager.settings.default_temperature
-DEFAULT_MAX_TOKENS = settings_manager.settings.default_max_tokens
-MAX_UPLOAD_SIZE = settings_manager.settings.max_upload_size
-UPLOAD_DIR = settings_manager.settings.upload_dir
-CORS_ORIGINS = settings_manager.settings.cors_origins.split(',')
-SYSTEM_PROMPT = settings_manager.settings.system_prompt
-SQLALCHEMY_ECHO = settings_manager.settings.sqlalchemy_echo
+# Initialize module-level constants after settings_manager is created
+_update_module_constants(settings_manager)
 
 
 def get_config() -> Dict[str, Any]:

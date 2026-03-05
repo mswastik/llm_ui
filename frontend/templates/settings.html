@@ -2,7 +2,7 @@
 
 {% block content %}
 <!-- Settings Page -->
-<div class="min-h-screen bg-gray-50">
+<div class="min-h-screen bg-gray-50" x-data="settings" x-init="init()">
     <!-- Header -->
     <div class="bg-white border-b border-gray-200 px-6 py-4">
         <div class="flex items-center justify-between">
@@ -26,7 +26,7 @@
     </div>
 
     <!-- Settings Content -->
-    <div class="max-w-7xl mx-auto px-6 py-8" x-data="settings" x-init="init()">
+    <div class="max-w-7xl mx-auto px-6 py-8">
         <!-- Tabs -->
         <div class="border-b border-gray-200 mb-6">
             <nav class="-mb-px flex gap-6">

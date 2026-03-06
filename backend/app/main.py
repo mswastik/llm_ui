@@ -150,8 +150,49 @@ async def _core_stream_handler(
     """Universal SSE handler for streaming LLM responses and tool execution."""
     try:
         async with get_db() as db:
+            # Get conversation to retrieve agent configuration
+            from sqlalchemy import select
+            from database.models import Conversation
+            result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
+            conversation = result.scalar_one_or_none()
+
+            # Get agent configuration if conversation has an agent
+            agent_config = None
+            if conversation:
+                agent_id = conversation.agent_id
+                if agent_id is not None:
+                    agent = await get_agent(db, agent_id)
+                    if agent:
+                        agent_config = {
+                            "system_prompt": agent.system_prompt,
+                            "model": agent.model,
+                            "temperature": agent.temperature,
+                            "top_k": agent.top_k,
+                            "max_tokens": agent.max_tokens,
+                            "enable_web_search": bool(agent.enable_web_search),
+                            "enable_rag": bool(agent.enable_rag)
+                        }
+            
+            # Get current date for system prompt
+            from datetime import datetime
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
+            # Build system prompt with current date
+            system_prompt_content = agent_config["system_prompt"] if agent_config and agent_config.get("system_prompt") else ""
+            if system_prompt_content:
+                # Add current date to system prompt
+                system_prompt_content = f"{system_prompt_content}\n\nCurrent date: {current_date}"
+            else:
+                # Default minimal system prompt with current date
+                system_prompt_content = f"You are a helpful AI assistant. Current date: {current_date}"
+            
             messages = await get_conversation_messages(db, conversation_id)
             llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+            
+            # Prepend system prompt to messages
+            if system_prompt_content:
+                llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
+            
             context_additions = []
             tool_calls_history = []
             
@@ -402,7 +443,8 @@ async def _core_stream_handler(
                 })
 
             # Save assistant message with message blocks for sequential display
-            if assistant_message.strip() or message_blocks:
+            # Always save if we have any content, thinking, or message blocks
+            if assistant_message.strip() or thinking_content.strip() or message_blocks:
                 # Add model info to message metadata
                 message_extra_metadata = {"model": model} if model else {}
                 # Store message_blocks in tool_calls field for backward compatibility

@@ -94,147 +94,109 @@ const sidebarComponent = () => ({
   },
 
   async loadConversation(conversationId) {
-    // Don't close SSE streams - let them continue in background
+    // Check if there's active streaming for THIS conversation
+    const isActiveStreamingForThisConversation = 
+      this.$store.chat.activeStreaming?.isStreaming && 
+      this.$store.chat.activeStreaming?.conversationId === conversationId
 
-    // Check if there's active streaming for this conversation
-    const isActiveStreaming = this.$store.chat.activeStreaming?.isStreaming && 
-                              this.$store.chat.activeStreaming?.conversationId === conversationId
-
-    // If actively streaming to this conversation, don't reload messages from DB
-    // Keep the in-progress messages in memory
-    if (isActiveStreaming) {
-      console.log('[sidebar] Active streaming detected, keeping in-memory messages')
+    // If actively streaming to this conversation, restore messages from storage
+    if (isActiveStreamingForThisConversation) {
+      console.log('[sidebar] Active streaming detected for THIS conversation, restoring stored messages')
       this.$store.chat.isLoading = true
-      // Keep toolStatus.active as is for the streaming conversation
-    } else {
-      // No active streaming for this conversation, reset state and load from DB
-      this.$store.chat.isLoading = false
-      
-      // Only reset toolStatus if we're NOT switching to the actively streaming conversation
-      if (!this.$store.chat.activeStreaming?.isStreaming) {
-        this.$store.chat.toolStatus.active = false
-      }
+      this.$store.chat.currentConversationId = conversationId
+      this.$store.chat.currentConversationTitle = this.$store.chat.activeStreaming.conversationTitle || 'Streaming...'
+      // Restore messages from storage
+      this.$store.chat.messages = [...this.$store.chat.activeStreaming.messages]
+      this.currentConversationId = conversationId
+      this.currentConversationTitle = this.$store.chat.currentConversationTitle
+      return
+    }
 
-      try {
-        const data = await api.get(`/api/conversations/${conversationId}`)
-        this.$store.chat.currentConversationId = conversationId
-        this.$store.chat.currentConversationTitle = data.conversation.title
+    // No active streaming for this conversation, load from DB
+    console.log('[sidebar] Loading conversation from DB:', conversationId)
+    this.$store.chat.isLoading = false
 
-        console.log('[loadConversation] Raw messages from API:', JSON.stringify(data.messages, null, 2))
+    try {
+      const data = await api.get(`/api/conversations/${conversationId}`)
+      this.$store.chat.currentConversationId = conversationId
+      this.$store.chat.currentConversationTitle = data.conversation.title
 
-        // Normalize messages - ensure tool_calls is always an array and extract search_steps from progress_history
-        const normalizedMessages = data.messages.map(msg => {
-          console.log('[loadConversation] Processing message:', msg.role, 'tool_calls:', msg.tool_calls)
+      // Normalize messages
+      const normalizedMessages = data.messages.map(msg => {
+        const actualToolCalls = (msg.tool_calls || []).filter(tc =>
+          tc.type === 'tool_call' || tc.name === 'search_web' || tc.name === 'query_documents' || tc.type === 'thinking'
+        )
 
-          // Filter to only actual tool calls (not content or thinking blocks)
-          const actualToolCalls = (msg.tool_calls || []).filter(tc =>
-            tc.type === 'tool_call' || tc.name === 'search_web' || tc.name === 'query_documents' || tc.type === 'thinking'
-          )
+        const normalizedToolCalls = actualToolCalls.map((toolCall) => {
+          let searchSteps = toolCall.search_steps || []
+          let searchTerms = toolCall.search_terms || []
+          let reasoning = toolCall.reasoning
+          let coverageScore = toolCall.coverage_score
+          let sources = toolCall.sources || []
+          let name = toolCall.name || toolCall.type || 'tool'
 
-          console.log('[loadConversation] Filtered tool calls:', actualToolCalls.length, 'from', msg.tool_calls?.length)
-
-          const normalizedToolCalls = actualToolCalls.map((toolCall, idx) => {
-            console.log('[loadConversation] toolCall[' + idx + ']:', JSON.stringify(toolCall, null, 2))
-
-            // Handle different data structures
-            // Structure 1: Direct properties (new format)
-            let searchSteps = toolCall.search_steps || []
-            let searchTerms = toolCall.search_terms || []
-            let reasoning = toolCall.reasoning
-            let coverageScore = toolCall.coverage_score
-            let sources = toolCall.sources || []
-            let name = toolCall.name || toolCall.type || 'tool'
-
-            // Check if this is the result-based format
-            if (toolCall.result) {
-              sources = toolCall.result.sources || sources
-              if (toolCall.result.search_steps) {
-                searchSteps = toolCall.result.search_steps
-              }
-              if (toolCall.result.search_terms_used) {
-                searchTerms = toolCall.result.search_terms_used
-              }
+          if (toolCall.result) {
+            sources = toolCall.result.sources || sources
+            if (toolCall.result.search_steps) {
+              searchSteps = toolCall.result.search_steps
             }
+            if (toolCall.result.search_terms_used) {
+              searchTerms = toolCall.result.search_terms_used
+            }
+          }
 
-            console.log('[loadConversation] Processing toolCall:', name, 'has progress_history:', !!toolCall.progress_history)
-
-            // Extract data from progress_history for legacy messages
-            if (toolCall.progress_history && toolCall.progress_history.length > 0) {
-              // Find the LAST progress event that contains search_steps (most complete data)
-              for (let i = toolCall.progress_history.length - 1; i >= 0; i--) {
-                const progress = toolCall.progress_history[i]
-                console.log('[loadConversation] Checking progress event:', progress.type, progress.tool, 'data:', progress.data)
-
-                if (progress.data) {
-                  // Get search_steps from this progress event
-                  if (progress.data.search_steps && progress.data.search_steps.length > 0) {
-                    searchSteps = progress.data.search_steps
-                    console.log('[loadConversation] Found search_steps:', searchSteps.length, 'steps')
-                  }
-                  // Get search_terms
-                  if (progress.data.search_terms && progress.data.search_terms.length > 0) {
-                    searchTerms = progress.data.search_terms
-                  }
-                  // Get reasoning
-                  if (progress.data.reasoning && !reasoning) {
-                    reasoning = progress.data.reasoning
-                  }
-                  // Get coverage_score
-                  if (progress.data.coverage_score !== undefined && coverageScore === undefined) {
-                    coverageScore = progress.data.coverage_score
-                  }
-                  // Get sources from result
-                  if (progress.result?.sources && progress.result.sources.length > 0) {
-                    sources = progress.result.sources
-                  }
+          if (toolCall.progress_history && toolCall.progress_history.length > 0) {
+            for (let i = toolCall.progress_history.length - 1; i >= 0; i--) {
+              const progress = toolCall.progress_history[i]
+              if (progress.data) {
+                if (progress.data.search_steps && progress.data.search_steps.length > 0) {
+                  searchSteps = progress.data.search_steps
+                }
+                if (progress.data.search_terms && progress.data.search_terms.length > 0) {
+                  searchTerms = progress.data.search_terms
+                }
+                if (progress.data.reasoning && !reasoning) {
+                  reasoning = progress.data.reasoning
+                }
+                if (progress.data.coverage_score !== undefined && coverageScore === undefined) {
+                  coverageScore = progress.data.coverage_score
+                }
+                if (progress.result?.sources && progress.result.sources.length > 0) {
+                  sources = progress.result.sources
                 }
               }
             }
-
-            console.log('[loadConversation] Normalized toolCall:', {
-              name: name,
-              type: toolCall.type,
-              search_steps: searchSteps?.length,
-              search_terms: searchTerms?.length,
-              has_reasoning: !!reasoning
-            })
-
-            return {
-              ...toolCall,
-              name: name,
-              search_steps: searchSteps,
-              search_terms: searchTerms,
-              reasoning: reasoning,
-              coverage_score: coverageScore,
-              sources: sources
-            }
-          })
+          }
 
           return {
-            ...msg,
-            tool_calls: normalizedToolCalls
+            ...toolCall,
+            name: name,
+            search_steps: searchSteps,
+            search_terms: searchTerms,
+            reasoning: reasoning,
+            coverage_score: coverageScore,
+            sources: sources
           }
         })
 
-        console.log('[loadConversation] Normalized messages:', normalizedMessages)
-        this.$store.chat.messages = normalizedMessages
+        return {
+          ...msg,
+          tool_calls: normalizedToolCalls
+        }
+      })
 
-        // Update local state
-        this.currentConversationId = conversationId
-        this.currentConversationTitle = data.conversation.title
+      this.$store.chat.messages = normalizedMessages
+      this.currentConversationId = conversationId
+      this.currentConversationTitle = data.conversation.title
 
-        this.$nextTick(() => {
-          const container = document.getElementById('messages-container')
-          if (container) container.scrollTop = container.scrollHeight
-        })
-      } catch (error) {
-        console.error('[sidebar] Error loading conversation:', error)
-        this.$store.chat.showToast('Failed to load conversation', 'error')
-      }
+      this.$nextTick(() => {
+        const container = document.getElementById('messages-container')
+        if (container) container.scrollTop = container.scrollHeight
+      })
+    } catch (error) {
+      console.error('[sidebar] Error loading conversation:', error)
+      this.$store.chat.showToast('Failed to load conversation', 'error')
     }
-
-    // Update conversation ID regardless
-    this.$store.chat.currentConversationId = conversationId
   },
 
   async deleteConversation(conversationId, event) {

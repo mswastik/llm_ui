@@ -35,7 +35,9 @@ const storeDefinitions = {
       isStreaming: false,
       requestId: null,
       conversationId: null,
-      msgIndex: null
+      msgIndex: null,
+      conversationTitle: '',
+      messages: [] // Store streaming conversation's messages
     },
 
     addConversation(conv) {
@@ -96,14 +98,22 @@ const storeDefinitions = {
     },
 
     // Streaming state management
-    startStreaming(requestId, conversationId, msgIndex) {
+    startStreaming(requestId, conversationId, msgIndex, conversationTitle = '', messages = []) {
       this.activeStreaming = {
         isStreaming: true,
         requestId,
         conversationId,
-        msgIndex
+        msgIndex,
+        conversationTitle,
+        messages: [...messages] // Store a copy of current messages
       }
       this.isLoading = true
+    },
+
+    updateStreamingMessages(messages) {
+      if (this.activeStreaming.isStreaming) {
+        this.activeStreaming.messages = [...messages]
+      }
     },
 
     stopStreaming() {
@@ -111,7 +121,9 @@ const storeDefinitions = {
         isStreaming: false,
         requestId: null,
         conversationId: null,
-        msgIndex: null
+        msgIndex: null,
+        conversationTitle: '',
+        messages: []
       }
       this.isLoading = false
       this.toolStatus.active = false

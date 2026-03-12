@@ -298,8 +298,8 @@ window.chat = () => {
       this.messages = this.$store.chat.messages
       const msgIndex = this.messages.length - 1
 
-      // Store streaming state
-      this.$store.chat.startStreaming(requestId, this.$store.chat.currentConversationId, msgIndex)
+      // Store streaming state with current messages
+      this.$store.chat.startStreaming(requestId, this.$store.chat.currentConversationId, msgIndex, this.$store.chat.currentConversationTitle, [...this.$store.chat.messages])
 
       handlers.onData((data) => {
         this.processStreamEvent(data, msgIndex)
@@ -322,6 +322,16 @@ window.chat = () => {
     // Core streaming logic
     processStreamEvent(data, msgIndex) {
       console.log('[Chat] processStreamEvent:', data.type, data)
+      
+      // Check if we're currently on the streaming conversation
+      const activeStreaming = this.$store.chat.activeStreaming
+      if (activeStreaming.isStreaming && 
+          activeStreaming.conversationId !== this.$store.chat.currentConversationId) {
+        // We're not on the streaming conversation, skip processing
+        // Events will be picked up via polling when we return
+        console.log('[Chat] Not on streaming conversation, skipping event')
+        return
+      }
       
       // Check if message exists at this index
       if (!this.$store.chat.messages[msgIndex]) {
@@ -450,6 +460,8 @@ window.chat = () => {
       // Force reactivity by creating a new array reference
       this.messages = [...this.$store.chat.messages]
       console.log('[Chat] Messages array updated, length:', this.messages.length)
+      // Update stored messages for streaming
+      this.$store.chat.updateStreamingMessages(this.$store.chat.messages)
       // Scroll to bottom after update
       this.$nextTick(() => {
         const container = document.getElementById('messages-container')

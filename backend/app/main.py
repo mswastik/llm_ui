@@ -290,13 +290,23 @@ async def _core_stream_handler(
             mcp_tools = []
             if mcp_manager:
                 mcp_tools = await mcp_manager.list_all_tools()
-            
-            # Get all tool definitions
-            all_tools = tool_executor.get_tool_definitions(exclude_tools=exclude_tools, mcp_tools=mcp_tools)
-            
-            # Debug logging
-            print(f"MCP tools discovered: {len(mcp_tools)}")
-            print(f"Total tools sent to LLM: {len(all_tools)}")
+
+            # Get all tool definitions - only include enabled tools
+            all_tools = tool_executor.get_tool_definitions(
+                exclude_tools=exclude_tools,
+                mcp_tools=mcp_tools,
+                enable_web_search=enable_web_search,
+                enable_rag=enable_rag
+            )
+
+            # Debug logging - show exactly what tools are being sent
+            print(f"[TOOLS] MCP tools discovered: {len(mcp_tools)}")
+            print(f"[TOOLS] Total tools sent to LLM: {len(all_tools)}")
+            print(f"[TOOLS] enable_web_search={enable_web_search}, enable_rag={enable_rag}")
+            for tool in all_tools:
+                tool_name = tool.get("function", {}).get("name", "unknown")
+                tool_server = tool.get("server", "builtin")
+                print(f"[TOOLS]   - {tool_name} ({'MCP: ' + tool_server if tool_server != 'builtin' else 'builtin'})")
             if mcp_tools:
                 for tool in mcp_tools:
                     print(f"  - MCP: {tool['name']} from {tool['server']}")

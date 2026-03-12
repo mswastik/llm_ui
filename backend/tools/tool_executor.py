@@ -88,27 +88,43 @@ class ToolExecutor:
             "generate_speech": self._generate_speech_with_progress,
         }
     
-    def get_tool_definitions(self, exclude_tools: List[str] = None, mcp_tools: List[Dict] = None) -> List[Dict]:
+    def get_tool_definitions(
+        self,
+        exclude_tools: List[str] = None,
+        mcp_tools: List[Dict] = None,
+        enable_web_search: bool = False,
+        enable_rag: bool = False
+    ) -> List[Dict]:
         """
         Get all tool definitions for LLM function calling.
-        
+
         Args:
             exclude_tools: List of tool names to exclude from definitions.
             mcp_tools: Optional list of pre-fetched MCP tools.
-        
+            enable_web_search: Whether to include the search_web tool definition.
+            enable_rag: Whether to include the query_documents tool definition.
+
         Returns a list of tool definitions in OpenAI format.
         """
         exclude_tools = exclude_tools or []
-        
-        tools = [
-            SEARXNG_TOOL_DEFINITION,
-            RAG_TOOL_DEFINITION,
-            TTS_TOOL_DEFINITION,
-        ]
-        
-        # Filter out excluded tools
+
+        tools = []
+
+        # Only include search_web if web search is enabled
+        if enable_web_search:
+            tools.append(SEARXNG_TOOL_DEFINITION)
+
+        # Only include query_documents if RAG is enabled
+        if enable_rag:
+            tools.append(RAG_TOOL_DEFINITION)
+
+        # Always include TTS tool (it's lightweight and always available)
+        if TTS_TOOL_DEFINITION.get("function", {}).get("name") not in exclude_tools:
+            tools.append(TTS_TOOL_DEFINITION)
+
+        # Filter out any other excluded tools
         tools = [t for t in tools if t.get("function", {}).get("name") not in exclude_tools]
-        
+
         # Add MCP tools if provided
         if mcp_tools:
             for tool in mcp_tools:
@@ -122,7 +138,7 @@ class ToolExecutor:
                     }
                 }
                 tools.append(openai_tool)
-        
+
         return tools
     
     async def execute_tool(

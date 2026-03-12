@@ -24,11 +24,19 @@ const storeDefinitions = {
     expandedThinking: {},
     expandedSources: {},
     toast: { show: false, message: '', type: 'success' },
-    
+
     // Agent selection state
     availableAgents: [],
     selectedAgentId: null,
     currentAgentConfig: null, // Stores the full agent config when selected
+
+    // Active streaming state - persists across navigation
+    activeStreaming: {
+      isStreaming: false,
+      requestId: null,
+      conversationId: null,
+      msgIndex: null
+    },
 
     addConversation(conv) {
       this.conversations.unshift(conv)
@@ -63,7 +71,7 @@ const storeDefinitions = {
         this.selectedModel = saved
       }
     },
-    
+
     // Agent selection methods
     setAgent(agentId) {
       this.selectedAgentId = agentId
@@ -79,12 +87,34 @@ const storeDefinitions = {
         this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId)
       }
     },
-    
+
     showToast(message, type = 'success') {
       this.toast.message = message
       this.toast.type = type
       this.toast.show = true
       setTimeout(() => { this.toast.show = false }, 2500)
+    },
+
+    // Streaming state management
+    startStreaming(requestId, conversationId, msgIndex) {
+      this.activeStreaming = {
+        isStreaming: true,
+        requestId,
+        conversationId,
+        msgIndex
+      }
+      this.isLoading = true
+    },
+
+    stopStreaming() {
+      this.activeStreaming = {
+        isStreaming: false,
+        requestId: null,
+        conversationId: null,
+        msgIndex: null
+      }
+      this.isLoading = false
+      this.toolStatus.active = false
     }
   },
   settings: {

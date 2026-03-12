@@ -230,6 +230,118 @@
                                                         </div>
                                                     </div>
                                                 </template>
+
+                                                <!-- Tool Result Display -->
+                                                <template x-if="block.result">
+                                                    <div class="mt-3 pt-3 border-t border-amber-200">
+                                                        <div class="font-semibold text-green-700 mb-2 flex items-center gap-1">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                            </svg>
+                                                            Response
+                                                        </div>
+
+                                                        <!-- For search_web: show content summary and sources -->
+                                                        <template x-if="block.name === 'search_web'">
+                                                            <div class="space-y-2">
+                                                                <!-- Content preview -->
+                                                                <template x-if="block.result.content">
+                                                                    <div class="bg-white border border-amber-100 rounded p-2">
+                                                                        <div class="text-xs text-gray-500 mb-1">Summary:</div>
+                                                                        <div class="text-gray-700 text-xs" x-text="block.result.content?.substring(0, 500) + (block.result.content?.length > 500 ? '...' : '')"></div>
+                                                                        <!-- Truncation notice -->
+                                                                        <template x-if="block.result.content?.length > 500">
+                                                                            <div class="mt-1 text-xs text-amber-600 italic flex items-center gap-1">
+                                                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                                                </svg>
+                                                                                Content truncated - full response used in LLM context
+                                                                            </div>
+                                                                        </template>
+                                                                    </div>
+                                                                </template>
+                                                                <!-- Sources count -->
+                                                                <template x-if="block.result.sources">
+                                                                    <div class="bg-white border border-amber-100 rounded p-2">
+                                                                        <div class="text-xs text-gray-500 mb-1">Sources Found:</div>
+                                                                        <div class="text-gray-700 text-xs" x-text="block.result.sources.length + ' sources'"></div>
+                                                                        <!-- Show first few sources -->
+                                                                        <div class="mt-1 space-y-1">
+                                                                            <template x-for="(source, idx) in block.result.sources.slice(0, 3)" :key="idx">
+                                                                                <div class="text-xs text-gray-600 truncate">
+                                                                                    <span class="text-amber-600 font-medium" x-text="'[' + (idx + 1) + ']'"></span>
+                                                                                    <a :href="source.url" target="_blank" class="text-blue-600 hover:underline ml-1" x-text="source.title"></a>
+                                                                                </div>
+                                                                            </template>
+                                                                            <template x-if="block.result.sources.length > 3">
+                                                                                <div class="text-xs text-gray-500 italic" x-text="'+' + (block.result.sources.length - 3) + ' more sources (see Sources section below)'"></div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </div>
+                                                                </template>
+                                                                <!-- Stats -->
+                                                                <div class="flex gap-2 text-xs text-gray-500">
+                                                                    <template x-if="block.result.chunk_count">
+                                                                        <span class="bg-amber-100 px-2 py-0.5 rounded" x-text="'📄 ' + block.result.chunk_count + ' chunks'"></span>
+                                                                    </template>
+                                                                    <template x-if="block.result.search_iterations">
+                                                                        <span class="bg-amber-100 px-2 py-0.5 rounded" x-text="'🔄 ' + block.result.search_iterations + ' iterations'"></span>
+                                                                    </template>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+
+                                                        <!-- For query_documents: show results -->
+                                                        <template x-if="block.name === 'query_documents'">
+                                                            <div class="space-y-2">
+                                                                <!-- Results count -->
+                                                                <template x-if="block.result.result_count !== undefined">
+                                                                    <div class="bg-white border border-amber-100 rounded p-2">
+                                                                        <div class="text-xs text-gray-500 mb-1">Documents Found:</div>
+                                                                        <div class="text-gray-700 text-xs" x-text="block.result.result_count + ' relevant passages'"></div>
+                                                                    </div>
+                                                                </template>
+                                                                <!-- Context preview -->
+                                                                <template x-if="block.result.context">
+                                                                    <div class="bg-white border border-amber-100 rounded p-2">
+                                                                        <div class="text-xs text-gray-500 mb-1">Context Preview:</div>
+                                                                        <div class="text-gray-700 text-xs" x-text="block.result.context?.substring(0, 300) + (block.result.context?.length > 300 ? '...' : '')"></div>
+                                                                        <!-- Truncation notice -->
+                                                                        <template x-if="block.result.context?.length > 300">
+                                                                            <div class="mt-1 text-xs text-amber-600 italic flex items-center gap-1">
+                                                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                                                </svg>
+                                                                                Content truncated - full response used in LLM context
+                                                                            </div>
+                                                                        </template>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+                                                        </template>
+
+                                                        <!-- Generic result display for other tools -->
+                                                        <template x-if="!['search_web', 'query_documents'].includes(block.name)">
+                                                            <div class="bg-white border border-amber-100 rounded p-2">
+                                                                <div class="text-xs text-gray-500 mb-1">Result:</div>
+                                                                <div class="text-gray-700 text-xs font-mono" x-text="typeof block.result === 'object' ? JSON.stringify(block.result, null, 2) : block.result"></div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+
+                                                <!-- Error Display -->
+                                                <template x-if="block.status === 'error'">
+                                                    <div class="mt-3 pt-3 border-t border-red-200">
+                                                        <div class="font-semibold text-red-700 mb-1 flex items-center gap-1">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                                            </svg>
+                                                            Error
+                                                        </div>
+                                                        <div class="text-red-600 text-xs" x-text="block.result?.error || 'Unknown error'"></div>
+                                                    </div>
+                                                </template>
                                             </div>
                                         </div>
                                     </div>

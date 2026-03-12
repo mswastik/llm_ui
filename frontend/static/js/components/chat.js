@@ -60,6 +60,115 @@ window.chat = () => {
 
       await ttsService.checkAvailability()
       this.$store.tts.available = ttsService.ttsAvailable
+
+      // Check if there's an active stream and start polling for updates
+      this.checkAndReattachActiveStream()
+    },
+
+    // Check for active streaming and start polling for updates
+    async checkAndReattachActiveStream() {
+      const activeStreaming = this.$store.chat.activeStreaming
+      if (!activeStreaming.isStreaming) return
+
+      // Start polling for this conversation's messages
+      console.log('[Chat] Active stream detected for conversation:', activeStreaming.conversationId)
+      this.startStreamingPolling(activeStreaming.requestId, activeStreaming.conversationId, activeStreaming.msgIndex)
+    },
+
+    startStreamingPolling(requestId, conversationId, msgIndex) {
+      // Clear any existing polling
+      this.stopStreamingPolling()
+
+      // Poll for updated messages while streaming
+      const pollInterval = setInterval(async () => {
+        const activeStreaming = this.$store.chat.activeStreaming
+        if (!activeStreaming.isStreaming || activeStreaming.conversationId !== conversationId) {
+          clearInterval(pollInterval)
+          this.streamingPollInterval = null
+          return
+        }
+
+        try {
+          // Fetch latest messages to get updated tool results and content
+          const data = await api.get(`/api/conversations/${conversationId}`)
+          const latestMessages = data.messages || []
+
+          if (latestMessages.length > msgIndex) {
+            const latestMsg = latestMessages[msgIndex]
+            const currentMsg = this.$store.chat.messages[msgIndex]
+
+            if (latestMsg && currentMsg) {
+              let hasChanges = false
+
+              // Update content if changed
+              if (latestMsg.content && latestMsg.content !== currentMsg.content) {
+                this.$store.chat.messages[msgIndex].content = latestMsg.content
+                hasChanges = true
+              }
+
+              // Update tool_calls if changed (more complete data from DB)
+              if (latestMsg.tool_calls && latestMsg.tool_calls.length > 0) {
+                // Merge tool calls - prefer latest data for existing calls
+                const currentToolCalls = currentMsg.tool_calls || []
+                const mergedToolCalls = []
+
+                for (let i = 0; i < Math.max(currentToolCalls.length, latestMsg.tool_calls.length); i++) {
+                  const current = currentToolCalls[i]
+                  const latest = latestMsg.tool_calls[i]
+
+                  if (latest && !current) {
+                    // New tool call from DB
+                    mergedToolCalls.push(latest)
+                  } else if (current && !latest) {
+                    // Tool call exists in current but not DB (still streaming)
+                    mergedToolCalls.push(current)
+                  } else if (current && latest) {
+                    // Merge: prefer latest result data, keep current progress
+                    mergedToolCalls.push({
+                      ...current,
+                      ...latest,
+                      // Keep progress_history from current if latest doesn't have it
+                      progress_history: latest.progress_history || current.progress_history,
+                      // Keep result from latest (more complete)
+                      result: latest.result || current.result
+                    })
+                  }
+                }
+
+                if (JSON.stringify(mergedToolCalls) !== JSON.stringify(currentToolCalls)) {
+                  this.$store.chat.messages[msgIndex].tool_calls = mergedToolCalls
+                  hasChanges = true
+                }
+              }
+
+              // Update thinking if changed
+              if (latestMsg.thinking && latestMsg.thinking !== currentMsg.thinking) {
+                this.$store.chat.messages[msgIndex].thinking = latestMsg.thinking
+                hasChanges = true
+              }
+
+              if (hasChanges) {
+                this.messages = [...this.$store.chat.messages]
+                console.log('[Chat] Messages updated from polling')
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[Chat] Polling error:', error)
+        }
+      }, 1000) // Poll every second
+
+      // Store interval ID for cleanup
+      this.streamingPollInterval = pollInterval
+      console.log('[Chat] Started polling for stream updates')
+    },
+
+    stopStreamingPolling() {
+      if (this.streamingPollInterval) {
+        clearInterval(this.streamingPollInterval)
+        this.streamingPollInterval = null
+        console.log('[Chat] Stopped polling for stream updates')
+      }
     },
 
     // Models
@@ -173,9 +282,10 @@ window.chat = () => {
         enableRag: this.enableRAG,
         model: this.selectedModel
       }
-      
-      const handlers = sseService.stream(requestId, this.$store.chat.currentConversationId, options)
-      
+
+      // Await the stream method to get handlers
+      const handlers = await sseService.stream(requestId, this.$store.chat.currentConversationId, options)
+
       const assistantMessage = {
         id: helpers.generateId() + 1,
         role: 'assistant',
@@ -187,17 +297,42 @@ window.chat = () => {
       this.$store.chat.addMessage(assistantMessage)
       this.messages = this.$store.chat.messages
       const msgIndex = this.messages.length - 1
-      
+
+      // Store streaming state
+      this.$store.chat.startStreaming(requestId, this.$store.chat.currentConversationId, msgIndex)
+
       handlers.onData((data) => {
         this.processStreamEvent(data, msgIndex)
+      })
+
+      handlers.onError((error) => {
+        console.error('Stream error:', error)
+        this.$store.chat.stopStreaming()
+        this.$store.chat.messages[msgIndex].content += `\n\n❌ Error: ${error.message}`
+        this.$store.chat.showToast(`Stream error: ${error.message}`, 'error')
+        this.messages = [...this.$store.chat.messages]
+      })
+
+      handlers.onComplete(() => {
+        console.log('Stream completed')
+        this.$store.chat.stopStreaming()
       })
     },
 
     // Core streaming logic
     processStreamEvent(data, msgIndex) {
+      console.log('[Chat] processStreamEvent:', data.type, data)
+      
+      // Check if message exists at this index
+      if (!this.$store.chat.messages[msgIndex]) {
+        console.warn('[Chat] Message at index', msgIndex, 'not found, skipping event')
+        return
+      }
+      
       switch (data.type) {
         case 'content':
           this.$store.chat.messages[msgIndex].content += data.content
+          console.log('[Chat] Content updated, length:', this.$store.chat.messages[msgIndex].content.length)
           break
         case 'thinking':
           const toolCalls = this.$store.chat.messages[msgIndex].tool_calls
@@ -210,6 +345,7 @@ window.chat = () => {
             ...this.$store.chat.messages[msgIndex], 
             tool_calls: [...toolCalls] 
           }
+          console.log('[Chat] Thinking updated')
           break
         case 'tool_call_start':
           this.$store.chat.toolStatus.active = true
@@ -231,6 +367,7 @@ window.chat = () => {
             ...this.$store.chat.messages[msgIndex], 
             tool_calls: [...this.$store.chat.messages[msgIndex].tool_calls] 
           }
+          console.log('[Chat] Tool call started:', data.tool)
           break
         case 'tool_progress':
           this.$store.chat.toolStatus.status = data.status
@@ -276,6 +413,7 @@ window.chat = () => {
               ...this.$store.chat.messages[msgIndex],
               tool_calls: [...currentToolCalls]
             }
+            console.log('[Chat] Tool progress:', data.status, data.progress)
           }
           if (data.result) {
             this.$store.chat.toolStatus.active = false
@@ -289,6 +427,7 @@ window.chat = () => {
           this.$store.chat.isLoading = false
           this.$store.chat.messages[msgIndex].content += `\n\n❌ Error: ${data.error}`
           this.$store.chat.showToast(`Error: ${data.error}`, 'error')
+          console.log('[Chat] Error:', data.error)
           break
         case 'title_update':
           this.$store.chat.currentConversationTitle = data.title
@@ -296,6 +435,7 @@ window.chat = () => {
           if (convIndex !== -1) {
             this.$store.chat.conversations[convIndex].title = data.title
           }
+          console.log('[Chat] Title updated:', data.title)
           break
         case 'done':
           sseService.close()
@@ -303,11 +443,20 @@ window.chat = () => {
           this.$store.chat.isLoading = false
           this.$store.chat.toolStatus.active = false
           this.toolStatus = { ...this.$store.chat.toolStatus }
+          console.log('[Chat] Stream done')
           break
       }
       
+      // Force reactivity by creating a new array reference
       this.messages = [...this.$store.chat.messages]
-      //this.$nextTick(() => helpers.scrollToBottom(this.$refs?.messagesContainer))
+      console.log('[Chat] Messages array updated, length:', this.messages.length)
+      // Scroll to bottom after update
+      this.$nextTick(() => {
+        const container = document.getElementById('messages-container')
+        if (container) {
+          container.scrollTop = container.scrollHeight
+        }
+      })
     },
 
     // Message actions

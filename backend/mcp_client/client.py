@@ -93,10 +93,10 @@ class MCPClientManager:
     async def _connect_server(self, config: MCPServerConfig) -> bool:
         """
         Connect to an MCP server and discover its tools.
-        
+
         Args:
             config: Server configuration
-            
+
         Returns:
             True if connection and discovery succeeded
         """
@@ -108,12 +108,14 @@ class MCPClientManager:
             async with self._connection_locks[config.name]:
                 # Build FastMCP client based on transport type
                 client = self._create_client(config)
-                
+
                 # Create server instance
                 instance = MCPServerInstance(config=config, client=client)
-                
+
                 # Connect and initialize
                 try:
+                    # For all transport types, use the client's context manager
+                    # FastMCP handles transport-specific connection details internally
                     async with client:
                         # Discover tools
                         tools = await client.list_tools()
@@ -121,20 +123,24 @@ class MCPClientManager:
                         instance.is_connected = True
                         instance.is_initialized = True
                         instance.error = None
-                        
-                        print(f"Connected to MCP server '{config.name}': {len(instance.tools)} tools available")
-                        
+
+                    print(f"Connected to MCP server '{config.name}': {len(instance.tools)} tools available")
+
                 except Exception as conn_error:
                     instance.error = str(conn_error)
                     instance.is_connected = False
                     instance.is_initialized = False
                     print(f"Failed to connect to MCP server '{config.name}': {conn_error}")
-                
+                    import traceback
+                    traceback.print_exc()
+
                 self.servers[config.name] = instance
                 return instance.is_connected
 
         except Exception as e:
             print(f"Error connecting to MCP server '{config.name}': {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _create_client(self, config: MCPServerConfig) -> FastMCPClient:

@@ -31,8 +31,8 @@ class SearchConfig:
     embeddings_api: str = "http://localhost:8080/v1/embeddings"
     rerank_api: str = "http://localhost:8080/v1/rerank"
     llm_base_url: str = "http://localhost:8080/v1"
-    llm_model: str = "qwen3-4b"
-    query_model: str = "qwen3-4b"
+    llm_model: str = "qwen3.5"
+    query_model: str = "qwen3.5"
     llm_api_key: str = "sk-12"
     num_search_results: int = 20
     chunk_size: int = 1200

@@ -23,7 +23,7 @@ class MCPServerConfig:
     # For stdio transport
     command: Optional[str] = None
     args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
+    # env: Dict[str, str] = field(default_factory=dict)
     # For HTTP/SSE transport
     url: Optional[str] = None
     # Connection timeout in seconds
@@ -80,7 +80,7 @@ class MCPClientManager:
                 transport_type=config.get("transport_type", "stdio"),
                 command=config.get("command"),
                 args=config.get("args", []),
-                env=config.get("env", {}),
+                #env=config.get("env", {}),
                 url=config.get("url"),
                 enabled=config.get("enabled", True)
             )
@@ -140,32 +140,36 @@ class MCPClientManager:
     def _create_client(self, config: MCPServerConfig) -> FastMCPClient:
         """
         Create a FastMCP client based on transport type.
-        
+
         Args:
             config: Server configuration
-            
+
         Returns:
             FastMCP Client instance
         """
-        if config.transport_type in ("sse", "http"):
+        from fastmcp.client.transports import StdioTransport
+        
+        if config.transport_type in ("sse", "http", "streamable-http"):
             # HTTP/SSE transport
             if not config.url:
                 raise ValueError(f"URL required for {config.transport_type} transport")
             return FastMCPClient(config.url, timeout=config.timeout)
-            
+
         elif config.transport_type == "stdio":
             # Stdio transport
             if not config.command:
                 raise ValueError("Command required for stdio transport")
-            
-            # Build connection string for stdio
-            # FastMCP supports command-based connections via string format
-            cmd_parts = [config.command] + config.args
-            cmd_str = " ".join(cmd_parts)
-            
-            # Pass environment variables
-            return FastMCPClient(cmd_str, env=config.env, timeout=config.timeout)
-            
+
+            # For stdio transport, we need to use StdioTransport explicitly
+            # This properly handles commands like 'uvx', 'npx' with arguments
+            return FastMCPClient(
+                StdioTransport(
+                    command=config.command,
+                    args=config.args,
+                    #timeout=config.timeout
+                )
+            )
+
         else:
             raise ValueError(f"Unknown transport type: {config.transport_type}")
 
@@ -413,7 +417,7 @@ class MCPClientManager:
             transport_type=transport_type,
             command=command,
             args=args,
-            env=env,
+            #env=env,
             url=url,
             timeout=timeout
         )

@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, Text, DateTime, Integer, Float, JSON, ForeignKey
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 import uuid
 import logging

@@ -529,17 +529,17 @@ async def stream_regenerate_response(request_id: str, conversation_id: str, mode
 @app.get("/api/mcp/servers")
 async def list_mcp_servers():
     """List all available MCP servers"""
-    from database.crud import get_enabled_mcp_servers
+    from database.crud import get_all_mcp_servers
     from database.models import get_db
-    
+
     # Get runtime server status from MCP manager
     runtime_servers = await mcp_manager.list_servers()
-    
-    # Get enabled status from database
+
+    # Get all servers from database (both enabled and disabled)
     async with get_db() as db:
-        db_servers = await get_enabled_mcp_servers(db)
-        db_enabled = {s["name"]: True for s in db_servers}
-    
+        db_servers = await get_all_mcp_servers(db)
+        db_enabled = {s["name"]: s["enabled"] for s in db_servers}
+
     # Merge runtime info with enabled status
     servers_with_status = []
     for server in runtime_servers:
@@ -547,7 +547,7 @@ async def list_mcp_servers():
             **server,
             "enabled": db_enabled.get(server["name"], True)
         })
-    
+
     # Also include servers from DB that might not be connected
     for db_server in db_servers:
         if not any(s["name"] == db_server["name"] for s in runtime_servers):
@@ -559,10 +559,10 @@ async def list_mcp_servers():
                 "tool_count": 0,
                 "is_connected": False,
                 "is_initialized": False,
-                "error": "Server not loaded (may be disabled)",
-                "enabled": True
+                "error": None,
+                "enabled": db_server.get("enabled", True)
             })
-    
+
     return {"servers": servers_with_status}
 
 

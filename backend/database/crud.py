@@ -1,7 +1,7 @@
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict
 import os
 
@@ -202,6 +202,28 @@ async def add_mcp_server(
         "url": server.url,
         "enabled": bool(server.enabled),
     }
+
+
+async def get_all_mcp_servers(db: AsyncSession) -> List[Dict]:
+    """Get all MCP servers (both enabled and disabled)"""
+    result = await db.execute(
+        select(MCPServer)
+    )
+    servers = result.scalars().all()
+
+    return [
+        {
+            "id": server.id,
+            "name": server.name,
+            "transport_type": server.transport_type,
+            "command": server.command,
+            "args": server.args,
+            "env": server.env,
+            "url": server.url,
+            "enabled": bool(server.enabled),
+        }
+        for server in servers
+    ]
 
 
 async def get_enabled_mcp_servers(db: AsyncSession) -> List[Dict]:

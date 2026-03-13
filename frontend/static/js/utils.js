@@ -83,6 +83,30 @@ export const markdownUtils = {
     })
     // Assign sequential citation IDs
     return allSources.map((source, idx) => ({ ...source, citationId: idx + 1 }))
+  },
+
+  getMessageSourcesFromBlocks(blocks) {
+    if (!blocks || blocks.length === 0) return []
+    const allSources = []
+    blocks.forEach(block => {
+      // Only tool_call blocks have sources
+      if (block.type === 'tool_call') {
+        const sources = block.sources || block.result?.sources || []
+        if (sources && sources.length > 0) {
+          sources.forEach(source => {
+            // Only add unique sources by URL
+            if (!allSources.some(s => s.url === source.url)) {
+              allSources.push({
+                ...source,
+                citationId: allSources.length + 1
+              })
+            }
+          })
+        }
+      }
+    })
+    // Assign sequential citation IDs
+    return allSources.map((source, idx) => ({ ...source, citationId: idx + 1 }))
   }
 }
 

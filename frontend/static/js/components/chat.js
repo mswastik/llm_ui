@@ -322,47 +322,59 @@ window.chat = () => {
     // Core streaming logic
     processStreamEvent(data, msgIndex) {
       console.log('[Chat] processStreamEvent:', data.type, data)
-      
+
       // Check if we're currently on the streaming conversation
       const activeStreaming = this.$store.chat.activeStreaming
-      if (activeStreaming.isStreaming && 
+      if (activeStreaming.isStreaming &&
           activeStreaming.conversationId !== this.$store.chat.currentConversationId) {
         // We're not on the streaming conversation, skip processing
         // Events will be picked up via polling when we return
         console.log('[Chat] Not on streaming conversation, skipping event')
         return
       }
-      
+
       // Check if message exists at this index
       if (!this.$store.chat.messages[msgIndex]) {
         console.warn('[Chat] Message at index', msgIndex, 'not found, skipping event')
         return
       }
+
+      const msg = this.$store.chat.messages[msgIndex]
       
+      // Initialize blocks array if not present (for sequential rendering)
+      if (!msg.blocks) {
+        msg.blocks = []
+      }
+
       switch (data.type) {
         case 'content':
-          this.$store.chat.messages[msgIndex].content += data.content
-          console.log('[Chat] Content updated, length:', this.$store.chat.messages[msgIndex].content.length)
+          // Check if last block is a content block - if so, append to it
+          const lastBlock = msg.blocks.length > 0 ? msg.blocks[msg.blocks.length - 1] : null
+          if (lastBlock && lastBlock.type === 'content') {
+            lastBlock.content += data.content
+          } else {
+            // Create new content block
+            msg.blocks.push({ type: 'content', content: data.content })
+          }
+          console.log('[Chat] Content updated, blocks:', msg.blocks.length)
           break
         case 'thinking':
-          const toolCalls = this.$store.chat.messages[msgIndex].tool_calls
-          if (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].type === 'thinking') {
-            toolCalls[toolCalls.length - 1].content += data.content
+          // Check if last block is a thinking block - if so, append to it
+          const lastThinkingBlock = msg.blocks.length > 0 ? msg.blocks[msg.blocks.length - 1] : null
+          if (lastThinkingBlock && lastThinkingBlock.type === 'thinking') {
+            lastThinkingBlock.content += data.content
           } else {
-            toolCalls.push({ type: 'thinking', content: data.content })
+            // Create new thinking block
+            msg.blocks.push({ type: 'thinking', content: data.content })
           }
-          this.$store.chat.messages[msgIndex] = { 
-            ...this.$store.chat.messages[msgIndex], 
-            tool_calls: [...toolCalls] 
-          }
-          console.log('[Chat] Thinking updated')
+          console.log('[Chat] Thinking updated, blocks:', msg.blocks.length)
           break
         case 'tool_call_start':
           this.$store.chat.toolStatus.active = true
           this.$store.chat.toolStatus.tool = data.tool
           this.$store.chat.toolStatus.status = 'Starting...'
           this.toolStatus = { ...this.$store.chat.toolStatus }
-          
+
           const newToolCall = {
             type: 'tool_call',
             name: data.tool,
@@ -372,11 +384,7 @@ window.chat = () => {
             result: null,
             progress_history: [{ status: 'starting', progress: 0 }]
           }
-          this.$store.chat.messages[msgIndex].tool_calls.push(newToolCall)
-          this.$store.chat.messages[msgIndex] = { 
-            ...this.$store.chat.messages[msgIndex], 
-            tool_calls: [...this.$store.chat.messages[msgIndex].tool_calls] 
-          }
+          msg.blocks.push(newToolCall)
           console.log('[Chat] Tool call started:', data.tool)
           break
         case 'tool_progress':
@@ -384,17 +392,17 @@ window.chat = () => {
           this.$store.chat.toolStatus.progress = data.progress || null
           this.toolStatus = { ...this.$store.chat.toolStatus }
 
-          const currentToolCalls = this.$store.chat.messages[msgIndex].tool_calls
-          const currentToolCall = currentToolCalls.find(tc =>
-            tc.type === 'tool_call' &&
-            tc.status !== 'completed' &&
-            tc.status !== 'error'
+          // Find the last incomplete tool call block
+          const currentToolCall = msg.blocks.findLast(bc =>
+            bc.type === 'tool_call' &&
+            bc.status !== 'completed' &&
+            bc.status !== 'error'
           )
 
           if (currentToolCall) {
             currentToolCall.status = data.status
             currentToolCall.progress = data.progress || 0
-            
+
             // Store search steps if available
             if (data.data) {
               if (data.data.search_steps) {
@@ -410,18 +418,14 @@ window.chat = () => {
                 currentToolCall.coverage_score = data.data.coverage_score
               }
             }
-            
+
             if (data.result) {
               currentToolCall.result = data.result
               currentToolCall.status = 'completed'
-              // Store sources from result for citation display at the bottom
+              // Store sources from result for citation display
               if (data.result.sources && data.result.sources.length > 0) {
                 currentToolCall.sources = data.result.sources
               }
-            }
-            this.$store.chat.messages[msgIndex] = {
-              ...this.$store.chat.messages[msgIndex],
-              tool_calls: [...currentToolCalls]
             }
             console.log('[Chat] Tool progress:', data.status, data.progress)
           }
@@ -435,7 +439,8 @@ window.chat = () => {
           this.toolStatus = { ...this.$store.chat.toolStatus }
           this.isLoading = false
           this.$store.chat.isLoading = false
-          this.$store.chat.messages[msgIndex].content += `\n\n❌ Error: ${data.error}`
+          // Add error as a content block
+          msg.blocks.push({ type: 'content', content: `\n\n❌ Error: ${data.error}` })
           this.$store.chat.showToast(`Error: ${data.error}`, 'error')
           console.log('[Chat] Error:', data.error)
           break
@@ -456,7 +461,7 @@ window.chat = () => {
           console.log('[Chat] Stream done')
           break
       }
-      
+
       // Force reactivity by creating a new array reference
       this.messages = [...this.$store.chat.messages]
       console.log('[Chat] Messages array updated, length:', this.messages.length)
@@ -629,6 +634,7 @@ window.chat = () => {
     renderMarkdown: (text) => markdownUtils.render(text),
     renderMarkdownWithCitations: (text, sources) => markdownUtils.renderWithCitations(text, sources),
     getMessageSources: (message) => markdownUtils.getMessageSources(message),
+    getMessageSourcesFromBlocks: (blocks) => markdownUtils.getMessageSourcesFromBlocks(blocks),
     formatDate: (isoString) => formatters.formatDate(isoString),
     
     async copyMessage(message) {

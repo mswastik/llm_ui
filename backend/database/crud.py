@@ -90,18 +90,64 @@ async def add_message(
     conversation_id: str,
     role: str,
     content: str,
-    tool_calls: Optional[List] = None,
-    thinking: Optional[str] = None,
+    blocks: Optional[List[Dict]] = None,
     extra_metadata: Optional[Dict] = None
 ) -> Dict:
-    """Add a message to a conversation"""
+    """Add a message to a conversation.
+    
+    Args:
+        blocks: List of message blocks (content, thinking, tool_call) in sequential order
+        extra_metadata: Additional metadata (blocks will be stored here under 'blocks' key)
+    
+    For backward compatibility, thinking and tool_calls are also extracted and stored
+    in their respective columns.
+    """
+    # Initialize metadata
+    metadata = extra_metadata or {}
+    
+    # Store blocks in metadata
+    if blocks:
+        metadata['blocks'] = blocks
+    
+    # Extract thinking and tool_calls for backward compatibility
+    thinking = None
+    tool_calls = None
+    
+    if blocks:
+        # Extract thinking from blocks
+        thinking_parts = []
+        for block in blocks:
+            if block.get('type') == 'thinking':
+                thinking_parts.append(block.get('content', ''))
+        if thinking_parts:
+            thinking = '\n'.join(thinking_parts)
+        
+        # Extract tool_calls from blocks
+        tool_call_blocks = [b for b in blocks if b.get('type') == 'tool_call']
+        if tool_call_blocks:
+            tool_calls = []
+            for block in tool_call_blocks:
+                tool_calls.append({
+                    'name': block.get('name'),
+                    'arguments': block.get('arguments', {}),
+                    'status': block.get('status', 'completed'),
+                    'progress': block.get('progress', 100),
+                    'result': block.get('result'),
+                    'sources': block.get('sources', []),
+                    'search_steps': block.get('search_steps', []),
+                    'search_terms': block.get('search_terms', []),
+                    'reasoning': block.get('reasoning'),
+                    'coverage_score': block.get('coverage_score'),
+                    'progress_history': block.get('progress_history', [])
+                })
+    
     message = Message(
         conversation_id=conversation_id,
         role=role,
         content=content,
         tool_calls=tool_calls,
         thinking=thinking,
-        extra_metadata=extra_metadata
+        extra_metadata=metadata
     )
     db.add(message)
 
@@ -123,6 +169,7 @@ async def add_message(
         "tool_calls": message.tool_calls,
         "thinking": message.thinking,
         "metadata": message.extra_metadata,
+        "blocks": message.extra_metadata.get('blocks') if message.extra_metadata else None,
         "created_at": message.created_at.isoformat(),
     }
 
@@ -131,7 +178,10 @@ async def get_conversation_messages(
     db: AsyncSession,
     conversation_id: str
 ) -> List[Dict]:
-    """Get all messages for a conversation"""
+    """Get all messages for a conversation.
+    
+    Returns messages with blocks from metadata for sequential rendering.
+    """
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -147,6 +197,7 @@ async def get_conversation_messages(
             "tool_calls": msg.tool_calls,
             "thinking": msg.thinking,
             "metadata": msg.extra_metadata,
+            "blocks": msg.extra_metadata.get('blocks') if msg.extra_metadata else None,
             "created_at": msg.created_at.isoformat(),
         }
         for msg in messages

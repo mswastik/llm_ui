@@ -121,8 +121,30 @@ const sidebarComponent = () => ({
       this.$store.chat.currentConversationId = conversationId
       this.$store.chat.currentConversationTitle = data.conversation.title
 
-      // Normalize messages
+      // Normalize messages - ensure blocks are properly assigned
       const normalizedMessages = data.messages.map(msg => {
+        // First, check if blocks exist in metadata from API
+        const blocksFromApi = msg.blocks || (msg.metadata && msg.metadata.blocks) || null
+        
+        console.log('[sidebar] Message:', msg.id, 'blocks from API:', blocksFromApi)
+        
+        // If blocks exist from API, use them directly
+        if (blocksFromApi && Array.isArray(blocksFromApi) && blocksFromApi.length > 0) {
+          console.log('[sidebar] Using blocks directly:', blocksFromApi.map(b => b.type))
+          return {
+            ...msg,
+            blocks: blocksFromApi,
+            tool_calls: msg.tool_calls || [] // Keep tool_calls for backward compatibility
+          }
+        }
+        
+        console.log('[sidebar] No blocks found, message has:', {
+          has_tool_calls: !!msg.tool_calls,
+          has_thinking: !!msg.thinking,
+          tool_calls_count: msg.tool_calls?.length || 0
+        })
+        
+        // Otherwise, normalize from old format (backward compatibility during transition)
         const actualToolCalls = (msg.tool_calls || []).filter(tc =>
           tc.type === 'tool_call' || tc.name === 'search_web' || tc.name === 'query_documents' || tc.type === 'thinking'
         )

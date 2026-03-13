@@ -1,8 +1,8 @@
 {
   "database_url": "sqlite+aiosqlite:///./llm_ui.db",
   "llama_cpp_base_url": "http://localhost:8080",
-  "llama_cpp_model": "qwen3-4b",
-  "query_model": "qwen3-4b",
+  "llama_cpp_model": "qwen3.5-35ba3b",
+  "query_model": "qwen3.5-35ba3b",
   "app_host": "0.0.0.0",
   "app_port": 8002,
   "debug": false,

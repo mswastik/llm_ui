@@ -332,13 +332,29 @@ async def _core_stream_handler(
                         if chunk_type == "content":
                             content = chunk.get("content", "")
                             assistant_message += content
-                            current_content_block += content
+                            # Save content immediately as a block for proper sequencing
+                            # Preserve all content including whitespace/newlines for proper formatting
+                            if content:  # Save even if it's just whitespace/newlines
+                                message_blocks.append({
+                                    "type": "content",
+                                    "content": content
+                                })
                             had_content = True
                             yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
                         elif chunk_type == "thinking":
                             thinking = chunk.get("content", "")
                             thinking_content += thinking
-                            current_thinking_block += thinking
+                            # Save thinking immediately as a block for proper sequencing
+                            # Preserve all thinking content including whitespace/newlines
+                            if thinking:  # Save even if it's just whitespace/newlines
+                                # Check if last block is also thinking - if so, append to it
+                                if message_blocks and message_blocks[-1].get('type') == 'thinking':
+                                    message_blocks[-1]['content'] += thinking
+                                else:
+                                    message_blocks.append({
+                                        "type": "thinking",
+                                        "content": thinking
+                                    })
                             yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
                         elif chunk_type == "tool_call":
                             print(f"[DEBUG] Tool call chunk received")
@@ -366,22 +382,6 @@ async def _core_stream_handler(
                         import traceback
                         traceback.print_exc()
                     await asyncio.sleep(0)
-
-                # Save content block if we have any (before tool call)
-                if current_content_block.strip():
-                    message_blocks.append({
-                        "type": "content",
-                        "content": current_content_block.strip()
-                    })
-                    current_content_block = ""
-
-                # Save thinking block if we have any (before tool call)
-                if current_thinking_block.strip():
-                    message_blocks.append({
-                        "type": "thinking",
-                        "content": current_thinking_block.strip()
-                    })
-                    current_thinking_block = ""
 
                 # If we have a pending tool call, execute it and continue the loop
                 if pending_tool_call:
@@ -441,28 +441,56 @@ async def _core_stream_handler(
                     break
             
             # Save any remaining content/thinking blocks after the loop ends
-            if current_content_block.strip():
+            # Note: These variables are not used in the current streaming logic
+            # but kept for backward compatibility
+            if current_content_block: #.strip():
                 message_blocks.append({
                     "type": "content",
-                    "content": current_content_block.strip()
+                    "content": current_content_block  # Preserve original formatting
                 })
-            if current_thinking_block.strip():
+            if current_thinking_block: #.strip():
                 message_blocks.append({
                     "type": "thinking",
-                    "content": current_thinking_block.strip()
+                    "content": current_thinking_block  # Preserve original formatting
                 })
 
             # Save assistant message with message blocks for sequential display
             # Always save if we have any content, thinking, or message blocks
             if assistant_message.strip() or thinking_content.strip() or message_blocks:
+                # Consolidate consecutive content blocks to avoid fragmentation
+                # But preserve newlines and formatting within each block
+                consolidated_blocks = []
+                for block in message_blocks:
+                    if block.get('type') == 'content':
+                        # Check if last block is also content - if so, merge
+                        if consolidated_blocks and consolidated_blocks[-1].get('type') == 'content':
+                            # Preserve newlines - concatenate exactly as received
+                            prev_content = consolidated_blocks[-1].get('content', '')
+                            new_content = block.get('content', '')
+                            # Don't strip or modify - preserve exact formatting
+                            consolidated_blocks[-1]['content'] = prev_content + new_content
+                        else:
+                            consolidated_blocks.append(block)
+                    elif block.get('type') == 'thinking':
+                        # Check if last block is also thinking - if so, merge
+                        if consolidated_blocks and consolidated_blocks[-1].get('type') == 'thinking':
+                            prev_content = consolidated_blocks[-1].get('content', '')
+                            new_content = block.get('content', '')
+                            consolidated_blocks[-1]['content'] = prev_content + new_content
+                        else:
+                            consolidated_blocks.append(block)
+                    else:
+                        # Tool calls are kept as-is
+                        consolidated_blocks.append(block)
+                
                 # Add model info to message metadata
                 message_extra_metadata = {"model": model} if model else {}
-                # Store message_blocks in tool_calls field for backward compatibility
-                # Each block has a "type" field: "content", "thinking", or "tool_call"
-                print(f"[DEBUG] Saving message with {len(message_blocks)} blocks")
-                for i, block in enumerate(message_blocks):
-                    print(f"[DEBUG] Block {i}: type={block.get('type')}, name={block.get('name')}, has_result={bool(block.get('result'))}, has_progress_history={bool(block.get('progress_history'))}")
-                await add_message(db, conversation_id, "assistant", assistant_message, message_blocks or None, thinking_content or None, extra_metadata=message_extra_metadata)
+                # Store consolidated_blocks in metadata['blocks'] for sequential rendering
+                print(f"[DEBUG] Saving message with {len(consolidated_blocks)} consolidated blocks")
+                for i, block in enumerate(consolidated_blocks):
+                    content_preview = block.get('content', '')[:100].replace('\n', '\\n') if block.get('content') else ''
+                    print(f"[DEBUG] Block {i}: type={block.get('type')}, content_preview='{content_preview}...'")
+                await add_message(db, conversation_id, "assistant", assistant_message, blocks=consolidated_blocks or None, extra_metadata=message_extra_metadata)
 
             # Title Generation Logic (only for first exchange)
             messages_after_save = await get_conversation_messages(db, conversation_id)

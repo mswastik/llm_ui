@@ -88,28 +88,9 @@ async def hard_delete_agent(db: AsyncSession, agent_id: int) -> bool:
 
 
 async def get_default_agent(db: AsyncSession) -> Optional[Agent]:
-    """Get the default agent (first active agent or create one)"""
+    """Get the default agent (first active agent)"""
     agents = await get_all_agents(db)
     if agents:
         return agents[0]
-    
-    # Create default agent if none exists
-    default_data = {
-        "name": "Default Assistant",
-        "description": "Default AI assistant agent",
-        "model": "qwen3-4b",
-        "temperature": 0.7,
-        "top_k": 40,
-        "max_tokens": 16048,
-        "system_prompt": "You are a helpful AI assistant. When you use tools, explain what you're doing and why.",
-        "enabled_tools": [],
-        "enabled_mcp_servers": [],
-        "enable_rag": 0,
-        "enable_web_search": 0,
-        "conversation_starters": [
-            "What can you help me with?",
-            "Tell me about your capabilities",
-            "How do I get started?"
-        ]
-    }
-    return await create_agent(db, default_data)
+    # Return None if no agents exist - let the UI handle creating the first agent
+    return None

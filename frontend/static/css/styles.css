@@ -23,6 +23,11 @@ html {
     scroll-behavior: smooth;
 }
 
+/* x-cloak for Alpine.js - hides elements before Alpine initializes */
+[x-cloak] {
+    display: none !important;
+}
+
 /* Message animations */
 @keyframes slideIn {
     from {

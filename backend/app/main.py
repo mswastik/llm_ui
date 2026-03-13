@@ -227,7 +227,7 @@ async def _core_stream_handler(
                     print(f"  - MCP: {tool['name']} from {tool['server']}")
             
             # Main conversation loop - handles multiple tool calls with content in between
-            max_tool_iterations = 15  # Prevent infinite loops
+            max_tool_iterations = 35  # Prevent infinite loops
             tool_iteration = 0
 
             while tool_iteration < max_tool_iterations:
@@ -407,7 +407,11 @@ async def _core_stream_handler(
                     print(f"[DEBUG] Block {i}: type={block.get('type')}, content_preview='{content_preview}...'")
                 await add_message(db, conversation_id, "assistant", assistant_message, blocks=consolidated_blocks or None, extra_metadata=message_extra_metadata)
 
+            # Yield done event before title generation (client may disconnect after this)
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
             # Title Generation Logic (only for first exchange)
+            # This is done AFTER yielding 'done' so client can disconnect without affecting main response
             messages_after_save = await get_conversation_messages(db, conversation_id)
             user_count = len([m for m in messages_after_save if m["role"] == "user"])
             assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
@@ -418,24 +422,36 @@ async def _core_stream_handler(
                     try:
                         # Use QUERY_MODEL for title generation to avoid issues with thinking models
                         from settings import QUERY_MODEL
-                        title = await asyncio.wait_for(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL), timeout=40.0)
+                        # Shield title generation from cancellation - it's a background task
+                        title = await asyncio.wait_for(
+                            asyncio.shield(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL)),
+                            timeout=40.0
+                        )
                         await update_conversation_title(db, conversation_id, title)
-                        yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                        # Try to send title update, but client may have disconnected
+                        try:
+                            yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                        except Exception:
+                            # Client disconnected, but title was saved - this is fine
+                            pass
+                    except asyncio.CancelledError:
+                        # Title generation was cancelled (client disconnected) - this is normal
+                        print(f"Title generation cancelled for conversation {conversation_id} (client disconnected)")
                     except Exception as e:
                         print(f"Error generating or updating title: {e}")
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
     except asyncio.CancelledError:
-        print(f"Event generator cancelled for request {request_id}")
+        # Request was cancelled by client - this is normal, don't log as error
+        print(f"Request {request_id} cancelled by client")
+        raise  # Re-raise to properly propagate cancellation
     except Exception as e:
         print(f"Error in event generator: {e}")
         import traceback
         traceback.print_exc()
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-    except asyncio.CancelledError:
-        # Request was cancelled by client - this is normal, don't log as error
-        print(f"Request {request_id} cancelled by client")
+        try:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        except Exception:
+            pass  # Client may have disconnected
     finally:
         if request_id in active_connections:
             try:

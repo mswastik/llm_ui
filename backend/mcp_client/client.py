@@ -23,7 +23,7 @@ class MCPServerConfig:
     # For stdio transport
     command: Optional[str] = None
     args: List[str] = field(default_factory=list)
-    # env: Dict[str, str] = field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
     # For HTTP/SSE transport
     url: Optional[str] = None
     # Connection timeout in seconds
@@ -80,7 +80,7 @@ class MCPClientManager:
                 transport_type=config.get("transport_type", "stdio"),
                 command=config.get("command"),
                 args=config.get("args", []),
-                #env=config.get("env", {}),
+                env=config.get("env", {}),
                 url=config.get("url"),
                 enabled=config.get("enabled", True)
             )
@@ -168,12 +168,17 @@ class MCPClientManager:
 
             # For stdio transport, we need to use StdioTransport explicitly
             # This properly handles commands like 'uvx', 'npx' with arguments
+            # Pass environment variables to the transport
+            transport_kwargs = {
+                "command": config.command,
+                "args": config.args,
+            }
+            # Only add env if it's not empty
+            if config.env:
+                transport_kwargs["env"] = config.env
+            
             return FastMCPClient(
-                StdioTransport(
-                    command=config.command,
-                    args=config.args,
-                    #timeout=config.timeout
-                )
+                StdioTransport(**transport_kwargs)
             )
 
         else:
@@ -423,7 +428,7 @@ class MCPClientManager:
             transport_type=transport_type,
             command=command,
             args=args,
-            #env=env,
+            env=env,
             url=url,
             timeout=timeout
         )

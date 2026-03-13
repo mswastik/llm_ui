@@ -153,4 +153,8 @@ async def get_db():
             await session.rollback()
             raise
         finally:
-            await session.close()
+            try:
+                await session.close()
+            except asyncio.CancelledError:
+                # Ignore cancellation during close - connection is being cleaned up anyway
+                pass

@@ -470,9 +470,9 @@ window.chat = () => {
       // Scroll to bottom after update
       this.$nextTick(() => {
         const container = document.getElementById('messages-container')
-        if (container) {
-          container.scrollTop = container.scrollHeight
-        }
+        //if (container) {
+        //  container.scrollTop = container.scrollHeight
+        //}
       })
     },
 

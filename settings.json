@@ -11,7 +11,7 @@
   "cors_origins": "*",
   "system_prompt": "You are a helpful AI assistant.",
   "default_temperature": 0.5,
-  "default_max_tokens": 29603,
+  "default_max_tokens": 59603,
   "sqlalchemy_echo": false,
   "tts_engine": "kokoro",
   "tts_voice": "af_bella",

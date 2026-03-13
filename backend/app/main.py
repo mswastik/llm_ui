@@ -192,108 +192,23 @@ async def _core_stream_handler(
             # Prepend system prompt to messages
             if system_prompt_content:
                 llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
-            
-            context_additions = []
+
             tool_calls_history = []
-            
+
             # Track message blocks for sequential display (content, thinking, tool calls)
             message_blocks = []
             current_content_block = ""
             current_thinking_block = ""
-
-            # Execute pre-processing tools (web search, RAG) if enabled
-            if enable_web_search:
-                query_text = llm_messages[-1]["content"] if llm_messages else ""
-                # Send tool call start event
-                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
-                # Create tool call record
-                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": [], "type": "tool_call"}
-                tool_calls_history.append(web_search_tool_call)
-
-                async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
-                    # Forward the progress event
-                    yield f"data: {json.dumps(progress_event)}\n\n"
-
-                    # Update tool call status
-                    if progress_event.get("type") == "tool_progress":
-                        web_search_tool_call["status"] = progress_event.get("status", "running")
-                        web_search_tool_call["progress"] = progress_event.get("progress", 0)
-                        # Add progress event to history
-                        web_search_tool_call["progress_history"].append(progress_event)
-                        if progress_event.get("result"):
-                            web_search_tool_call["result"] = progress_event["result"]
-                            web_search_tool_call["status"] = "completed"
-                            # Extract search_steps from result for display
-                            if progress_event["result"].get("search_steps"):
-                                web_search_tool_call["search_steps"] = progress_event["result"]["search_steps"]
-                            if progress_event["result"].get("search_terms_used"):
-                                web_search_tool_call["search_terms"] = progress_event["result"]["search_terms_used"]
-                            if progress_event["result"].get("sources"):
-                                web_search_tool_call["sources"] = progress_event["result"]["sources"]
-                            if progress_event.get("data", {}).get("reasoning"):
-                                web_search_tool_call["reasoning"] = progress_event["data"]["reasoning"]
-                            if progress_event.get("data", {}).get("coverage_score") is not None:
-                                web_search_tool_call["coverage_score"] = progress_event["data"]["coverage_score"]
-                            if progress_event["result"].get("content"):
-                                context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
-                    elif progress_event.get("type") == "tool_error":
-                        web_search_tool_call["status"] = "error"
-                        web_search_tool_call["result"] = {"error": progress_event.get("error")}
-                    await asyncio.sleep(0)
-                
-                # Add the completed search tool call to message blocks for display
-                message_blocks.append(web_search_tool_call)
-
-            if enable_rag:
-                query_text = llm_messages[-1]["content"] if llm_messages else ""
-                # Send tool call start event
-                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'query_documents', 'args': {'query': query_text}})}\n\n"
-                # Create tool call record
-                rag_tool_call = {"name": "query_documents", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
-                tool_calls_history.append(rag_tool_call)
-
-                async for progress_event in tool_executor.execute_tool("query_documents", {"query": query_text}, request_id):
-                    # Forward the progress event
-                    yield f"data: {json.dumps(progress_event)}\n\n"
-
-                    # Update tool call status
-                    if progress_event.get("type") == "tool_progress":
-                        rag_tool_call["status"] = progress_event.get("status", "running")
-                        rag_tool_call["progress"] = progress_event.get("progress", 0)
-                        # Add progress event to history
-                        rag_tool_call["progress_history"].append(progress_event)
-                        if progress_event.get("result"):
-                            rag_tool_call["result"] = progress_event["result"]
-                            rag_tool_call["status"] = "completed"
-                            if progress_event["result"].get("context"):
-                                context_additions.append(f"\n\n**Document Search Results:**\n{progress_event['result']['context']}")
-                    elif progress_event.get("type") == "tool_error":
-                        rag_tool_call["status"] = "error"
-                        rag_tool_call["result"] = {"error": progress_event.get("error")}
-                    await asyncio.sleep(0)
-
-            # Add context to the last user message
-            if context_additions:
-                for msg in reversed(llm_messages):
-                    if msg["role"] == "user":
-                        msg["content"] += "".join(context_additions) + "\n\n**Important**: Please cite sources using [1], [2], etc."
-                        break
-
-            # Build list of tools to exclude (already executed as pre-processing)
-            exclude_tools = []
-            if enable_web_search:
-                exclude_tools.append("search_web")
-            if enable_rag:
-                exclude_tools.append("query_documents")
 
             # Get MCP tools for LLM function calling
             mcp_tools = []
             if mcp_manager:
                 mcp_tools = await mcp_manager.list_all_tools()
 
-            # Get all tool definitions - only include enabled tools
+            # Get all tool definitions - include web_search and query_documents if enabled
+            # The LLM will decide which tools to call based on the user's request
             all_tools = tool_executor.get_tool_definitions(
-                exclude_tools=exclude_tools,
+                exclude_tools=[],  # Don't exclude any tools - let LLM choose
                 mcp_tools=mcp_tools,
                 enable_web_search=enable_web_search,
                 enable_rag=enable_rag

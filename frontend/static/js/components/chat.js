@@ -636,6 +636,8 @@ window.chat = () => {
     getMessageSources: (message) => markdownUtils.getMessageSources(message),
     getMessageSourcesFromBlocks: (blocks) => markdownUtils.getMessageSourcesFromBlocks(blocks),
     formatDate: (isoString) => formatters.formatDate(isoString),
+    parseEscapeCharacters: (text) => helpers.parseEscapeCharacters(text),
+    formatToolResult: (result) => helpers.formatToolResult(result),
     
     async copyMessage(message) {
       const type = message.role === 'user' ? 'Query' : 'Response'

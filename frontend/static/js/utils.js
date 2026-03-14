@@ -138,12 +138,99 @@ export const helpers = {
   },
 
   generateId() { return Date.now() },
-  
+
   toggleExpansion(state, key) { state[key] = !state[key]; return state[key] },
-  
+
   isExpanded(state, key) { return state[key] === true },
-  
-  createExpansionKey(id, index) { return `${id}-${index}` }
+
+  createExpansionKey(id, index) { return `${id}-${index}` },
+
+  /**
+   * Parse escape characters in a string to improve readability
+   * Converts escape sequences like \n, \t, \" etc. to their actual characters
+   */
+  parseEscapeCharacters(text) {
+    if (typeof text !== 'string') return text
+    // Replace escape sequences - order matters, handle backslash last
+    return text
+      .replace(/\\n/g, '\n')  // Newline
+      .replace(/\\r/g, '\r')  // Carriage return
+      .replace(/\\t/g, '\t')  // Tab
+      .replace(/\\"/g, '"')   // Double quote
+      .replace(/\\'/g, "'")   // Single quote
+      .replace(/\\\\/g, '\\') // Backslash (must be last)
+  },
+
+  /**
+   * Format tool result for display, handling various response structures
+   */
+  formatToolResult(result) {
+    if (!result) return ''
+    
+    // Handle string results directly
+    if (typeof result === 'string') {
+      return this.parseEscapeCharacters(result)
+    }
+    
+    // Handle content array (MCP standard format)
+    if (Array.isArray(result.content)) {
+      const textContents = result.content
+        .filter(item => item.type === 'text' && typeof item.text === 'string')
+        .map(item => this.parseEscapeCharacters(item.text))
+      if (textContents.length > 0) {
+        return textContents.join('\n')
+      }
+    }
+    
+    // Handle direct text field
+    if (typeof result.text === 'string') {
+      return this.parseEscapeCharacters(result.text)
+    }
+    
+    // Handle structured content
+    if (result.structured_content) {
+      return JSON.stringify(result.structured_content, null, 2)
+    }
+    
+    // Fallback: stringify the whole object
+    return JSON.stringify(result, null, 2)
+  },
+
+  /**
+   * Extract text content from tool result for summary display
+   * Returns plain text string from various result formats
+   */
+  extractToolContent(result) {
+    if (!result) return ''
+    
+    // Handle string results directly
+    if (typeof result === 'string') {
+      return result
+    }
+    
+    // Handle content array (MCP standard format)
+    if (Array.isArray(result.content)) {
+      const textContents = result.content
+        .filter(item => item.type === 'text' && typeof item.text === 'string')
+        .map(item => item.text)
+      if (textContents.length > 0) {
+        return textContents.join('\n')
+      }
+    }
+    
+    // Handle direct text field
+    if (typeof result.text === 'string') {
+      return result.text
+    }
+    
+    // Handle content field (legacy format)
+    if (typeof result.content === 'string') {
+      return result.content
+    }
+    
+    // Fallback: stringify
+    return JSON.stringify(result)
+  }
 }
 
 export const api = {

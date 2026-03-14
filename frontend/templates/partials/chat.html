@@ -262,7 +262,7 @@
                                                                 <template x-if="block.result.content">
                                                                     <div class="bg-white border border-amber-100 rounded p-2">
                                                                         <div class="text-xs text-gray-500 mb-1">Summary:</div>
-                                                                        <div class="text-gray-700 text-xs" x-text="block.result.content?.substring(0, 500) + (block.result.content?.length > 500 ? '...' : '')"></div>
+                                                                        <div class="text-gray-700 text-xs whitespace-pre-wrap" x-text="parseEscapeCharacters(block.result.content?.substring(0, 500) + (block.result.content?.length > 500 ? '...' : ''))"></div>
                                                                         <!-- Truncation notice -->
                                                                         <template x-if="block.result.content?.length > 500">
                                                                             <div class="mt-1 text-xs text-amber-600 italic flex items-center gap-1">
@@ -319,7 +319,7 @@
                                                                 <template x-if="block.result.context">
                                                                     <div class="bg-white border border-amber-100 rounded p-2">
                                                                         <div class="text-xs text-gray-500 mb-1">Context Preview:</div>
-                                                                        <div class="text-gray-700 text-xs" x-text="block.result.context?.substring(0, 300) + (block.result.context?.length > 300 ? '...' : '')"></div>
+                                                                        <div class="text-gray-700 text-xs whitespace-pre-wrap" x-text="parseEscapeCharacters(block.result.context?.substring(0, 300) + (block.result.context?.length > 300 ? '...' : ''))"></div>
                                                                         <!-- Truncation notice -->
                                                                         <template x-if="block.result.context?.length > 300">
                                                                             <div class="mt-1 text-xs text-amber-600 italic flex items-center gap-1">
@@ -338,7 +338,7 @@
                                                         <template x-if="!['search_web', 'query_documents'].includes(block.name)">
                                                             <div class="bg-white border border-amber-100 rounded p-2">
                                                                 <div class="text-xs text-gray-500 mb-1">Result:</div>
-                                                                <div class="text-gray-700 text-xs font-mono" x-text="typeof block.result === 'object' ? JSON.stringify(block.result, null, 2) : block.result"></div>
+                                                                <div class="text-gray-700 text-xs font-mono whitespace-pre-wrap" x-text="formatToolResult(block.result)"></div>
                                                             </div>
                                                         </template>
                                                     </div>
@@ -353,7 +353,7 @@
                                                             </svg>
                                                             Error
                                                         </div>
-                                                        <div class="text-red-600 text-xs" x-text="block.result?.error || 'Unknown error'"></div>
+                                                        <div class="text-red-600 text-xs whitespace-pre-wrap" x-text="parseEscapeCharacters(block.result?.error || 'Unknown error')"></div>
                                                     </div>
                                                 </template>
                                             </div>

@@ -3,44 +3,95 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}LLM UI - Advanced Chat Interface{% endblock %}</title>
+    <title>{% block title %}LLM UI{% endblock %}</title>
 
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS (utility classes for rare cases) -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Marked.js for Markdown rendering -->
+    <!-- Marked.js for Markdown -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-    <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- Phosphor Icons (clean, consistent icon library) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
 
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <!-- Custom Theme CSS -->
+    <link rel="stylesheet" href="/static/css/theme.css">
 
-    <!-- 1. Load utility modules first -->
-    <script type="module" src="/static/js/utils.js"></script>
-    <script type="module" src="/static/js/services/sse.js"></script>
-    <script type="module" src="/static/js/services/tts.js"></script>
+    <!-- Alpine.js stores data (plain objects, no Alpine dependency) -->
+    <script>
+      // ═══════════════════════════════════════════════════════════
+      // Store data must be available BEFORE main.js imports Alpine.
+      // This inline script runs synchronously during HTML parse.
+      // ═══════════════════════════════════════════════════════════
+      window.__chatStoreData__ = {
+        conversations: [], currentConversationId: null, currentConversationTitle: 'New Chat',
+        messages: [], inputMessage: '', isLoading: false,
+        activeStreaming: { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] },
+        toolStatus: { active: false, tool: '', status: '', progress: null },
+        selectedModel: '', availableModels: [], selectedAgentId: null, availableAgents: [], currentAgentConfig: null,
+        enableRAG: false, editingMessageId: null, editContent: '',
+        addConversation(c) { this.conversations.unshift(c) },
+        updateConversation(id, u) { const i = this.conversations.findIndex(x => x.id === id); if (i !== -1) Object.assign(this.conversations[i], u) },
+        removeConversation(id) { this.conversations = this.conversations.filter(x => x.id !== id) },
+        addMessage(m) { this.messages.push(m) },
+        updateMessage(id, u) { const m = this.messages.find(x => x.id === id); if (m) Object.assign(m, u) },
+        removeMessage(id) { this.messages = this.messages.filter(m => m.id !== id) },
+        clearMessages() { this.messages = [] },
+        setModel(v) { this.selectedModel = v; localStorage.setItem('selectedModel', v) },
+        loadSavedModel() { const s = localStorage.getItem('selectedModel'); if (s && this.availableModels.some(m => m.id === s)) this.selectedModel = s },
+        setAgent(v) { this.selectedAgentId = v; this.currentAgentConfig = this.availableAgents.find(a => a.id === v) || null; localStorage.setItem('selectedAgentId', v) },
+        loadSavedAgent() { const s = localStorage.getItem('selectedAgentId'); if (s && this.availableAgents.some(a => a.id === parseInt(s))) { this.selectedAgentId = parseInt(s); this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId) } },
+        startStreaming(rq, cid, mi, t, ms) { this.activeStreaming = { isStreaming: true, requestId: rq, conversationId: cid, msgIndex: mi, conversationTitle: t || '', messages: ms || [] }; this.isLoading = true },
+        stopStreaming() { this.activeStreaming = { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] }; this.isLoading = false; this.toolStatus = { active: false, tool: '', status: '', progress: null } },
+        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model && this.availableModels.some(m => m.id === a.model)) this.selectedModel = a.model; this.enableRAG = !!a.enable_rag }
+      };
+      window.__uiStoreData__ = {
+        darkMode: localStorage.getItem('darkMode') === 'true',
+        sidebarCollapsed: false,
+        sidebarWidth: parseInt(localStorage.getItem('sidebarWidth') || '280'),
+        showMcpPanel: false, showSettings: false, showDocuments: false,
+        toast: { show: false, message: '', type: 'success' },
+        settingsData: {}, mcpServers: [], mcpTools: [], documents: [],
+        newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
+        editingServer: false,
+        editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+        settingsTab: 'general',
+        toggleDarkMode() { this.darkMode = !this.darkMode; localStorage.setItem('darkMode', this.darkMode); document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },
+        initTheme() { document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },
+        toggleSidebar() { this.sidebarCollapsed = !this.sidebarCollapsed; this.sidebarWidth = this.sidebarCollapsed ? 68 : 280; localStorage.setItem('sidebarWidth', this.sidebarWidth) },
+        setSidebarWidth(w) { this.sidebarWidth = w; localStorage.setItem('sidebarWidth', w) },
+        showToast(msg, type) { this.toast = { show: true, message: msg || '', type: type || 'success' }; setTimeout(() => { this.toast = { show: false, message: '', type: 'success' } }, 3000) },
+        toggleMcpPanel() { this.showMcpPanel = !this.showMcpPanel },
+        openSettings() { this.showSettings = true },
+        closeSettings() { this.showSettings = false },
+        openDocuments() { this.showDocuments = true },
+        closeDocuments() { this.showDocuments = false }
+      };
+    </script>
 
-    <!-- 2. Load store (registers Alpine.store) -->
-    <script type="module" src="/static/js/store.js"></script>
-
-    <!-- 3. Load components (register Alpine.data) -->
-    <script type="module" src="/static/js/components/sidebar.js"></script>
-    <script type="module" src="/static/js/components/chat.js"></script>
-    <script type="module" src="/static/js/components/settings.js"></script>
-    <script type="module" src="/static/js/components/documents.js"></script>
-
-    <!-- 4. Load Alpine (after components so they can register) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
+    <script type="module" src="/static/js/main.js?v=23"></script>
 
     {% block extra_head %}{% endblock %}
 </head>
-<body class="bg-gray-50 h-screen overflow-hidden" {% block body_attrs %}{% endblock %}>
+<body class="bg-[var(--bg-primary)] text-[var(--text-primary)] h-screen overflow-hidden"
+      {% block body_attrs %}{% endblock %}>
+
     {% block content %}{% endblock %}
 
-    <!-- Collapse plugin - loads after Alpine, registers automatically -->
-    <script src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
+    <!-- Toast Container -->
+    <div x-cloak x-show="$store.ui.toast.show"
+         x-transition
+         x-text="$store.ui.toast.message"
+         class="fixed bottom-6 right-6 px-5 py-3 rounded-xl shadow-xl z-[200] text-sm font-medium
+                animate-slide-up"
+         :class="{
+             'toast-success': $store.ui.toast.type === 'success',
+             'toast-error': $store.ui.toast.type === 'error',
+             'toast-info': $store.ui.toast.type === 'info',
+             'toast-warning': $store.ui.toast.type === 'warning'
+         }">
+    </div>
 
     {% block extra_scripts %}{% endblock %}
 </body>

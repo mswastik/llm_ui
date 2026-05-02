@@ -1,15 +1,18 @@
 # Tools package
-from tools.tool_executor import ToolExecutor, TOOL_DEFINITIONS
-from tools.searxng_tool import SearXNGSearchTool, SearchConfig, SEARXNG_TOOL_DEFINITION
+from tools.tool_executor import ToolExecutor
 from tools.rag_service import RAGService, RAGConfig, RAG_TOOL_DEFINITION
+from tools.tts_service import TTSService, TTS_TOOL_DEFINITION
+from tools.errors import handle_tool_errors, yield_tool_errors
+from tools.progress import ToolProgress
 
 __all__ = [
     'ToolExecutor',
-    'TOOL_DEFINITIONS',
-    'SearXNGSearchTool',
-    'SearchConfig',
-    'SEARXNG_TOOL_DEFINITION',
     'RAGService',
     'RAGConfig',
     'RAG_TOOL_DEFINITION',
+    'TTSService',
+    'TTS_TOOL_DEFINITION',
+    'handle_tool_errors',
+    'yield_tool_errors',
+    'ToolProgress',
 ]

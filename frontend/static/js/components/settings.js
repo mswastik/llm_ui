@@ -1,11 +1,9 @@
 /**
- * Settings Component - Application settings and MCP server management
+ * Settings Component — Unified settings modal with MCP server management
  */
 import { api } from '../utils.js'
 
-// Define the component
-const settingsComponent = {
-  // Local state
+const settings = () => ({
   activeTab: 'general',
   settings: {},
   mcpServers: [],
@@ -14,47 +12,25 @@ const settingsComponent = {
   editingServer: false,
   editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
 
-  // Initialization
   async init() {
     await this.loadSettings()
     await this.loadMCPServers()
   },
 
-  // Settings
+  // ─── Settings ─────────────────────────────────────────
   async loadSettings() {
     try {
-      const data = await api.get('/api/settings')
-      this.settings = data
-    } catch (error) {
-      console.error('[SETTINGS] Error loading settings:', error)
-    }
+      this.settings = await api.get('/api/settings')
+      this.$store.ui.settingsData = this.settings
+    } catch (e) { console.error('[settings] Error:', e) }
   },
 
   async saveSettings() {
     try {
-      console.log('[SETTINGS] Saving settings:', this.settings)
-      const data = await api.put('/api/settings', this.settings)
-      console.log('[SETTINGS] Settings saved:', data)
-      this.settings = data
-      // Show success toast using Alpine store
-      const toastStore = window.Alpine?.store('chat') || { toast: {} }
-      window.Alpine.store('chat', {
-        ...toastStore,
-        toast: { show: true, message: 'Settings saved!', type: 'success' }
-      })
-      setTimeout(() => {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: false, message: '', type: 'success' }
-        })
-      }, 3000)
-    } catch (error) {
-      console.error('[SETTINGS] Error saving settings:', error)
-      const toastStore = window.Alpine?.store('chat') || { toast: {} }
-      window.Alpine.store('chat', {
-        ...toastStore,
-        toast: { show: true, message: 'Error saving settings: ' + error.message, type: 'error' }
-      })
+      await api.put('/api/settings', this.$store.ui.settingsData)
+      this.$store.ui.showToast('Settings saved!', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error saving: ' + e.message, 'error')
     }
   },
 
@@ -62,73 +38,41 @@ const settingsComponent = {
     if (this.settings.tts_engine === 'kokoro') {
       this.settings.tts_voice = 'af_bella'
       this.settings.kokoro_lang = 'a'
-      if (!this.settings.kokoro_device) {
-        this.settings.kokoro_device = 'cpu'
-      }
+      this.settings.kokoro_device = this.settings.kokoro_device || 'cpu'
     } else if (this.settings.tts_engine === 'edge-tts') {
       this.settings.tts_voice = 'en-IN-NeerjaNeural'
-    } else if (this.settings.tts_engine === 'pyttsx3') {
-      this.settings.tts_voice = ''
     }
   },
 
-  // MCP Servers
+  // ─── MCP Servers ──────────────────────────────────────
   async loadMCPServers() {
     try {
-      const data = await api.get('/api/mcp/servers')
-      this.mcpServers = data.servers || []
-    } catch (error) {
-      console.error('[SETTINGS] Error loading MCP servers:', error)
-    }
-  },
-
-  async loadMCPTools() {
-    try {
-      const data = await api.get('/api/mcp/tools')
-      this.mcpTools = data.tools || []
-    } catch (error) {
-      console.error('[SETTINGS] Error loading MCP tools:', error)
-    }
+      const [serversData, toolsData] = await Promise.all([
+        api.get('/api/mcp/servers'),
+        api.get('/api/mcp/tools')
+      ])
+      this.mcpServers = (serversData.servers || []).map(s => ({
+        ...s,
+        tools: (toolsData.tools || []).filter(t => t.server === s.name),
+        toolsExpanded: false,
+        enabled: s.enabled !== false
+      }))
+      this.$store.ui.mcpServers = this.mcpServers
+      this.$store.ui.mcpTools = toolsData.tools || []
+    } catch (e) { console.error('[settings] MCP:', e) }
   },
 
   async addMCPServer() {
     try {
-      let args = []
-      let env = {}
-      try {
-        args = JSON.parse(this.newServer.args)
-      } catch {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Invalid JSON for args', type: 'error' }
-        })
-        return
-      }
-      try {
-        if (this.newServer.env && this.newServer.env.trim()) {
-          env = JSON.parse(this.newServer.env)
-        }
-      } catch {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Invalid JSON for env', type: 'error' }
-        })
-        return
-      }
+      const args = JSON.parse(this.newServer.args)
+      const env = this.newServer.env?.trim() ? JSON.parse(this.newServer.env) : {}
 
       if (this.newServer.transport_type !== 'stdio' && !this.newServer.url) {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'URL required for SSE/HTTP', type: 'error' }
-        })
+        this.$store.ui.showToast('URL required for SSE/HTTP', 'error')
         return
       }
-
       if (this.newServer.transport_type === 'stdio' && !this.newServer.command) {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Command required for stdio', type: 'error' }
-        })
+        this.$store.ui.showToast('Command required for stdio', 'error')
         return
       }
 
@@ -136,31 +80,21 @@ const settingsComponent = {
         name: this.newServer.name,
         transport_type: this.newServer.transport_type,
         command: this.newServer.command,
-        args: args,
-        env: env,
+        args, env,
         url: this.newServer.url || null
       })
 
       await this.loadMCPServers()
-      await this.loadMCPTools()
-
       this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' }
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Server added!', type: 'success' }
-      })
-    } catch (error) {
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Error adding server', type: 'error' }
-      })
+      this.$store.ui.showToast('Server added!', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error: ' + e.message, 'error')
     }
   },
 
-  openEditModal(server) {
+  openEdit(server) {
     this.editServer = {
-      name: server.name,
-      transport_type: server.transport_type,
+      name: server.name, transport_type: server.transport_type,
       command: server.command || '',
       args: JSON.stringify(server.args || []),
       url: server.url || '',
@@ -171,152 +105,81 @@ const settingsComponent = {
     this.editingServer = true
   },
 
-  closeEditModal() {
+  closeEdit() {
     this.editingServer = false
     this.editServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' }
   },
 
-  async saveEditServer() {
+  async saveEdit() {
     try {
-      let args = []
-      let env = {}
-      try {
-        args = JSON.parse(this.editServer.args)
-      } catch {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Invalid JSON for args', type: 'error' }
-        })
-        return
-      }
-      try {
-        if (this.editServer.env && this.editServer.env.trim()) {
-          env = JSON.parse(this.editServer.env)
-        }
-      } catch {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Invalid JSON for env', type: 'error' }
-        })
-        return
-      }
+      const args = JSON.parse(this.editServer.args)
+      const env = this.editServer.env?.trim() ? JSON.parse(this.editServer.env) : {}
 
       if (this.editServer.transport_type !== 'stdio' && !this.editServer.url) {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'URL required for SSE/HTTP', type: 'error' }
-        })
+        this.$store.ui.showToast('URL required for SSE/HTTP', 'error')
         return
       }
-
       if (this.editServer.transport_type === 'stdio' && !this.editServer.command) {
-        window.Alpine.store('chat', {
-          ...window.Alpine.store('chat'),
-          toast: { show: true, message: 'Command required for stdio', type: 'error' }
-        })
+        this.$store.ui.showToast('Command required for stdio', 'error')
         return
       }
 
-      // First remove the old server
       await api.delete(`/api/mcp/servers/${this.editServer.originalName}`)
-      
-      // Then add the updated server
       await api.post('/api/mcp/servers', {
-        name: this.editServer.name,
-        transport_type: this.editServer.transport_type,
-        command: this.editServer.command,
-        args: args,
-        env: env,
+        name: this.editServer.name, transport_type: this.editServer.transport_type,
+        command: this.editServer.command, args, env,
         url: this.editServer.url || null
       })
-
-      // If server should be enabled, reconnect
       if (this.editServer.enabled) {
         await api.post(`/api/mcp/servers/${this.editServer.name}/reconnect`)
       } else {
-        // Disable the server
         await api.post(`/api/mcp/servers/${this.editServer.name}/toggle`, { enabled: false })
       }
 
       await this.loadMCPServers()
-      await this.loadMCPTools()
-
-      this.closeEditModal()
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Server updated!', type: 'success' }
-      })
-    } catch (error) {
-      console.error('Error updating server:', error)
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Error updating server: ' + error.message, type: 'error' }
-      })
+      this.closeEdit()
+      this.$store.ui.showToast('Server updated!', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error: ' + e.message, 'error')
     }
   },
 
-  async removeMCPServer(serverName) {
-    if (!confirm(`Remove "${serverName}"?`)) return
+  async removeServer(name) {
+    if (!confirm(`Remove "${name}"?`)) return
     try {
-      await api.delete(`/api/mcp/servers/${serverName}`)
+      await api.delete(`/api/mcp/servers/${name}`)
       await this.loadMCPServers()
-      await this.loadMCPTools()
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Server removed', type: 'success' }
-      })
-    } catch (error) {
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Error removing server', type: 'error' }
-      })
+      this.$store.ui.showToast('Server removed', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error: ' + e.message, 'error')
     }
   },
 
-  async reconnectMCPServer(serverName) {
+  async reconnectServer(name) {
     try {
-      await api.post(`/api/mcp/servers/${serverName}/reconnect`)
+      await api.post(`/api/mcp/servers/${name}/reconnect`)
       await this.loadMCPServers()
-      await this.loadMCPTools()
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Reconnected', type: 'success' }
-      })
-    } catch (error) {
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Error reconnecting', type: 'error' }
-      })
+      this.$store.ui.showToast('Reconnected', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error: ' + e.message, 'error')
     }
   },
 
-  async refreshMCPServerTools(serverName) {
+  async refreshTools(name) {
     try {
-      await api.post(`/api/mcp/servers/${serverName}/refresh`)
+      await api.post(`/api/mcp/servers/${name}/refresh`)
       await this.loadMCPServers()
-      await this.loadMCPTools()
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Tools refreshed', type: 'success' }
-      })
-    } catch (error) {
-      window.Alpine.store('chat', {
-        ...window.Alpine.store('chat'),
-        toast: { show: true, message: 'Error refreshing', type: 'error' }
-      })
+      this.$store.ui.showToast('Tools refreshed', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Error: ' + e.message, 'error')
     }
+  },
+
+  toggleServer(name, enabled) {
+    const server = this.mcpServers.find(s => s.name === name)
+    if (server) server.enabled = enabled
   }
-}
+})
 
-// Register with Alpine.js when it becomes available
-if (window.Alpine) {
-  window.Alpine.data('settings', () => settingsComponent)
-} else {
-  // Wait for Alpine to load
-  document.addEventListener('alpine:init', () => {
-    window.Alpine.data('settings', () => settingsComponent)
-  })
-}
-
-// Export for potential external use
-export { settingsComponent }
+// Export factory for registration in main.js
+export { settings }

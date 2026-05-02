@@ -1,8 +1,43 @@
 /**
- * Utility Functions
- * Shared helpers for formatters, markdown, API, and common operations
+ * Utilities — API client, formatters, markdown, helpers
  */
 
+// ─── API Client ───────────────────────────────────────────
+export const api = {
+  async get(endpoint) {
+    const res = await fetch(endpoint)
+    if (!res.ok) throw new Error('API Error')
+    return res.json()
+  },
+  async post(endpoint, data) {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(err.detail || 'API Error')
+    }
+    return res.json()
+  },
+  async put(endpoint, data) {
+    const res = await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    if (!res.ok) throw new Error('API Error')
+    return res.json()
+  },
+  async delete(endpoint) {
+    const res = await fetch(endpoint, { method: 'DELETE' })
+    if (!res.ok) throw new Error('API Error')
+    return res.json()
+  }
+}
+
+// ─── Formatters ───────────────────────────────────────────
 export const formatters = {
   formatDate(isoString) {
     const date = new Date(isoString)
@@ -14,258 +49,84 @@ export const formatters = {
     if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`
     return date.toLocaleDateString()
   },
-
   formatFileSize(bytes) {
+    if (!bytes) return '0 B'
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   },
-
   stripMarkdown(text) {
     if (!text) return ''
-    text = text.replace(/^#{1,6}\s+/gm, '')
-    text = text.replace(/\*\*(.*?)\*\*/g, '$1')
-    text = text.replace(/\*(.*?)\*/g, '$1')
-    text = text.replace(/`(.*?)`/g, '$1')
-    text = text.replace(/```[\s\S]*?```/g, '')
-    text = text.replace(/\[\d+\]/g, '')
-    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    text = text.replace(/\n{3,}/g, '\n\n')
-    return text.trim()
+    return text
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`(.*?)`/g, '$1')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/\[\d+\]/g, '')
+      .trim()
   }
 }
 
+// ─── Markdown ─────────────────────────────────────────────
 export const markdownUtils = {
   render(text) {
     if (!text) return ''
     return marked.parse(text)
   },
-
   renderWithCitations(text, sources = []) {
     if (!text) return ''
     let html = this.render(text)
-    if (sources && sources.length > 0) {
+    if (sources?.length > 0) {
       html = html.replace(/\[(\d+)\]/g, (match, num) => {
-        const index = parseInt(num) - 1
-        if (index >= 0 && index < sources.length) {
-          const source = sources[index]
-          const url = source.url || '#'
-          const title = source.title || 'Source'
-          return `<sup><a href="${url}" target="_blank" rel="noopener noreferrer" class="citation-link" title="${title}">[${num}]</a></sup>`
+        const idx = parseInt(num) - 1
+        if (idx >= 0 && idx < sources.length) {
+          const s = sources[idx]
+          return `<sup><a href="${s.url || '#'}" target="_blank" rel="noopener" class="citation-link" title="${s.title || ''}">${num}</a></sup>`
         }
         return match
       })
     }
     return html
   },
-
-  getMessageSources(message) {
-    if (!message?.tool_calls || message.tool_calls.length === 0) return []
-    const allSources = []
-    message.tool_calls.forEach(toolCall => {
-      // Check for sources in multiple locations for backward compatibility
-      const sources = toolCall.sources || toolCall.result?.sources || []
-      if (sources && sources.length > 0) {
-        sources.forEach(source => {
-          // Only add unique sources by URL
-          if (!allSources.some(s => s.url === source.url)) {
-            // Add citation index to source for proper citation tracking
-            const existingIndex = allSources.findIndex(s => s.url === source.url)
-            if (existingIndex === -1) {
-              allSources.push({
-                ...source,
-                citationId: allSources.length + 1
-              })
-            }
+  extractSources(blocks) {
+    if (!blocks?.length) return []
+    const sources = []
+    blocks.forEach(block => {
+      if (block.type === 'tool_call' && block.sources?.length) {
+        block.sources.forEach(s => {
+          if (!sources.find(x => x.url === s.url)) {
+            sources.push({ ...s, citationId: sources.length + 1 })
           }
         })
       }
     })
-    // Assign sequential citation IDs
-    return allSources.map((source, idx) => ({ ...source, citationId: idx + 1 }))
-  },
-
-  getMessageSourcesFromBlocks(blocks) {
-    if (!blocks || blocks.length === 0) return []
-    const allSources = []
-    blocks.forEach(block => {
-      // Only tool_call blocks have sources
-      if (block.type === 'tool_call') {
-        const sources = block.sources || block.result?.sources || []
-        if (sources && sources.length > 0) {
-          sources.forEach(source => {
-            // Only add unique sources by URL
-            if (!allSources.some(s => s.url === source.url)) {
-              allSources.push({
-                ...source,
-                citationId: allSources.length + 1
-              })
-            }
-          })
-        }
-      }
-    })
-    // Assign sequential citation IDs
-    return allSources.map((source, idx) => ({ ...source, citationId: idx + 1 }))
+    return sources
   }
 }
 
+// ─── Helpers ──────────────────────────────────────────────
 export const helpers = {
-  scrollToBottom(container) {
-    if (container) container.scrollTop = container.scrollHeight
+  copyToClipboard(text) {
+    return navigator.clipboard.writeText(text).catch(() => false)
   },
-
-  async copyToClipboard(text) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      const textArea = document.createElement('textarea')
-      textArea.value = text
-      textArea.style.position = 'fixed'
-      textArea.style.left = '-999999px'
-      document.body.appendChild(textArea)
-      textArea.select()
-      try {
-        document.execCommand('copy')
-        document.body.removeChild(textArea)
-        return true
-      } catch {
-        document.body.removeChild(textArea)
-        return false
-      }
-    }
-  },
-
-  generateId() { return Date.now() },
-
-  toggleExpansion(state, key) { state[key] = !state[key]; return state[key] },
-
-  isExpanded(state, key) { return state[key] === true },
-
-  createExpansionKey(id, index) { return `${id}-${index}` },
-
-  /**
-   * Parse escape characters in a string to improve readability
-   * Converts escape sequences like \n, \t, \" etc. to their actual characters
-   */
-  parseEscapeCharacters(text) {
-    if (typeof text !== 'string') return text
-    // Replace escape sequences - order matters, handle backslash last
-    return text
-      .replace(/\\n/g, '\n')  // Newline
-      .replace(/\\r/g, '\r')  // Carriage return
-      .replace(/\\t/g, '\t')  // Tab
-      .replace(/\\"/g, '"')   // Double quote
-      .replace(/\\'/g, "'")   // Single quote
-      .replace(/\\\\/g, '\\') // Backslash (must be last)
-  },
-
-  /**
-   * Format tool result for display, handling various response structures
-   */
+  generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7) },
   formatToolResult(result) {
     if (!result) return ''
-    
-    // Handle string results directly
-    if (typeof result === 'string') {
-      return this.parseEscapeCharacters(result)
-    }
-    
-    // Handle content array (MCP standard format)
+    if (typeof result === 'string') return result
     if (Array.isArray(result.content)) {
-      const textContents = result.content
-        .filter(item => item.type === 'text' && typeof item.text === 'string')
-        .map(item => this.parseEscapeCharacters(item.text))
-      if (textContents.length > 0) {
-        return textContents.join('\n')
-      }
+      const texts = result.content.filter(i => i.type === 'text').map(i => i.text)
+      if (texts.length) return texts.join('\n')
     }
-    
-    // Handle direct text field
-    if (typeof result.text === 'string') {
-      return this.parseEscapeCharacters(result.text)
-    }
-    
-    // Handle structured content
-    if (result.structured_content) {
-      return JSON.stringify(result.structured_content, null, 2)
-    }
-    
-    // Fallback: stringify the whole object
+    if (typeof result.text === 'string') return result.text
+    if (typeof result.content === 'string') return result.content
     return JSON.stringify(result, null, 2)
   },
-
-  /**
-   * Extract text content from tool result for summary display
-   * Returns plain text string from various result formats
-   */
-  extractToolContent(result) {
-    if (!result) return ''
-    
-    // Handle string results directly
-    if (typeof result === 'string') {
-      return result
-    }
-    
-    // Handle content array (MCP standard format)
-    if (Array.isArray(result.content)) {
-      const textContents = result.content
-        .filter(item => item.type === 'text' && typeof item.text === 'string')
-        .map(item => item.text)
-      if (textContents.length > 0) {
-        return textContents.join('\n')
-      }
-    }
-    
-    // Handle direct text field
-    if (typeof result.text === 'string') {
-      return result.text
-    }
-    
-    // Handle content field (legacy format)
-    if (typeof result.content === 'string') {
-      return result.content
-    }
-    
-    // Fallback: stringify
-    return JSON.stringify(result)
+  parseEscapes(text) {
+    if (typeof text !== 'string') return text
+    return text.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\')
   }
 }
 
-export const api = {
-  async get(endpoint) {
-    const response = await fetch(endpoint)
-    if (!response.ok) throw new Error('API Error')
-    return response.json()
-  },
-
-  async post(endpoint, data) {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    })
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }))
-      throw new Error(error.detail || 'API Error')
-    }
-    return response.json()
-  },
-
-  async put(endpoint, data) {
-    const response = await fetch(endpoint, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    })
-    if (!response.ok) throw new Error('API Error')
-    return response.json()
-  },
-
-  async delete(endpoint) {
-    const response = await fetch(endpoint, { method: 'DELETE' })
-    if (!response.ok) throw new Error('API Error')
-    return response.json()
-  }
-}
+// Note: api, formatters, markdownUtils, helpers are already exported individually above

@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import uuid
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from database.models import init_db, get_db
@@ -16,9 +16,7 @@ from database.crud import (
     add_message, get_conversation_messages, update_conversation_title,
     delete_conversation as db_delete_conversation,
     update_message, get_message, create_document, update_document_status, get_documents,
-    delete_message as db_delete_message, delete_document as db_delete_document, get_document
-)
-from database.agent_crud import (
+    delete_message as db_delete_message, delete_document as db_delete_document, get_document,
     get_all_agents, get_agent, get_agent_by_name, create_agent,
     update_agent, delete_agent, get_default_agent
 )
@@ -52,8 +50,7 @@ tool_executor = ToolExecutor(mcp_manager)
 # Set TTS service in settings manager
 settings_manager.set_tts_service(tool_executor.tts_service)
 
-# Active SSE connections for real-time status updates
-active_connections: Dict[str, asyncio.Queue] = {}
+
 
 
 @app.get("/")
@@ -64,8 +61,8 @@ async def index(request: Request):
 
 @app.get("/settings")
 async def settings_page(request: Request):
-    """Render settings page"""
-    return templates.TemplateResponse("settings.html", {"request": request})
+    """Redirect to main page (settings are now a modal)"""
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/knowledge")
@@ -119,23 +116,18 @@ async def send_message(conversation_id: str, request: Request):
     """Send a message and get LLM response"""
     data = await request.json()
     user_message = data.get("message", "")
-    enable_web_search = data.get("enable_web_search", False)
     enable_rag = data.get("enable_rag", False)
-    
+
     if not user_message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-    
+
     async with get_db() as db:
-        # Save user message
         await add_message(db, conversation_id, "user", user_message)
-        
-        # Create a unique request ID for this interaction
         request_id = str(uuid.uuid4())
-        
+
         return {
             "request_id": request_id,
             "status": "processing",
-            "enable_web_search": enable_web_search,
             "enable_rag": enable_rag
         }
 
@@ -143,7 +135,6 @@ async def send_message(conversation_id: str, request: Request):
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
-    enable_web_search: bool = False,
     enable_rag: bool = False,
     model: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
@@ -169,7 +160,6 @@ async def _core_stream_handler(
                             "temperature": agent.temperature,
                             "top_k": agent.top_k,
                             "max_tokens": agent.max_tokens,
-                            "enable_web_search": bool(agent.enable_web_search),
                             "enable_rag": bool(agent.enable_rag)
                         }
             
@@ -197,27 +187,24 @@ async def _core_stream_handler(
 
             # Track message blocks for sequential display (content, thinking, tool calls)
             message_blocks = []
-            current_content_block = ""
-            current_thinking_block = ""
 
             # Get MCP tools for LLM function calling
             mcp_tools = []
             if mcp_manager:
                 mcp_tools = await mcp_manager.list_all_tools()
 
-            # Get all tool definitions - include web_search and query_documents if enabled
+            # Get all tool definitions - include query_documents if enabled
             # The LLM will decide which tools to call based on the user's request
             all_tools = tool_executor.get_tool_definitions(
-                exclude_tools=[],  # Don't exclude any tools - let LLM choose
+                exclude_tools=[],
                 mcp_tools=mcp_tools,
-                enable_web_search=enable_web_search,
                 enable_rag=enable_rag
             )
 
             # Debug logging - show exactly what tools are being sent
             print(f"[TOOLS] MCP tools discovered: {len(mcp_tools)}")
             print(f"[TOOLS] Total tools sent to LLM: {len(all_tools)}")
-            print(f"[TOOLS] enable_web_search={enable_web_search}, enable_rag={enable_rag}")
+            print(f"[TOOLS] enable_rag={enable_rag}")
             for tool in all_tools:
                 tool_name = tool.get("function", {}).get("name", "unknown")
                 tool_server = tool.get("server", "builtin")
@@ -237,7 +224,6 @@ async def _core_stream_handler(
                 # Stream LLM response
                 assistant_message, thinking_content = "", ""
                 pending_tool_call = None
-                had_content = False
 
                 async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
                     try:
@@ -254,7 +240,6 @@ async def _core_stream_handler(
                                     "type": "content",
                                     "content": content
                                 })
-                            had_content = True
                             yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
                         elif chunk_type == "thinking":
                             thinking = chunk.get("content", "")
@@ -355,22 +340,9 @@ async def _core_stream_handler(
                     print(f"[DEBUG] No pending tool call, conversation complete")
                     break
             
-            # Save any remaining content/thinking blocks after the loop ends
-            # Note: These variables are not used in the current streaming logic
-            # but kept for backward compatibility
-            if current_content_block: #.strip():
-                message_blocks.append({
-                    "type": "content",
-                    "content": current_content_block  # Preserve original formatting
-                })
-            if current_thinking_block: #.strip():
-                message_blocks.append({
-                    "type": "thinking",
-                    "content": current_thinking_block  # Preserve original formatting
-                })
-
             # Save assistant message with message blocks for sequential display
             # Always save if we have any content, thinking, or message blocks
+            assistant_saved = False
             if assistant_message.strip() or thinking_content.strip() or message_blocks:
                 # Consolidate consecutive content blocks to avoid fragmentation
                 # But preserve newlines and formatting within each block
@@ -406,39 +378,46 @@ async def _core_stream_handler(
                     content_preview = block.get('content', '')[:100].replace('\n', '\\n') if block.get('content') else ''
                     print(f"[DEBUG] Block {i}: type={block.get('type')}, content_preview='{content_preview}...'")
                 await add_message(db, conversation_id, "assistant", assistant_message, blocks=consolidated_blocks or None, extra_metadata=message_extra_metadata)
+                # Commit immediately so the message is persisted even if client disconnects
+                await db.commit()
+                assistant_saved = True
 
             # Yield done event before title generation (client may disconnect after this)
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             # Title Generation Logic (only for first exchange)
             # This is done AFTER yielding 'done' so client can disconnect without affecting main response
-            messages_after_save = await get_conversation_messages(db, conversation_id)
-            user_count = len([m for m in messages_after_save if m["role"] == "user"])
-            assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
+            # The assistant message is already committed above, so we need a fresh session for title ops
+            if assistant_saved:
+                async with get_db() as title_db:
+                    messages_after_save = await get_conversation_messages(title_db, conversation_id)
+                    user_count = len([m for m in messages_after_save if m["role"] == "user"])
+                    assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
 
-            if user_count == 1 and assistant_count == 1:
-                first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
-                if first_user_message:
-                    try:
-                        # Use QUERY_MODEL for title generation to avoid issues with thinking models
-                        from settings import QUERY_MODEL
-                        # Shield title generation from cancellation - it's a background task
-                        title = await asyncio.wait_for(
-                            asyncio.shield(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL)),
-                            timeout=40.0
-                        )
-                        await update_conversation_title(db, conversation_id, title)
-                        # Try to send title update, but client may have disconnected
-                        try:
-                            yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
-                        except Exception:
-                            # Client disconnected, but title was saved - this is fine
-                            pass
-                    except asyncio.CancelledError:
-                        # Title generation was cancelled (client disconnected) - this is normal
-                        print(f"Title generation cancelled for conversation {conversation_id} (client disconnected)")
-                    except Exception as e:
-                        print(f"Error generating or updating title: {e}")
+                    if user_count == 1 and assistant_count == 1:
+                        first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
+                        if first_user_message:
+                            try:
+                                # Use QUERY_MODEL for title generation to avoid issues with thinking models
+                                from settings import QUERY_MODEL
+                                # Shield title generation from cancellation - it's a background task
+                                title = await asyncio.wait_for(
+                                    asyncio.shield(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL)),
+                                    timeout=40.0
+                                )
+                                await update_conversation_title(title_db, conversation_id, title)
+                                await title_db.commit()
+                                # Try to send title update, but client may have disconnected
+                                try:
+                                    yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                                except Exception:
+                                    # Client disconnected, but title was saved - this is fine
+                                    pass
+                            except asyncio.CancelledError:
+                                # Title generation was cancelled (client disconnected) - this is normal
+                                print(f"Title generation cancelled for conversation {conversation_id} (client disconnected)")
+                            except Exception as e:
+                                print(f"Error generating or updating title: {e}")
 
     except asyncio.CancelledError:
         # Request was cancelled by client - this is normal, don't log as error
@@ -452,25 +431,18 @@ async def _core_stream_handler(
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         except Exception:
             pass  # Client may have disconnected
-    finally:
-        if request_id in active_connections:
-            try:
-                del active_connections[request_id]
-            except KeyError:
-                pass
 
 
 @app.get("/api/stream/{request_id}")
 async def stream_response(
     request_id: str,
     conversation_id: str,
-    enable_web_search: bool = False,
     enable_rag: bool = False,
     model: str = None
 ):
     """Stream LLM response with real-time tool execution updates."""
     return StreamingResponse(
-        _core_stream_handler(request_id, conversation_id, enable_web_search, enable_rag, model),
+        _core_stream_handler(request_id, conversation_id, enable_rag, model),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -484,7 +456,7 @@ async def stream_response(
 async def stream_regenerate_response(request_id: str, conversation_id: str, model: str = None):
     """Stream regenerated LLM response using unified handler."""
     return StreamingResponse(
-        _core_stream_handler(request_id, conversation_id, False, False, model),
+        _core_stream_handler(request_id, conversation_id, enable_rag=False, model=model),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -968,34 +940,28 @@ async def rag_query_endpoint(request: Request):
     return result
 
 
-@app.post("/api/search/web")
-async def web_search_endpoint(request: Request):
-    """
-    Direct web search endpoint using SearXNG.
-    
-    This can be used for explicit web searches without LLM tool calling.
-    """
-    data = await request.json()
-    query = data.get("query", "")
-    max_results = data.get("max_results", 15)
-    
-    if not query:
-        raise HTTPException(status_code=400, detail="Query is required")
-    
-    result = await tool_executor.search_tool.search(
-        query=query,
-        max_results=max_results,
-        top_k=max_results
-    )
-    
-    return result
-
-
 # Agent Management
-@app.get("/agents")
-async def agents_page(request: Request):
-    """Render agents management page"""
-    return templates.TemplateResponse("agents.html", {"request": request})
+def _agent_to_dict(agent) -> Dict:
+    """Serialize an Agent model to a dictionary."""
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "description": agent.description,
+        "model": agent.model,
+        "temperature": agent.temperature,
+        "top_k": agent.top_k,
+        "max_tokens": agent.max_tokens,
+        "system_prompt": agent.system_prompt,
+        "enabled_tools": agent.enabled_tools,
+        "enabled_mcp_servers": agent.enabled_mcp_servers,
+        "enable_rag": bool(agent.enable_rag),
+        "rag_similarity_threshold": agent.rag_similarity_threshold,
+        "enable_web_search": bool(agent.enable_web_search),
+        "conversation_starters": agent.conversation_starters,
+        "created_at": agent.created_at.isoformat(),
+        "updated_at": agent.updated_at.isoformat(),
+        "is_active": bool(agent.is_active)
+    }
 
 
 @app.get("/api/agents")
@@ -1003,30 +969,7 @@ async def list_agents():
     """List all agents"""
     async with get_db() as db:
         agents = await get_all_agents(db)
-        return {
-            "agents": [
-                {
-                    "id": agent.id,
-                    "name": agent.name,
-                    "description": agent.description,
-                    "model": agent.model,
-                    "temperature": agent.temperature,
-                    "top_k": agent.top_k,
-                    "max_tokens": agent.max_tokens,
-                    "system_prompt": agent.system_prompt,
-                    "enabled_tools": agent.enabled_tools,
-                    "enabled_mcp_servers": agent.enabled_mcp_servers,
-                    "enable_rag": bool(agent.enable_rag),
-                    "rag_similarity_threshold": agent.rag_similarity_threshold,
-                    "enable_web_search": bool(agent.enable_web_search),
-                    "conversation_starters": agent.conversation_starters,
-                    "created_at": agent.created_at.isoformat(),
-                    "updated_at": agent.updated_at.isoformat(),
-                    "is_active": bool(agent.is_active)
-                }
-                for agent in agents
-            ]
-        }
+        return {"agents": [_agent_to_dict(a) for a in agents]}
 
 
 @app.get("/api/agents/{agent_id}")
@@ -1036,27 +979,7 @@ async def get_agent_detail(agent_id: int):
         agent = await get_agent(db, agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        return {
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "description": agent.description,
-                "model": agent.model,
-                "temperature": agent.temperature,
-                "top_k": agent.top_k,
-                "max_tokens": agent.max_tokens,
-                "system_prompt": agent.system_prompt,
-                "enabled_tools": agent.enabled_tools,
-                "enabled_mcp_servers": agent.enabled_mcp_servers,
-                "enable_rag": bool(agent.enable_rag),
-                "rag_similarity_threshold": agent.rag_similarity_threshold,
-                "enable_web_search": bool(agent.enable_web_search),
-                "conversation_starters": agent.conversation_starters,
-                "created_at": agent.created_at.isoformat(),
-                "updated_at": agent.updated_at.isoformat(),
-                "is_active": bool(agent.is_active)
-            }
-        }
+        return {"agent": _agent_to_dict(agent)}
 
 
 @app.post("/api/agents")
@@ -1091,27 +1014,7 @@ async def create_agent_endpoint(request: Request):
             raise HTTPException(status_code=400, detail="Agent with this name already exists")
         
         agent = await create_agent(db, agent_data)
-        return {
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "description": agent.description,
-                "model": agent.model,
-                "temperature": agent.temperature,
-                "top_k": agent.top_k,
-                "max_tokens": agent.max_tokens,
-                "system_prompt": agent.system_prompt,
-                "enabled_tools": agent.enabled_tools,
-                "enabled_mcp_servers": agent.enabled_mcp_servers,
-                "enable_rag": bool(agent.enable_rag),
-                "rag_similarity_threshold": agent.rag_similarity_threshold,
-                "enable_web_search": bool(agent.enable_web_search),
-                "conversation_starters": agent.conversation_starters,
-                "created_at": agent.created_at.isoformat(),
-                "updated_at": agent.updated_at.isoformat(),
-                "is_active": bool(agent.is_active)
-            }
-        }
+        return {"agent": _agent_to_dict(agent)}
 
 
 @app.put("/api/agents/{agent_id}")
@@ -1151,28 +1054,7 @@ async def update_agent_endpoint(agent_id: int, request: Request):
         agent = await update_agent(db, agent_id, update_data)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
-        return {
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "description": agent.description,
-                "model": agent.model,
-                "temperature": agent.temperature,
-                "top_k": agent.top_k,
-                "max_tokens": agent.max_tokens,
-                "system_prompt": agent.system_prompt,
-                "enabled_tools": agent.enabled_tools,
-                "enabled_mcp_servers": agent.enabled_mcp_servers,
-                "enable_rag": bool(agent.enable_rag),
-                "rag_similarity_threshold": agent.rag_similarity_threshold,
-                "enable_web_search": bool(agent.enable_web_search),
-                "conversation_starters": agent.conversation_starters,
-                "created_at": agent.created_at.isoformat(),
-                "updated_at": agent.updated_at.isoformat(),
-                "is_active": bool(agent.is_active)
-            }
-        }
+        return {"agent": _agent_to_dict(agent)}
 
 
 @app.delete("/api/agents/{agent_id}")

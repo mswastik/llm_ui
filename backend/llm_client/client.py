@@ -95,7 +95,7 @@ class LLMClient:
                 current_base_url = self._get_current_base_url()
                 
                 # Increased timeout for long-running requests with web search context
-                timeout = aiohttp.ClientTimeout(total=600, sock_connect=30, sock_read=120)
+                timeout = aiohttp.ClientTimeout(total=1200, sock_connect=100, sock_read=420)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     print(f"[DEBUG] Starting LLM request (attempt {attempt + 1}/{max_retries})")
                     async with session.post(

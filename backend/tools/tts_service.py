@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass
 from settings import UPLOAD_DIR
+from tools.errors import handle_tool_errors
 
 # Try to import TTS backends
 try:
@@ -171,6 +172,7 @@ class TTSService:
             self._kokoro_pipeline = None
             print(f"Kokoro pipeline reset due to device/lang change")
     
+    @handle_tool_errors
     async def generate_speech(
         self,
         text: str,
@@ -178,29 +180,16 @@ class TTSService:
         rate: Optional[str] = None,
         output_format: str = "mp3"
     ) -> Dict[str, Any]:
-        """
-        Generate speech audio from text.
-
-        Args:
-            text: The text to convert to speech
-            voice: Optional voice override
-            rate: Optional rate override (e.g., "+10%", "-20%")
-            output_format: Audio format (mp3, wav, etc.)
-
-        Returns:
-            Dict with 'success', 'filepath', 'url', and optional 'error'
-        """
+        """Generate speech audio from text."""
         if not text.strip():
             return {"success": False, "error": "No text provided"}
 
         voice = voice or self.config.voice
         rate = rate or self.config.rate
 
-        # Generate cache filename based on text content and parameters
         filename = self._get_cache_filename(text, voice, rate, output_format)
         filepath = os.path.join(self.config.output_dir, filename)
 
-        # Check if cached file already exists
         if os.path.exists(filepath):
             print(f"Using cached TTS file: {filepath}")
             return {
@@ -212,24 +201,18 @@ class TTSService:
                 "cached": True
             }
 
-        try:
-            if self.config.engine == "edge-tts" and HAS_EDGE_TTS:
-                return await self._generate_with_edge_tts(text, voice, rate, filepath)
-            elif self.config.engine == "pyttsx3" and HAS_PYTTSX3:
-                return await self._generate_with_pyttsx3(text, filepath)
-            elif self.config.engine == "kokoro" and _check_kokoro_available():
-                return await self._generate_with_kokoro(text, voice, filepath)
-            else:
-                # Fallback: try edge-tts if available
-                if HAS_EDGE_TTS:
-                    return await self._generate_with_edge_tts(text, voice, rate, filepath)
-                elif _check_kokoro_available():
-                    return await self._generate_with_kokoro(text, voice, filepath)
-                else:
-                    return {"success": False, "error": "No TTS engine available. Install edge-tts, pyttsx3, or kokoro."}
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        if self.config.engine == "edge-tts" and HAS_EDGE_TTS:
+            return await self._generate_with_edge_tts(text, voice, rate, filepath)
+        elif self.config.engine == "pyttsx3" and HAS_PYTTSX3:
+            return await self._generate_with_pyttsx3(text, filepath)
+        elif self.config.engine == "kokoro" and _check_kokoro_available():
+            return await self._generate_with_kokoro(text, voice, filepath)
+        elif HAS_EDGE_TTS:
+            return await self._generate_with_edge_tts(text, voice, rate, filepath)
+        elif _check_kokoro_available():
+            return await self._generate_with_kokoro(text, voice, filepath)
+        else:
+            return {"success": False, "error": "No TTS engine available. Install edge-tts, pyttsx3, or kokoro."}
     
     async def _generate_with_edge_tts(
         self,

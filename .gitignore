@@ -2,3 +2,6 @@
 __pycache__
 llm_ui.db
 uploads/*
+.playwright/
+.playwright-cli/
+graphify-out/

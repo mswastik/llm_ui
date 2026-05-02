@@ -58,14 +58,6 @@ DEFAULTS = {
     "kokoro_device": "cpu",
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
-
-    # SearXNG Settings
-    "searxng_url": "http://localhost:8888/search",
-    "searxng_num_results": 25,
-    "searxng_chunk_size": 1200,
-    "searxng_similarity_threshold": 0.4,
-    "searxng_max_retries": 3,
-    "searxng_enable_multi_query": True,
 }
 
 # Create upload directory if it doesn't exist
@@ -113,14 +105,6 @@ class Settings(BaseModel):
     kokoro_device: str = Field(default=DEFAULTS["kokoro_device"], description="Kokoro device (cpu or cuda)")
     kokoro_volume: float = Field(default=DEFAULTS["kokoro_volume"], description="Kokoro TTS volume level (0.0 to 1.0)")
     kokoro_speed: float = Field(default=DEFAULTS["kokoro_speed"], description="Kokoro TTS speed multiplier (0.5 to 2.0)")
-
-    # SearXNG Settings
-    searxng_url: str = Field(default=DEFAULTS["searxng_url"], description="SearXNG search URL")
-    searxng_num_results: int = Field(default=DEFAULTS["searxng_num_results"], description="Number of search results to fetch")
-    searxng_chunk_size: int = Field(default=DEFAULTS["searxng_chunk_size"], description="Chunk size for text processing")
-    searxng_similarity_threshold: float = Field(default=DEFAULTS["searxng_similarity_threshold"], description="Similarity threshold for filtering results")
-    searxng_max_retries: int = Field(default=DEFAULTS["searxng_max_retries"], description="Maximum retries for search requests")
-    searxng_enable_multi_query: bool = Field(default=DEFAULTS["searxng_enable_multi_query"], description="Enable multi-query search")
 
 
 # Module-level variables (will be updated after settings_manager is initialized)

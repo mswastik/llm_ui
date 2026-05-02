@@ -1,177 +1,82 @@
 {% extends "base.html" %}
 
+{% block title %}Knowledge Base — LLM UI{% endblock %}
+
 {% block content %}
-<!-- Knowledge Base Page -->
-<div class="min-h-screen bg-gray-50" x-data="knowledge" x-init="init()">
+<div class="h-screen flex flex-col bg-[var(--bg-primary)]"
+     x-data="{ documents: [], loading: true }"
+     x-init="documents = await (async () => { try { const r = await fetch('/api/documents'); const d = await r.json(); return d.documents || []; } catch(e) { return []; } })(); loading = false;">
+
     <!-- Header -->
-    <div class="bg-white border-b border-gray-200 px-6 py-4">
-        <div class="flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <a href="/" class="text-gray-600 hover:text-gray-900">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-                    </svg>
-                </a>
-                <h1 class="text-2xl font-bold text-gray-900">Knowledge Base</h1>
-            </div>
-            <div class="flex items-center gap-3">
-                <a href="/" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-                    Back to Chat
-                </a>
-                <label class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 cursor-pointer">
-                    Upload Document
-                    <input type="file" @change="uploadDocument($event.target.files[0])" class="hidden" accept=".txt,.md,.pdf,.doc,.docx,.json,.yaml,.yml">
-                </label>
-            </div>
+    <header class="h-[var(--header-height)] border-b border-[var(--border-primary)] px-6 flex items-center justify-between flex-shrink-0 bg-[var(--bg-glass)] backdrop-blur-sm">
+        <div class="flex items-center gap-3">
+            <a href="/" class="btn btn-icon btn-ghost" title="Back to chat">
+                <i class="ph ph-arrow-left text-lg"></i>
+            </a>
+            <h1 class="text-lg font-semibold flex items-center gap-2">
+                <i class="ph ph-books text-[var(--accent-primary)]"></i>
+                Knowledge Base
+            </h1>
+            <span class="text-xs text-[var(--text-tertiary)]" x-text="documents.length + ' documents'"></span>
         </div>
-    </div>
+    </header>
 
     <!-- Content -->
-    <div class="max-w-7xl mx-auto px-6 py-8">
-        <!-- Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-500">Total Documents</div>
-                <div class="text-3xl font-bold text-gray-900 mt-2" x-text="documents.length"></div>
-            </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-500">Total Size</div>
-                <div class="text-3xl font-bold text-gray-900 mt-2" x-text="formatFileSize(documents.reduce((sum, d) => sum + (d.file_size || 0), 0))"></div>
-            </div>
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div class="text-sm font-medium text-gray-500">Processed</div>
-                <div class="text-3xl font-bold text-green-600 mt-2" x-text="documents.filter(d => d.status === 'completed').length"></div>
-            </div>
+    <main class="flex-1 overflow-y-auto p-6">
+        <!-- Upload Area -->
+        <div class="mb-6">
+            <label class="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer border-[var(--border-input)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-primary-light)]/20 transition-colors">
+                <div class="flex flex-col items-center justify-center">
+                    <i class="ph ph-upload-simple text-3xl text-[var(--text-tertiary)] mb-2"></i>
+                    <p class="text-sm text-[var(--text-secondary)] font-medium">Upload Documents</p>
+                    <p class="text-xs text-[var(--text-tertiary)] mt-1">PDF, DOCX, TXT, MD, JSON, YAML • Max 50MB</p>
+                </div>
+                <input type="file" class="hidden" accept=".pdf,.docx,.txt,.md,.json,.yaml,.yml" @change="(async () => { const formData = new FormData(); formData.append('file', $event.target.files[0]); const res = await fetch('/api/documents/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); documents.unshift(data.document); $store.ui.showToast('Document uploaded!', 'success'); } else { const err = await res.json().catch(() => ({})); $store.ui.showToast('Error: ' + (err.detail || 'Upload failed'), 'error'); } })()">
+            </label>
         </div>
 
         <!-- Documents List -->
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div class="px-6 py-4 border-b border-gray-200">
-                <h2 class="text-lg font-medium text-gray-900">Documents</h2>
+        <template x-if="loading">
+            <div class="flex items-center justify-center h-40">
+                <i class="ph ph-spinner animate-spin text-2xl text-[var(--accent-primary)]"></i>
             </div>
-            <div class="divide-y divide-gray-200">
-                <template x-if="documents.length === 0">
-                    <div class="px-6 py-12 text-center">
-                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        <p class="mt-2 text-sm text-gray-500">No documents uploaded yet</p>
-                    </div>
-                </template>
-                <template x-for="doc in documents" :key="doc.id">
-                    <div class="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                        <div class="flex items-center gap-4">
-                            <div class="flex-shrink-0">
-                                <svg class="h-10 w-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                            </div>
-                            <div>
-                                <h3 class="text-sm font-medium text-gray-900" x-text="doc.filename"></h3>
-                                <div class="flex items-center gap-3 mt-1">
-                                    <span class="text-xs text-gray-500" x-text="formatFileSize(doc.file_size)"></span>
-                                    <span class="text-xs text-gray-500" x-text="doc.content_type || doc.file_type"></span>
-                                    <span class="text-xs px-2 py-0.5 rounded-full"
-                                        :class="{
-                                            'bg-green-100 text-green-700': doc.status === 'completed',
-                                            'bg-yellow-100 text-yellow-700': doc.status === 'processing' || doc.status === 'pending',
-                                            'bg-red-100 text-red-700': doc.status === 'failed'
-                                        }"
-                                        x-text="doc.status">
-                                    </span>
-                                </div>
-                            </div>
+        </template>
+
+        <template x-if="!loading && documents.length === 0">
+            <div class="empty-state">
+                <div class="empty-state-icon">
+                    <i class="ph ph-file-x text-3xl text-[var(--accent-primary)]"></i>
+                </div>
+                <h2 class="text-xl font-semibold mb-1">No Documents</h2>
+                <p class="text-sm max-w-md">Upload documents to build your knowledge base. The LLM will be able to search and reference them in conversations.</p>
+            </div>
+        </template>
+
+        <div class="space-y-2" x-show="!loading && documents.length > 0">
+            <template x-for="doc in documents" :key="doc.id">
+                <div class="card p-4 flex items-center justify-between group">
+                    <div class="flex items-center gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-[var(--accent-primary-light)] flex items-center justify-center flex-shrink-0">
+                            <i class="ph ph-file-text text-xl text-[var(--accent-primary)]"></i>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs text-gray-500" x-text="new Date(doc.uploaded_at).toLocaleDateString()"></span>
-                            <button @click="deleteDocument(doc.id)" class="p-2 text-red-500 hover:bg-red-50 rounded-lg">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                </svg>
-                            </button>
+                        <div>
+                            <h3 class="font-medium text-sm" x-text="doc.filename"></h3>
+                            <p class="text-xs text-[var(--text-tertiary)]">
+                                <span x-text="doc.file_size ? (doc.file_size < 1024 ? doc.file_size + ' B' : doc.file_size < 1048576 ? (doc.file_size/1024).toFixed(1) + ' KB' : (doc.file_size/1048576).toFixed(1) + ' MB') : '0 B'"></span>
+                                <span class="mx-1">•</span>
+                                <span x-text="doc.content_type || 'unknown'"></span>
+                                <span class="mx-1">•</span>
+                                <span x-text="new Date(doc.uploaded_at).toLocaleDateString()"></span>
+                            </p>
                         </div>
                     </div>
-                </template>
-            </div>
+                    <button @click="if(confirm('Delete this document?')) { fetch('/api/documents/' + doc.id, { method: 'DELETE' }).then(() => { documents = documents.filter(d => d.id !== doc.id); $store.ui.showToast('Document deleted', 'success'); }).catch(() => $store.ui.showToast('Failed to delete', 'error')) }"
+                            class="btn btn-icon btn-ghost text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--error-bg)] opacity-0 group-hover:opacity-100 transition-all">
+                        <i class="ph ph-trash text-lg"></i>
+                    </button>
+                </div>
+            </template>
         </div>
-    </div>
-
-    <!-- Toast -->
-    <div x-show="toast.show" x-transition class="fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50"
-        :class="{'bg-green-500 text-white': toast.type === 'success', 'bg-red-500 text-white': toast.type === 'error', 'bg-blue-500 text-white': toast.type === 'info'}"
-        x-text="toast.message">
-    </div>
+    </main>
 </div>
-
-<script>
-document.addEventListener('alpine:init', () => {
-    Alpine.data('knowledge', () => ({
-        documents: [],
-        toast: { show: false, message: '', type: 'success' },
-
-        async init() {
-            await this.loadDocuments()
-        },
-
-        async loadDocuments() {
-            try {
-                const res = await fetch('/api/documents')
-                const data = await res.json()
-                this.documents = data.documents || []
-            } catch (e) {
-                this.showToast('Failed to load documents', 'error')
-            }
-        },
-
-        async uploadDocument(file) {
-            if (!file) return
-            const formData = new FormData()
-            formData.append('file', file)
-            
-            try {
-                const res = await fetch('/api/documents/upload', { method: 'POST', body: formData })
-                const data = await res.json()
-                if (res.ok) {
-                    this.showToast('Document uploaded successfully', 'success')
-                    await this.loadDocuments()
-                } else {
-                    this.showToast(data.detail || 'Upload failed', 'error')
-                }
-            } catch (e) {
-                this.showToast('Upload failed', 'error')
-            }
-        },
-
-        async deleteDocument(id) {
-            if (!confirm('Delete this document?')) return
-            try {
-                const res = await fetch(`/api/documents/${id}`, { method: 'DELETE' })
-                if (res.ok) {
-                    this.showToast('Document deleted', 'success')
-                    await this.loadDocuments()
-                } else {
-                    this.showToast('Delete failed', 'error')
-                }
-            } catch (e) {
-                this.showToast('Delete failed', 'error')
-            }
-        },
-
-        formatFileSize(bytes) {
-            if (!bytes) return '0 B'
-            const k = 1024
-            const sizes = ['B', 'KB', 'MB', 'GB']
-            const i = Math.floor(Math.log(bytes) / Math.log(k))
-            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-        },
-
-        showToast(message, type = 'success') {
-            this.toast.message = message
-            this.toast.type = type
-            this.toast.show = true
-            setTimeout(() => { this.toast.show = false }, 3000)
-        }
-    }))
-})
-</script>
 {% endblock %}

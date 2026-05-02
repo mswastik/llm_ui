@@ -20,6 +20,7 @@ from datetime import datetime
 import uuid
 
 from tools.base import SharedLLMUtils
+from tools.errors import handle_tool_errors
 
 # Try to import PDF extraction
 try:
@@ -346,6 +347,7 @@ class RAGService:
         self.chunker = Chunker()
         self.store = EmbeddingStore()
     
+    @handle_tool_errors
     async def process_document(
         self,
         document_id: str,
@@ -353,76 +355,49 @@ class RAGService:
         file_type: str,
         progress_callback=None
     ) -> Dict:
-        """
-        Process a document: extract text, chunk, embed, and store.
+        """Process a document: extract text, chunk, embed, and store."""
+        if progress_callback:
+            progress_callback("Extracting text from document...", 10)
         
-        Returns:
-            Dict with processing results
-        """
-        try:
-            # Extract text
-            if progress_callback:
-                progress_callback("Extracting text from document...", 10)
-            
-            text = self.processor.extract_text(filepath, file_type)
-            
-            if not text.strip():
-                return {
-                    "success": False,
-                    "error": "No text could be extracted from document"
-                }
-            
-            # Chunk text
-            if progress_callback:
-                progress_callback("Chunking document...", 30)
-            
-            chunks = self.chunker.chunk_text(
-                text,
-                chunk_size=self.config.chunk_size,
-                overlap=self.config.chunk_overlap
-            )
-            
-            if not chunks:
-                return {
-                    "success": False,
-                    "error": "Document could not be chunked"
-                }
-            
-            # Generate embeddings
-            if progress_callback:
-                progress_callback(f"Generating embeddings for {len(chunks)} chunks...", 50)
-            
-            embeddings = []
-            for i, (chunk_text, _, _) in enumerate(chunks):
-                embedding = await self._get_embedding(chunk_text)
-                embeddings.append(embedding)
-                
-                if progress_callback and i % 5 == 0:
-                    progress_callback(
-                        f"Embedding chunk {i+1}/{len(chunks)}...",
-                        50 + int(40 * i / len(chunks))
-                    )
-            
-            # Store chunks and embeddings
-            if progress_callback:
-                progress_callback("Storing embeddings...", 95)
-            
-            self.store.store_chunks(document_id, chunks, embeddings)
-            
-            return {
-                "success": True,
-                "chunk_count": len(chunks),
-                "total_chars": len(text)
-            }
+        text = self.processor.extract_text(filepath, file_type)
         
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return {
-                "success": False,
-                "error": str(e)
-            }
+        if not text.strip():
+            return {"success": False, "error": "No text could be extracted from document"}
+        
+        if progress_callback:
+            progress_callback("Chunking document...", 30)
+        
+        chunks = self.chunker.chunk_text(
+            text,
+            chunk_size=self.config.chunk_size,
+            overlap=self.config.chunk_overlap
+        )
+        
+        if not chunks:
+            return {"success": False, "error": "Document could not be chunked"}
+        
+        if progress_callback:
+            progress_callback(f"Generating embeddings for {len(chunks)} chunks...", 50)
+        
+        embeddings = []
+        for i, (chunk_text, _, _) in enumerate(chunks):
+            embedding = await self._get_embedding(chunk_text)
+            embeddings.append(embedding)
+            
+            if progress_callback and i % 5 == 0:
+                progress_callback(
+                    f"Embedding chunk {i+1}/{len(chunks)}...",
+                    50 + int(40 * i / len(chunks))
+                )
+        
+        if progress_callback:
+            progress_callback("Storing embeddings...", 95)
+        
+        self.store.store_chunks(document_id, chunks, embeddings)
+        
+        return {"success": True, "chunk_count": len(chunks), "total_chars": len(text)}
     
+    @handle_tool_errors
     async def query(
         self,
         query: str,
@@ -430,91 +405,56 @@ class RAGService:
         top_k: int = None,
         progress_callback=None
     ) -> Dict:
-        """
-        Query documents using semantic search.
+        """Query documents using semantic search."""
+        top_k = top_k or self.config.max_chunks
         
-        Args:
-            query: The search query
-            document_ids: Optional list of document IDs to search within
-            top_k: Number of results to return
-            progress_callback: Optional callback for progress updates
-            
-        Returns:
-            Dict with 'results' and 'context' keys
-        """
-        try:
-            top_k = top_k or self.config.max_chunks
-            
-            if progress_callback:
-                progress_callback("Generating query embedding...", 20)
-            
-            # Get query embedding
-            query_embedding = await self._get_embedding(query)
-            
-            if progress_callback:
-                progress_callback("Searching documents...", 50)
-            
-            # Search for similar chunks
-            results = self.store.search_similar(
-                query_embedding,
-                top_k=top_k * 2,  # Get more for reranking
-                document_ids=document_ids
-            )
-            
-            # Filter by similarity threshold
-            results = [
-                r for r in results
-                if r["similarity"] >= self.config.similarity_threshold
-            ]
-            
-            if not results:
-                return {
-                    "results": [],
-                    "context": "No relevant information found in the documents."
-                }
-            
-            if progress_callback:
-                progress_callback("Reranking results...", 70)
-            
-            # Rerank if we have multiple results
-            if len(results) > 1:
-                reranked_indices = await self._rerank(query, [r["content"] for r in results])
-                results = [results[i] for i in reranked_indices[:top_k]]
-            else:
-                results = results[:top_k]
-            
-            if progress_callback:
-                progress_callback("Formatting results...", 90)
-            
-            # Format context
-            context = self._format_context(results, query)
-
-            # Prepare detailed sources with chunk content for citations
-            # Create one source for each result to match citation markers
-            sources = []
-            for i, result in enumerate(results, 1):
-                sources.append({
-                    "id": i,
-                    "title": f"Document {result.get('document_id', 'Unknown')} - Chunk {result.get('chunk_index', i)}",
-                    "url": f"#document-{result.get('document_id', 'unknown')}-{result.get('chunk_index', i)}",
-                    "snippet": result.get("content", "")[:300] + "..." if len(result.get("content", "")) > 300 else result.get("content", ""),
-                    "chunk_content": result.get("content", "")
-                })
-
-            return {
-                "results": results,
-                "context": context,
-                "sources": sources
-            }
+        if progress_callback:
+            progress_callback("Generating query embedding...", 20)
         
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return {
-                "results": [],
-                "context": f"Error querying documents: {str(e)}",
-                "error": str(e)
-            }
+        query_embedding = await self._get_embedding(query)
+        
+        if progress_callback:
+            progress_callback("Searching documents...", 50)
+        
+        results = self.store.search_similar(
+            query_embedding,
+            top_k=top_k * 2,
+            document_ids=document_ids
+        )
+        
+        results = [
+            r for r in results
+            if r["similarity"] >= self.config.similarity_threshold
+        ]
+        
+        if not results:
+            return {"results": [], "context": "No relevant information found in the documents."}
+        
+        if progress_callback:
+            progress_callback("Reranking results...", 70)
+        
+        if len(results) > 1:
+            reranked_indices = await self._rerank(query, [r["content"] for r in results])
+            results = [results[i] for i in reranked_indices[:top_k]]
+        else:
+            results = results[:top_k]
+        
+        if progress_callback:
+            progress_callback("Formatting results...", 90)
+        
+        context = self._format_context(results, query)
+        
+        sources = []
+        for i, result in enumerate(results, 1):
+            sources.append({
+                "id": i,
+                "title": f"Document {result.get('document_id', 'Unknown')} - Chunk {result.get('chunk_index', i)}",
+                "url": f"#document-{result.get('document_id', 'unknown')}-{result.get('chunk_index', i)}",
+                "snippet": result.get("content", "")[:300] + "..." if len(result.get("content", "")) > 300 else result.get("content", ""),
+                "chunk_content": result.get("content", "")
+            })
+
+        return {"results": results, "context": context, "sources": sources}
     
     async def _get_embedding(self, text: str) -> np.ndarray:
         """Get embedding for text"""

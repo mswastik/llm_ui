@@ -1,45 +1,51 @@
 /**
- * Alpine.js Store - Shared State Management
+ * Simplified Alpine.js Stores
+ * Merged: chat + ui (replaces: chat, settings, documents, tts)
  */
 
-// Store definitions
-const storeDefinitions = {
+const stores = {
+  // ─── Chat Store ─────────────────────────────────────────
   chat: {
+    // Conversations
     conversations: [],
     currentConversationId: null,
     currentConversationTitle: 'New Chat',
+
+    // Messages
     messages: [],
+
+    // Input
     inputMessage: '',
+
+    // Loading / Streaming
     isLoading: false,
-    selectedModel: '',
-    availableModels: [],
-    editingMessageId: null,
-    editContent: '',
-    enableWebSearch: false,
-    enableRAG: false,
-    toolStatus: { active: false, tool: '', status: '', progress: null, data: null },
-    sidebarCollapsed: false,
-    expandedToolCallBlocks: {},
-    expandedThinkingBlocks: {},
-    expandedThinking: {},
-    expandedSources: {},
-    toast: { show: false, message: '', type: 'success' },
-
-    // Agent selection state
-    availableAgents: [],
-    selectedAgentId: null,
-    currentAgentConfig: null, // Stores the full agent config when selected
-
-    // Active streaming state - persists across navigation
     activeStreaming: {
       isStreaming: false,
       requestId: null,
       conversationId: null,
       msgIndex: null,
       conversationTitle: '',
-      messages: [] // Store streaming conversation's messages
+      messages: []
     },
 
+    // Tool status
+    toolStatus: { active: false, tool: '', status: '', progress: null },
+
+    // Model & Agent
+    selectedModel: '',
+    availableModels: [],
+    selectedAgentId: null,
+    availableAgents: [],
+    currentAgentConfig: null,
+
+    // RAG
+    enableRAG: false,
+
+    // Editing
+    editingMessageId: null,
+    editContent: '',
+
+    // ─── Actions ────────────────────────────────────────
     addConversation(conv) {
       this.conversations.unshift(conv)
     },
@@ -73,11 +79,8 @@ const storeDefinitions = {
         this.selectedModel = saved
       }
     },
-
-    // Agent selection methods
     setAgent(agentId) {
       this.selectedAgentId = agentId
-      // Find and store the full agent config
       const agent = this.availableAgents.find(a => a.id === agentId)
       this.currentAgentConfig = agent || null
       localStorage.setItem('selectedAgentId', agentId)
@@ -89,33 +92,17 @@ const storeDefinitions = {
         this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId)
       }
     },
-
-    showToast(message, type = 'success') {
-      this.toast.message = message
-      this.toast.type = type
-      this.toast.show = true
-      setTimeout(() => { this.toast.show = false }, 2500)
-    },
-
-    // Streaming state management
-    startStreaming(requestId, conversationId, msgIndex, conversationTitle = '', messages = []) {
+    startStreaming(requestId, conversationId, msgIndex, title = '', msgs = []) {
       this.activeStreaming = {
         isStreaming: true,
         requestId,
         conversationId,
         msgIndex,
-        conversationTitle,
-        messages: [...messages] // Store a copy of current messages
+        conversationTitle: title,
+        messages: [...msgs]
       }
       this.isLoading = true
     },
-
-    updateStreamingMessages(messages) {
-      if (this.activeStreaming.isStreaming) {
-        this.activeStreaming.messages = [...messages]
-      }
-    },
-
     stopStreaming() {
       this.activeStreaming = {
         isStreaming: false,
@@ -126,44 +113,87 @@ const storeDefinitions = {
         messages: []
       }
       this.isLoading = false
-      this.toolStatus.active = false
+      this.toolStatus = { active: false, tool: '', status: '', progress: null }
+    },
+    applyAgentConfig() {
+      const agent = this.currentAgentConfig
+      if (!agent) return
+      if (agent.model && this.availableModels.some(m => m.id === agent.model)) {
+        this.selectedModel = agent.model
+      }
+      this.enableRAG = !!agent.enable_rag
     }
   },
-  settings: {
-    show: false,
-    data: {},
+
+  // ─── UI Store ──────────────────────────────────────────
+  ui: {
+    // Theme
+    darkMode: localStorage.getItem('darkMode') === 'true',
+
+    // Sidebar
+    sidebarCollapsed: false,
+    sidebarWidth: parseInt(localStorage.getItem('sidebarWidth') || '280'),
+
+    // Panels
+    showMcpPanel: false,
+    showSettings: false,
+    showDocuments: false,
+
+    // Toast
+    toast: { show: false, message: '', type: 'success' },
+
+    // Settings data
+    settingsData: {},
     mcpServers: [],
     mcpTools: [],
-    activeTab: 'general',
-    newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '' },
-    update(data) {
-      Object.assign(this.data, data)
-    }
-  },
-  documents: {
-    show: false,
-    list: []
-  },
-  tts: {
-    available: false,
-    currentAudio: null,
-    currentAudioMessageId: null,
-    isPlaying: false,
-    loading: {},
-    cleanup() {
-      this.currentAudio = null
-      this.currentAudioMessageId = null
-      this.isPlaying = false
+    documents: [],
+
+    // MCP form state
+    newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
+    editingServer: false,
+    editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+
+    // Settings tab
+    settingsTab: 'general',
+
+    // ─── Actions ────────────────────────────────────────
+    toggleDarkMode() {
+      this.darkMode = !this.darkMode
+      localStorage.setItem('darkMode', this.darkMode)
+      document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light')
+    },
+    initTheme() {
+      document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light')
+    },
+    toggleSidebar() {
+      this.sidebarCollapsed = !this.sidebarCollapsed
+      this.sidebarWidth = this.sidebarCollapsed ? 68 : 280
+      localStorage.setItem('sidebarWidth', this.sidebarWidth)
+    },
+    setSidebarWidth(width) {
+      this.sidebarWidth = width
+      localStorage.setItem('sidebarWidth', width)
+    },
+    showToast(message, type = 'success') {
+      this.toast = { show: true, message, type }
+      setTimeout(() => { this.toast = { show: false, message: '', type: 'success' } }, 3000)
+    },
+    toggleMcpPanel() {
+      this.showMcpPanel = !this.showMcpPanel
+    },
+    openSettings() {
+      this.showSettings = true
+    },
+    closeSettings() {
+      this.showSettings = false
+    },
+    openDocuments() {
+      this.showDocuments = true
+    },
+    closeDocuments() {
+      this.showDocuments = false
     }
   }
 }
 
-// Register stores when Alpine initializes
-document.addEventListener('alpine:init', () => {
-  Alpine.store('chat', storeDefinitions.chat)
-  Alpine.store('settings', storeDefinitions.settings)
-  Alpine.store('documents', storeDefinitions.documents)
-  Alpine.store('tts', storeDefinitions.tts)
-})
-
-export { storeDefinitions }
+export { stores }

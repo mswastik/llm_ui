@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 import uuid
 import logging
+import asyncio
 
 from settings import DATABASE_URL, SQLALCHEMY_ECHO
 
@@ -158,3 +159,40 @@ async def get_db():
             except asyncio.CancelledError:
                 # Ignore cancellation during close - connection is being cleaned up anyway
                 pass
+
+
+# ============================================================================
+# Suppress "Exception terminating connection" noise from aiosqlite pool
+# when client disconnects during SSE streaming.
+#
+# SQLAlchemy's Pool._close_connection catches BaseException from do_terminate/
+# do_close, logs it as "Exception terminating/closing connection", then
+# re-raises if it's not an Exception (CancelledError is BaseException-only).
+# We patch it to silently ignore CancelledError since it's expected when
+# a client disconnects during SSE streaming.
+# ============================================================================
+import sqlalchemy.pool as _pool
+
+_original_close_connection = _pool.Pool._close_connection
+
+def _suppressed_close_connection(self, connection, *, terminate=False):
+    try:
+        if terminate:
+            self._dialect.do_terminate(connection)
+        else:
+            self._dialect.do_close(connection)
+    except asyncio.CancelledError:
+        # Client disconnected during streaming - connection close was cancelled.
+        # This is expected and harmless; no need to log or re-raise.
+        pass
+    except BaseException as e:
+        self.logger.error(
+            f"Exception {'terminating' if terminate else 'closing'} "
+            f"connection %r",
+            connection,
+            exc_info=True,
+        )
+        if not isinstance(e, Exception):
+            raise
+
+_pool.Pool._close_connection = _suppressed_close_connection

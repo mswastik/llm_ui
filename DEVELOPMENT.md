@@ -94,31 +94,7 @@ Edit `tools/rag_service.py` to modify:
 - Similarity threshold
 - Supported file formats
 
-### 3. Web Search Integration (SearXNG)
-
-The application includes sophisticated web search with SearXNG:
-
-**Backend Components:**
-- `tools/searxng_tool.py` - SearXNG integration
-- `tools/base.py` - Shared utilities for embeddings and reranking
-
-**Search Features:**
-- Multi-query generation for better coverage
-- Adaptive query generation based on initial results
-- Content extraction and semantic chunking
-- Embedding-based similarity filtering
-- Re-ranking for relevance
-- Citation support with source tracking
-
-**Customize Search:**
-Edit `tools/searxng_tool.py` to modify:
-- SearXNG URL
-- Number of search results
-- Chunk size
-- Similarity threshold
-- Supported search categories
-
-### 4. Text-to-Speech (TTS) Integration
+### 3. Text-to-Speech (TTS) Integration
 
 The application supports multiple TTS engines:
 
@@ -128,6 +104,7 @@ The application supports multiple TTS engines:
 **Supported Engines:**
 - **Edge TTS**: High-quality online service (requires internet)
 - **Pyttsx3**: Offline service (lower quality but works without internet)
+- **Kokoro**: High-quality local TTS (~300MB model download)
 
 **Customize TTS:**
 Edit `tools/tts_service.py` to modify:
@@ -136,7 +113,7 @@ Edit `tools/tts_service.py` to modify:
 - Volume level
 - Output format
 
-### 5. Add System Prompts
+### 4. Add System Prompts
 
 **Database Model (`backend/database/models.py`):**
 
@@ -169,7 +146,7 @@ async def update_conversation_settings(conversation_id: str, request: Request):
 
 Add settings panel in the chat header area.
 
-### 6. Add Conversation Export
+### 5. Add Conversation Export
 
 **Backend:**
 
@@ -200,7 +177,7 @@ async def export_conversation(conversation_id: str, format: str = "markdown"):
         })
 ```
 
-### 7. Add Conversation Search
+### 6. Add Conversation Search
 
 **Backend:**
 
@@ -230,7 +207,7 @@ async def search_conversations(q: str):
         return {"conversations": conversations, "query": q}
 ```
 
-### 8. Add User Authentication
+### 7. Add User Authentication
 
 Use FastAPI's security utilities:
 
@@ -256,9 +233,9 @@ async def list_conversations(user=Depends(verify_token)):
     pass
 ```
 
-### 9. Streaming with Tool Results
+### 8. Streaming with Tool Results
 
-The application now supports streaming with tool results:
+The application uses Server-Sent Events (SSE) for streaming LLM responses with tool execution:
 
 **In `backend/app/main.py`:**
 
@@ -266,7 +243,6 @@ The application now supports streaming with tool results:
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
-    enable_web_search: bool = False,
     enable_rag: bool = False,
     model: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
@@ -275,46 +251,9 @@ async def _core_stream_handler(
         async with get_db() as db:
             messages = await get_conversation_messages(db, conversation_id)
             llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
-            context_additions = []
             tool_calls_history = []
 
-            # Execute pre-processing tools (web search, RAG) if enabled
-            if enable_web_search:
-                query_text = llm_messages[-1]["content"] if llm_messages else ""
-                # Send tool call start event
-                yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': 'search_web', 'args': {'query': query_text}})}\n\n"
-                # Create tool call record
-                web_search_tool_call = {"name": "search_web", "arguments": {"query": query_text}, "status": "starting", "progress": 0, "result": None, "progress_history": []}
-                tool_calls_history.append(web_search_tool_call)
-
-                async for progress_event in tool_executor.execute_tool("search_web", {"query": query_text}, request_id):
-                    # Forward the progress event
-                    yield f"data: {json.dumps(progress_event)}\n\n"
-
-                    # Update tool call status
-                    if progress_event.get("type") == "tool_progress":
-                        web_search_tool_call["status"] = progress_event.get("status", "running")
-                        web_search_tool_call["progress"] = progress_event.get("progress", 0)
-                        # Add progress event to history
-                        web_search_tool_call["progress_history"].append(progress_event)
-                        if progress_event.get("result"):
-                            web_search_tool_call["result"] = progress_event["result"]
-                            web_search_tool_call["status"] = "completed"
-                            if progress_event["result"].get("content"):
-                                context_additions.append(f"\n\n**Web Search Results:**\n{progress_event['result']['content']}")
-                    elif progress_event.get("type") == "tool_error":
-                        web_search_tool_call["status"] = "error"
-                        web_search_tool_call["result"] = {"error": progress_event.get("error")}
-                    await asyncio.sleep(0)
-
-            # Add context to the last user message
-            if context_additions:
-                for msg in reversed(llm_messages):
-                    if msg["role"] == "user":
-                        msg["content"] += "".join(context_additions) + "\n\n**Important**: Please cite sources using [1], [2], etc."
-                        break
-
-            # Stream LLM response
+            # Stream LLM response (LLM decides when to call tools)
             assistant_message, thinking_content = "", ""
 
             async for chunk in llm_client.stream_chat(llm_messages, model=model):
@@ -360,6 +299,84 @@ async def _core_stream_handler(
     except Exception as e:
         print(f"Error in event generator: {e}")
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+```
+
+## Model Configuration
+
+Models are configured in `backend/config.py`:
+
+```python
+# Main LLM model for chat completion
+LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", "glm4.7-30ba3b")
+
+# Model for query processing and title generation (should be non-thinking)
+QUERY_MODEL = os.getenv("QUERY_MODEL", "qwen3-30ba3b")
+
+# Base URL for llama.cpp server
+LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_URL", "http://localhost:8080")
+```
+
+### Supported Models
+
+Any model compatible with llama.cpp's OpenAI-compatible API works:
+- **Chat**: Llama 2/3, Mistral/Mixtral, Phi-2/Phi-3, Qwen series, Gemma, Zephyr
+- **Embedding**: Any model with embedding support (e.g., `nomic-embed-text`)
+- **Reranking**: Any model with reranking support
+- **Thinking**: Models that output reasoning (e.g., DeepSeek-R1, QwQ)
+
+### Optimal Settings by Model Size
+
+| Model Size | Temperature | Max Tokens | Top-K |
+|-----------|-------------|------------|-------|
+| 7B-13B    | 0.7         | 4096       | 40    |
+| 30B-34B   | 0.7         | 8192       | 40    |
+| 70B+      | 0.7         | 16384      | 40    |
+
+### Embedding & Reranking Models
+
+- **Embedding**: `nomic-embed-text`, `BGE-m3`, or any embedding-compatible model
+- **Reranking**: `bge-reranker-v2-m3`, `bge-reranker-large`, or any reranking-compatible model
+
+## MCP Server Transports
+
+The application supports three MCP transport types:
+
+| Transport | Description | Config |
+|-----------|-------------|--------|
+| **stdio** | Local process via command line | `command`, `args[]`, `env{}` |
+| **SSE** | HTTP SSE endpoint | `url` |
+| **StreamableHTTP** | HTTP streaming | `url` |
+
+### stdio Transport (Most Common)
+
+```json
+{
+  "name": "filesystem",
+  "transport_type": "stdio",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+  "env": {}
+}
+```
+
+### SSE Transport
+
+```json
+{
+  "name": "remote-server",
+  "transport_type": "sse",
+  "url": "http://remote-host:3001/mcp"
+}
+```
+
+### StreamableHTTP Transport
+
+```json
+{
+  "name": "streamable-server",
+  "transport_type": "streamable-http",
+  "url": "http://remote-host:3001/mcp"
+}
 ```
 
 ## Performance Optimization
@@ -432,12 +449,12 @@ import pytest
 from tools.tool_executor import ToolExecutor
 
 @pytest.mark.asyncio
-async def test_search_tool():
+async def test_query_documents_tool():
     executor = ToolExecutor(None)
 
     results = []
     async for progress in executor.execute_tool(
-        "search_web",
+        "query_documents",
         {"query": "test query"},
         "test-request-id"
     ):
@@ -557,5 +574,4 @@ To contribute to the project:
 - [HTMX Documentation](https://htmx.org/)
 - [Model Context Protocol Spec](https://modelcontextprotocol.io/)
 - [llama.cpp](https://github.com/ggerganov/llama.cpp)
-- [SearXNG Documentation](https://docs.searxng.org/)
 - [Edge TTS Documentation](https://github.com/rany2/edge-tts)

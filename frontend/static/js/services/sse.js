@@ -1,152 +1,73 @@
 /**
- * SSE Service - Server-Sent Events for streaming LLM responses
- * 
- * Uses fetch with AbortController instead of EventSource to allow
- * streaming to continue in background when navigating away from chat page.
+ * SSE Service — Streaming Server-Sent Events
  */
+
 export class SSEService {
   constructor() {
     this.controller = null
-    this.streamingConversationId = null
-    this.streamActive = false
-    this.dataHandler = null
-    this.errorHandler = null
-    this.completeHandler = null
+    this.handlers = { data: [], error: [], complete: [] }
   }
 
-  async stream(requestId, conversationId, options = {}) {
-    let url = `/api/stream/${requestId}?conversation_id=${conversationId}`
-    if (options.enableWebSearch) url += '&enable_web_search=true'
-    if (options.enableRag) url += '&enable_rag=true'
-    if (options.model) url += `&model=${encodeURIComponent(options.model)}`
+  stream(requestId, conversationId, options = {}) {
+    return new Promise((resolve) => {
+      this.controller = new AbortController()
+      const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
+        (options.enableRag ? '&enable_rag=1' : '') +
+        (options.model ? `&model=${encodeURIComponent(options.model)}` : '')
 
-    this.streamingConversationId = conversationId
-    this.streamActive = true
-    this.controller = new AbortController()
+      fetch(url, { signal: this.controller.signal })
+        .then(response => {
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
 
-    // Return handlers immediately, then start streaming in background
-    const handlers = {
-      onData: (handler) => {
-        this.dataHandler = handler
-      },
-      onError: (handler) => {
-        this.errorHandler = handler
-      },
-      onComplete: (handler) => {
-        this.completeHandler = handler
-      }
-    }
+          const read = () => {
+            reader.read().then(({ done, value }) => {
+              if (done) {
+                this.handlers.complete.forEach(h => h())
+                return
+              }
 
-    // Start streaming in background (don't block on this)
-    this.setupFetchStream(url)
+              buffer += decoder.decode(value, { stream: true })
+              const lines = buffer.split('\n')
+              buffer = lines.pop() || ''
 
-    return handlers
-  }
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue
+                try {
+                  const data = JSON.parse(line.slice(6))
+                  this.handlers.data.forEach(h => h(data))
+                } catch (e) { /* skip malformed */ }
+              }
 
-  async setupFetchStream(url) {
-    let streamCompleted = false
+              read()
+            }).catch(err => {
+              if (err.name !== 'AbortError') {
+                this.handlers.error.forEach(h => h(err))
+              }
+            })
+          }
 
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'text/event-stream',
-          'Cache-Control': 'no-cache'
-        },
-        signal: this.controller.signal
+          read()
+        })
+        .catch(err => {
+          if (err.name !== 'AbortError') {
+            this.handlers.error.forEach(h => h(err))
+          }
+        })
+
+      resolve({
+        onData: (fn) => this.handlers.data.push(fn),
+        onError: (fn) => this.handlers.error.push(fn),
+        onComplete: (fn) => this.handlers.complete.push(fn),
+        close: () => this.close()
       })
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (this.streamActive && !streamCompleted) {
-        const { done, value } = await reader.read()
-
-        if (done) {
-          streamCompleted = true
-          break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-
-        // Process complete lines
-        const lines = buffer.split('\n')
-        buffer = lines.pop() // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          const trimmedLine = line.trim()
-          if (!trimmedLine || trimmedLine === 'data: [DONE]') {
-            continue
-          }
-
-          if (trimmedLine.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(trimmedLine.slice(6))
-              this.emitData(data)
-            } catch (error) {
-              console.error('Error parsing SSE data:', error)
-            }
-          }
-        }
-      }
-
-      streamCompleted = true
-      this.emitComplete()
-
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        // Stream was cancelled by user - this is expected
-        console.log('Stream cancelled by user')
-      } else {
-        console.error('SSE stream error:', error)
-        this.emitError(error)
-      }
-      streamCompleted = true
-    }
-  }
-
-  emitData(data) {
-    if (this.dataHandler) {
-      this.dataHandler(data)
-    }
-  }
-
-  emitError(error) {
-    if (this.errorHandler) {
-      this.errorHandler(error)
-    }
-  }
-
-  emitComplete() {
-    if (this.completeHandler) {
-      this.completeHandler()
-    }
+    })
   }
 
   close() {
-    if (this.controller) {
-      this.controller.abort()
-      this.controller = null
-    }
-    this.streamActive = false
-    this.dataHandler = null
-    this.errorHandler = null
-    this.completeHandler = null
-  }
-
-  // Check if currently streaming
-  isStreaming() {
-    return this.streamActive && this.controller !== null
-  }
-
-  // Get current streaming conversation ID
-  getStreamingConversationId() {
-    return this.streamingConversationId
+    this.controller?.abort()
+    this.controller = null
   }
 }
 

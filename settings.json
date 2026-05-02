@@ -1,8 +1,8 @@
 {
   "database_url": "sqlite+aiosqlite:///./llm_ui.db",
   "llama_cpp_base_url": "http://localhost:8080",
-  "llama_cpp_model": "qwen3.5-35ba3b",
-  "query_model": "qwen3.5-35ba3b",
+  "llama_cpp_model": "qwen36-35b",
+  "query_model": "qwen35-4b-nothink",
   "app_host": "0.0.0.0",
   "app_port": 8002,
   "debug": false,
@@ -20,11 +20,5 @@
   "kokoro_lang": "a",
   "kokoro_device": "cuda",
   "kokoro_volume": 1,
-  "kokoro_speed": 2,
-  "searxng_url": "http://localhost:8888/search",
-  "searxng_num_results": 25,
-  "searxng_chunk_size": 1200,
-  "searxng_similarity_threshold": 0.4,
-  "searxng_max_retries": 3,
-  "searxng_enable_multi_query": true
+  "kokoro_speed": 2
 }

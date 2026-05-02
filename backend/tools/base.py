@@ -11,7 +11,7 @@ class SharedLLMUtils:
     @staticmethod
     def _get_base_url() -> str:
         """Get the current llama.cpp base URL from environment or config."""
-        return os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3")
+        return os.getenv("LLAMA_CPP_URL", "http://localhost:8080/v1")
 
     @staticmethod
     async def get_embedding(text: str, model: str = "qwen3-embedding", max_retries: int = 3) -> np.ndarray:
@@ -80,11 +80,4 @@ class SharedLLMUtils:
                     return list(range(len(documents)))
         return list(range(len(documents)))
 
-    @staticmethod
-    def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-        """Calculate cosine similarity."""
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return float(np.dot(a, b) / (norm_a * norm_b))
+

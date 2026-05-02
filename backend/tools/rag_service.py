@@ -47,10 +47,8 @@ class RAGConfig:
     max_retries: int = 3
     
     def __post_init__(self):
-        """Initialize URLs after dataclass initialization"""
-        base_url = os.getenv("LLAMA_CPP_URL", "http://localhost:8080/v1")
-        self.embeddings_api = f"{base_url}/v1/embeddings"
-        self.rerank_api = f"{base_url}/v1/rerank"
+        """Validate configuration"""
+        pass
 
 
 class DocumentProcessor:

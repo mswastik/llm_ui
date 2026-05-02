@@ -291,6 +291,4 @@ settings_manager = SettingsManager()
 _update_module_constants(settings_manager)
 
 
-def get_config() -> Dict[str, Any]:
-    """Get all configuration as a dictionary (backward compatibility)"""
-    return settings_manager.get_settings()
+

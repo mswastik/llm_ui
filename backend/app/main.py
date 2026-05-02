@@ -7,7 +7,7 @@ import asyncio
 import json
 import os
 import uuid
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, Dict, List, Optional
 
 from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from database.models import init_db, get_db
@@ -18,12 +18,12 @@ from database.crud import (
     update_message, get_message, create_document, update_document_status, get_documents,
     delete_message as db_delete_message, delete_document as db_delete_document, get_document,
     get_all_agents, get_agent, get_agent_by_name, create_agent,
-    update_agent, delete_agent, get_default_agent
+    update_agent, delete_agent
 )
 from mcp_client.client import MCPClientManager
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
-from backend.settings import settings_manager
+from backend.settings import settings_manager, QUERY_MODEL
 
 # Initialize MCP client manager
 mcp_manager = MCPClientManager()
@@ -398,8 +398,6 @@ async def _core_stream_handler(
                         first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
                         if first_user_message:
                             try:
-                                # Use QUERY_MODEL for title generation to avoid issues with thinking models
-                                from settings import QUERY_MODEL
                                 # Shield title generation from cancellation - it's a background task
                                 title = await asyncio.wait_for(
                                     asyncio.shield(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL)),
@@ -470,9 +468,6 @@ async def stream_regenerate_response(request_id: str, conversation_id: str, mode
 @app.get("/api/mcp/servers")
 async def list_mcp_servers():
     """List all available MCP servers"""
-    from database.crud import get_all_mcp_servers
-    from database.models import get_db
-
     # Get runtime server status from MCP manager
     runtime_servers = await mcp_manager.list_servers()
 

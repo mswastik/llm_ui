@@ -568,20 +568,4 @@ async def delete_agent(db: AsyncSession, agent_id: int) -> bool:
     return True
 
 
-async def hard_delete_agent(db: AsyncSession, agent_id: int) -> bool:
-    """Permanently delete an agent"""
-    agent = await get_agent(db, agent_id)
-    if not agent:
-        return False
-    
-    await db.delete(agent)
-    await db.commit()
-    return True
 
-
-async def get_default_agent(db: AsyncSession) -> Optional[Agent]:
-    """Get the default agent (first active agent)"""
-    agents = await get_all_agents(db)
-    if agents:
-        return agents[0]
-    return None

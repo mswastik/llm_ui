@@ -19,7 +19,7 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 | **TTS Service** | `backend/tools/tts_service.py` | Edge TTS / pyttsx3 / Kokoro text-to-speech |
 | **Shared Utils** | `backend/tools/base.py` | Embedding + reranking helpers (cosine similarity) |
 | **Progress Helpers** | `backend/tools/progress.py` | `ToolProgress` for standardized progress events |
-| **Frontend Entrypoint** | `frontend/static/js/main.js` | Registers stores + components, calls Alpine.start() |
+| **Frontend Entrypoint** | `frontend/static/js/main.js` | Imports Alpine ESM, registers stores+components, calls Alpine.start() |
 | **State Store** | `frontend/static/js/store.js` | Alpine stores: `chat`, `settings`, `documents`, `tts` |
 | **Chat Component** | `frontend/static/js/components/chat.js` | Message send, SSE processing, tool call display, regeneration |
 | **Sidebar Component** | `frontend/static/js/components/sidebar.js` | Conversation list, load/delete, resize |
@@ -85,19 +85,20 @@ backend/
 ```
 frontend/
 ├── static/js/
-│   ├── main.js              # Entry point — registers stores + components, calls Alpine.start()
+│   ├── main.js              # Entry point — imports Alpine ESM, registers stores+components, calls Alpine.start()
 │   ├── store.js             # Alpine stores: chat, ui (merged from chat, settings, documents, tts)
 │   ├── utils.js             # API client, markdown, formatters, helpers
 │   ├── services/
 │   │   ├── sse.js           # SSEService — fetch-based SSE streaming
 │   │   └── tts.js           # TTSService — audio playback
 │   └── components/
-│       ├── chat.js          # Chat: send, stream, tool calls, regeneration, TTS
-│       ├── sidebar.js       # Sidebar: conversations, resize, load/delete
-│       ├── settings.js      # Settings: app config, MCP server management
-│       └── documents.js     # Documents: upload, list, delete
+│       ├── chat.js          # Chat: send, stream, tool calls, regeneration, TTS (exports chatComponent)
+│       ├── sidebar.js       # Sidebar: conversations, resize, load/delete (exports sidebar)
+│       ├── settings.js      # Settings: app config, MCP server management (exports settings)
+│       └── documents.js     # Documents: upload, list, delete (exports documents)
+│          All component files export named factories — registration happens in main.js
 ├── templates/
-│   ├── base.html            # Tailwind + Alpine + marked.js CDN
+│   ├── base.html            # Tailwind + marked.js CDN; defines store data on window; loads main.js as ES module
 │   ├── index.html           # Main layout (sidebar + chat + MCP panel)
 │   ├── settings.html        # Settings page (standalone)
 │   ├── knowledge.html       # Knowledge base page (standalone)
@@ -377,36 +378,31 @@ Four stores manage global state:
 
 ### Component Registration
 
-Components are registered with Alpine.js via `Alpine.data()`:
-- `sidebar` — registered in `sidebar.js` (both sync and async paths)
-- `chat` — registered as `window.chat()` factory in `chat.js`
-- `settings` — registered in `settings.js`
-- `documents` — registered as `window.documents()` factory in `documents.js`
+Components are **exported as named factories** from their files and registered centrally in `main.js`:
+- `sidebar` — exported from `sidebar.js`, registered as `Alpine.data('sidebar', sidebar)`
+- `chatComponent` — exported from `chat.js`, registered as `Alpine.data('chat', chatComponent)`
+- `settings` — exported from `settings.js`, registered as `Alpine.data('settings', settings)`
 
-### Module Loading Order (main.js)
+Component files do NOT call `Alpine.data()` directly — they only `export` their factory functions. Registration happens in `main.js` after Alpine is fully initialized.
 
-1. Import SSE + TTS services (registers as `window.sseService`, `window.ttsService`)
-2. Import utils (provides `formatters`, `markdownUtils`, `helpers`, `api`)
-3. Register stores from inline data in base.html (`window.__chatStoreData__`, `window.__uiStoreData__`)
-4. Import components (registers `Alpine.data` definitions)
-5. Call `window.Alpine.start()` — DOM processed with all components ready
+### Alpine.js Initialization (ESM Module Build)
 
-### Alpine.js Initialization (CRITICAL)
+Alpine.js is loaded via the **ESM module build** (`@alpinejs/[email protected]/dist/module.esm.js`), which does NOT auto-start. This gives full control over initialization.
 
-Alpine.js auto-starts when loaded with `defer`, walking the DOM and evaluating `x-data` expressions. If components aren't registered yet, you get "component is not defined" errors.
+**Initialization flow** (deterministic, driven by ES module import graph):
+1. `base.html` defines store data as plain objects on `window` (`__chatStoreData__`, `__uiStoreData__`) via inline `<script>` — runs synchronously during HTML parse
+2. `main.js` loads as `<script type="module">` — ES module is deferred by default
+3. `main.js` imports Alpine ESM module → sets `window.Alpine` (no auto-start)
+4. `main.js` imports SSE/TTS services and utils (no Alpine dependency)
+5. `main.js` registers stores: `Alpine.store('chat', __chatStoreData__)`, `Alpine.store('ui', __uiStoreData__)`
+6. `main.js` imports component factories from their files, then calls `Alpine.data('name', factory)` for each
+7. `main.js` calls `Alpine.start()` — Alpine walks DOM, all stores and components are ready
 
-**Our solution** (see `base.html` and `main.js`):
-1. `base.html` uses `Object.defineProperty` to intercept `window.Alpine` assignment
-2. The setter overrides `Alpine.start()` to a no-op BEFORE `queueMicrotask` fires
-3. Alpine.js loads synchronously (NO `defer`)
-4. `main.js` registers stores + components, then calls `window.Alpine.start()`
-5. The queued microtask calls the no-op (already started) → safe
+**Key insight**: ES module import order is guaranteed. No race conditions, no `Object.defineProperty` hacks, no `deferLoadingAlpine` workarounds. The module graph ensures everything registers before `Alpine.start()`.
 
-**Key insight**: `deferLoadingAlpine` is NOT a built-in Alpine.js feature — it's a Livewire convention. Alpine.js CDN does NOT check for it. You must either:
-- Remove `defer` and manually call `Alpine.start()` after registration, OR
-- Use `Object.defineProperty` to intercept the `window.Alpine` assignment
+**Component registration**: Component files export named factories (`export function sidebar() { ... }`). `main.js` registers them with `Alpine.data('name', factory)`. Templates use `x-data="sidebar"` (no parentheses).
 
-**Component registration**: Always use `Alpine.data('name', fn)` — never `x-data="name()"` (parentheses). See `components/sidebar.js`, `components/chat.js`, `components/settings.js`.
+**x-cloak**: Added to Settings modal, Documents modal, and MCP panel to prevent flash of unstyled content before Alpine processes `x-show` directives.
 
 ## Key Implementation Details
 

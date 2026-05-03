@@ -20,19 +20,15 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 | **Shared Utils** | `backend/tools/base.py` | Embedding + reranking helpers (cosine similarity) |
 | **Progress Helpers** | `backend/tools/progress.py` | `ToolProgress` for standardized progress events |
 | **Frontend Entrypoint** | `frontend/static/js/main.js` | Imports Alpine ESM, registers stores+components, calls Alpine.start() |
-| **State Store** | `frontend/static/js/store.js` | Alpine stores: `chat`, `settings`, `documents`, `tts` |
+| **State Store** | `frontend/static/js/store.js` | Alpine stores: `chat`, `ui` + `createModal()` factory |
 | **Chat Component** | `frontend/static/js/components/chat.js` | Message send, SSE processing, tool call display, regeneration |
 | **Sidebar Component** | `frontend/static/js/components/sidebar.js` | Conversation list, load/delete, resize |
 | **Settings Component** | `frontend/static/js/components/settings.js` | App settings, MCP server management |
-| **Documents Component** | `frontend/static/js/components/documents.js` | Upload/delete knowledge base docs |
 | **SSE Service** | `frontend/static/js/services/sse.js` | `SSEService` — fetch-based SSE streaming |
 | **TTS Service** | `frontend/static/js/services/tts.js` | `TTSService` — audio playback control |
 | **Utilities** | `frontend/static/js/utils.js` | API client, markdown rendering, formatters, helpers |
-| **Main Template** | `frontend/templates/index.html` | Extends `base.html`, includes sidebar/chat/MCP partials |
+| **Main Template** | `frontend/templates/index.html` | Sidebar + chat + all modals (settings, agents, mcp, documents) |
 | **Chat Partial** | `frontend/templates/partials/chat.html` | Message rendering, input box, tool call UI |
-| **Settings Partial** | `frontend/templates/partials/settings.html` | Settings modal |
-| **Knowledge Page** | `frontend/templates/knowledge.html` | Document management page |
-| **Agents Page** | `frontend/templates/agents.html` | Agent management page |
 | **Config** | `settings.json` | Runtime settings (loaded by `SettingsManager`) |
 
 ## Architecture Overview
@@ -40,7 +36,7 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 ### High-Level Data Flow
 
 ```
-Browser (Alpine.js + HTMX)
+Browser (Alpine.js)
     │
     ├─ POST /api/conversations/{id}/messages  →  request_id
     │       │
@@ -86,7 +82,7 @@ backend/
 frontend/
 ├── static/js/
 │   ├── main.js              # Entry point — imports Alpine ESM, registers stores+components, calls Alpine.start()
-│   ├── store.js             # Alpine stores: chat, ui (merged from chat, settings, documents, tts)
+│   ├── store.js             # Alpine stores: chat, ui + createModal() factory
 │   ├── utils.js             # API client, markdown, formatters, helpers
 │   ├── services/
 │   │   ├── sse.js           # SSEService — fetch-based SSE streaming
@@ -95,21 +91,14 @@ frontend/
 │       ├── chat.js          # Chat: send, stream, tool calls, regeneration, TTS (exports chatComponent)
 │       ├── sidebar.js       # Sidebar: conversations, resize, load/delete (exports sidebar)
 │       ├── settings.js      # Settings: app config, MCP server management (exports settings)
-│       └── documents.js     # Documents: upload, list, delete (exports documents)
 │          All component files export named factories — registration happens in main.js
 ├── templates/
 │   ├── base.html            # Tailwind + marked.js CDN; defines store data on window; loads main.js as ES module
-│   ├── index.html           # Main layout (sidebar + chat + MCP panel)
-│   ├── settings.html        # Settings page (standalone)
-│   ├── knowledge.html       # Knowledge base page (standalone)
-│   ├── agents.html          # Agents page (standalone)
+│   ├── index.html           # Main layout (sidebar + chat + all modals: settings, agents, mcp, documents)
 │   └── partials/
 │       ├── sidebar.html     # Conversation list
 │       ├── chat.html        # Messages, input, tool call display
-│       ├── settings.html    # Settings modal
-│       ├── documents.html   # Documents modal
-│       └── mcp_panel.html   # MCP server panel
-└── static/css/styles.css    # Custom Tailwind overrides
+└── static/css/theme.css     # Custom theme + modal styles
 ```
 
 ## Core Concepts
@@ -155,7 +144,82 @@ blocks = [
 
 The frontend renders blocks in order, preserving the interleaving of content, thinking, and tool calls.
 
-### 3. Agent System
+### 3. Modal System (Consistent Design)
+
+All secondary features (Settings, Agents, MCP Servers, Knowledge Base) are implemented as **centered modals** using a consistent pattern:
+
+**Opening a modal:**
+```html
+<!-- Sidebar button dispatches event -->
+<button @click="$dispatch('open-settings'); $store.ui.openSettings()">
+    <i class="ph ph-gear"></i> Settings
+</button>
+```
+
+**Modal structure:**
+```html
+<div x-data="modalSettings"
+     x-show="open"
+     x-cloak
+     @open-settings.window="open = true"
+     @keydown.escape.window="closeModal()"
+     class="modal-backdrop"
+     @click.self="closeModal()">
+    <div class="modal-content">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b flex items-center justify-between">
+            <h2 class="text-lg font-semibold">Settings</h2>
+            <button @click="closeModal()" class="btn btn-icon btn-ghost">
+                <i class="ph ph-x text-lg"></i>
+            </button>
+        </div>
+        <!-- Body -->
+        <div class="p-6 overflow-y-auto">...</div>
+        <!-- Footer (optional) -->
+        <div class="px-6 py-4 border-t flex justify-end">...</div>
+    </div>
+</div>
+```
+
+**Modal component factory** (`store.js`):
+```javascript
+export function createModal(storeKey, openMethod, closeMethod) {
+  return function () {
+    return {
+      open: false,
+      openModal() {
+        this.open = true
+        if (typeof openMethod === 'function') openMethod()
+      },
+      closeModal() {
+        if (closeMethod) {
+          if (typeof closeMethod === 'function') closeMethod()
+          else if (typeof $store !== 'undefined') $store.ui[closeMethod]()
+        }
+        this.open = false
+      }
+    }
+  }
+}
+```
+
+**Registered modals:**
+| Modal | Component | Store Methods | Z-Index |
+|-------|-----------|---------------|---------|
+| MCP Servers | `modalMcp` | `openMcpPanel`/`closeMcpPanel` | 101 |
+| AI Agents | `modalAgents` | `openAgents`/`closeAgents` | 102 |
+| Knowledge Base | `modalDocuments` | `openDocuments`/`closeDocuments` | 103 |
+| Create/Edit forms | inline | — | 104 |
+
+**Key patterns:**
+- All modals use `x-data` with local `open` state (not direct store binding)
+- Opening: `$dispatch('open-xxx')` + store method (cross-scope communication)
+- Closing: `closeModal()` sets `open = false` and calls store close method
+- Escape key: `@keydown.escape.window="closeModal()"`
+- Backdrop click: `@click.self="closeModal()"`
+- `x-cloak` prevents flash of unstyled content (requires `[x-cloak] { display: none !important; }` in CSS)
+
+### 4. Agent System
 
 Agents are pre-configured AI personalities stored in the `agents` table:
 
@@ -163,9 +227,9 @@ Agents are pre-configured AI personalities stored in the `agents` table:
 - Conversations link to agents via `conversation.agent_id`
 - When a conversation has an agent, the agent's config overrides chat defaults
 - Agents support soft-delete (`is_active = 0`)
-- CRUD endpoints: `/api/agents` (list, create), `/api/agents/{id}` (get, update, delete)
+- CRUD via `/api/agents` endpoints, managed through the AI Agents modal
 
-### 4. MCP Server Management
+### 5. MCP Server Management
 
 - Servers stored in `mcp_servers` table with `transport_type` (stdio/sse/streamable-http)
 - `MCPClientManager` connects to servers on startup (enabled ones only)
@@ -174,8 +238,9 @@ Agents are pre-configured AI personalities stored in the `agents` table:
 - Tools are prefixed with server name: `server_name:tool_name`
 - Web search and other capabilities are provided dynamically by connected MCP servers
 - Server lifecycle: add, remove, reconnect, refresh tools, toggle enabled/disabled
+- Managed through the MCP Servers modal
 
-### 5. Custom Tools (Progress Tracking)
+### 6. Custom Tools (Progress Tracking)
 
 Custom tools in `ToolExecutor.custom_tools` use `ToolProgress` to bridge callback-based progress with async generators:
 
@@ -187,7 +252,7 @@ Custom tools in `ToolExecutor.custom_tools` use `ToolProgress` to bridge callbac
 
 Each yields: `tool_progress` (with status/progress/result) or `tool_error`.
 
-### 6. RAG Pipeline
+### 7. RAG Pipeline
 
 ```
 Upload → Extract text → Chunk → Embed → Store (SQLite BLOB)
@@ -200,8 +265,9 @@ Query → Embed → Search (cosine similarity) → Rerank → Format with citati
 - `EmbeddingStore`: SQLite tables (`document_chunks`, `document_embeddings`)
 - `RAGService`: coordinates processing and querying
 - Embeddings stored as raw `float32` blobs in SQLite
+- Managed through the Knowledge Base modal
 
-### 7. TTS Service
+### 8. TTS Service
 
 Three backends with automatic fallback:
 1. **Edge TTS**: High quality, requires internet
@@ -210,184 +276,81 @@ Three backends with automatic fallback:
 
 Features: caching by content hash, volume/speed adjustment (Kokoro), CUDA OOM fallback to CPU.
 
-## Database Schema
-
-### Tables
-
-```sql
-conversations (id PK, title, agent_id FK→agents.id, created_at, updated_at)
-messages      (id PK, conversation_id FK→conversations.id, role, content,
-               thinking, tool_calls JSON, metadata JSON, created_at)
-mcp_servers   (id PK, name UNIQUE, transport_type, command, args JSON,
-               env JSON, url, enabled, created_at)
-documents     (id PK, filename, filepath, file_type, size_bytes, status,
-               metadata JSON, uploaded_at, processed_at)
-agents        (id PK, name UNIQUE, description, model, temperature, top_k,
-               max_tokens, system_prompt, enabled_tools JSON,
-               enabled_mcp_servers JSON, enable_rag, rag_similarity_threshold,
-               conversation_starters JSON,
-               created_at, updated_at, is_active)
-
--- RAG tables (managed by EmbeddingStore, not SQLAlchemy):
-document_chunks (id PK, document_id FK, chunk_index, content, start_char, end_char, created_at)
-document_embeddings (chunk_id PK, embedding BLOB, FK→document_chunks.id)
-```
-
-### Key Relationships
-
-- `Conversation` → `Message` (1:N, cascade delete)
-- `Conversation` → `Agent` (N:1, nullable)
-- `Agent` → `Conversation` (1:N, cascade delete)
-- `Document` → `document_chunks` (1:N)
-- `document_chunks` → `document_embeddings` (1:1)
-
-## API Endpoints
-
-### Conversations
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/conversations` | List all conversations |
-| POST | `/api/conversations` | Create new conversation |
-| GET | `/api/conversations/{id}` | Get conversation with messages |
-| PUT | `/api/conversations/{id}` | Update conversation title |
-| DELETE | `/api/conversations/{id}` | Delete conversation |
-| POST | `/api/conversations/{id}/messages` | Send message (returns `request_id`) |
-| POST | `/api/conversations/{id}/regenerate` | Regenerate last assistant response |
-| GET | `/api/stream/{request_id}` | SSE stream (query params: `conversation_id`, `enable_rag`, `model`) |
-| GET | `/api/stream/regenerate/{request_id}` | SSE stream for regeneration |
-
-### Messages
-| Method | Path | Description |
-|--------|------|-------------|
-| PUT | `/api/messages/{id}` | Edit message content |
-| DELETE | `/api/messages/{id}` | Delete message |
-
-### MCP Servers
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/mcp/servers` | List all MCP servers with status |
-| POST | `/api/mcp/servers` | Add MCP server |
-| DELETE | `/api/mcp/servers/{name}` | Remove MCP server |
-| PUT | `/api/mcp/servers/{name}` | Update MCP server |
-| POST | `/api/mcp/servers/{name}/refresh` | Refresh tool list |
-| POST | `/api/mcp/servers/{name}/reconnect` | Reconnect server |
-| POST | `/api/mcp/servers/{name}/toggle` | Enable/disable server |
-| GET | `/api/mcp/tools` | List all available tools |
-
-### Agents
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/agents` | List all agents |
-| GET | `/api/agents/{id}` | Get agent details |
-| POST | `/api/agents` | Create agent |
-| PUT | `/api/agents/{id}` | Update agent |
-| DELETE | `/api/agents/{id}` | Soft-delete agent |
-
-### Documents & RAG
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/documents/upload` | Upload document (multipart/form-data) |
-| GET | `/api/documents` | List documents |
-| GET | `/api/documents/{id}` | Get document details |
-| DELETE | `/api/documents/{id}` | Delete document |
-| POST | `/api/rag/query` | Direct RAG query |
-
-### TTS
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/tts/generate` | Generate speech |
-| GET | `/api/tts/voices` | List available voices |
-| GET | `/api/tts/status` | Check TTS availability |
-| GET | `/api/audio/{filename}` | Serve audio file |
-
-### Settings & Models
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/settings` | Get settings |
-| PUT | `/api/settings` | Update settings |
-| GET | `/api/models` | List available LLM models |
-
-### Pages
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Main chat interface |
-| GET | `/settings` | Settings page |
-| GET | `/knowledge` | Knowledge base page |
-| GET | `/agents` | Agents management page |
-
 ## Frontend State Architecture
 
 ### Alpine Stores
 
-Four stores manage global state:
+Two stores manage global state:
 
 **`chat` store** — Chat state:
 ```javascript
 {
-  conversations: [],           // All conversations
-  currentConversationId: null, // Active conversation
+  conversations: [],
+  currentConversationId: null,
   currentConversationTitle: '',
-  messages: [],                // Messages for active conversation
+  messages: [],
   inputMessage: '',
   isLoading: false,
+  activeStreaming: { isStreaming, requestId, conversationId, msgIndex, conversationTitle, messages },
+  toolStatus: { active, tool, status, progress, data },
   selectedModel: '',
   availableModels: [],
-  enableRAG: false,
-  toolStatus: { active, tool, status, progress, data },
-  activeStreaming: { isStreaming, requestId, conversationId, msgIndex, conversationTitle, messages },
-  availableAgents: [],
   selectedAgentId: null,
-  currentAgentConfig: null,    // Full agent config when selected
-  toast: { show, message, type },
+  availableAgents: [],
+  currentAgentConfig: null,
+  enableRAG: false,
+  editingMessageId: null,
+  editContent: '',
   // Methods: addConversation, updateConversation, removeConversation,
   // addMessage, updateMessage, removeMessage, setModel, loadSavedModel,
-  // setAgent, loadSavedAgent, showToast, startStreaming, stopStreaming
+  // setAgent, loadSavedAgent, startStreaming, stopStreaming, applyAgentConfig
 }
 ```
 
-**`settings` store** — App settings:
+**`ui` store** — UI state (theme, panels, settings data):
 ```javascript
 {
-  show: false,
-  data: {},
+  // Theme
+  darkMode: boolean,
+  sidebarCollapsed: boolean,
+  sidebarWidth: number,
+
+  // Panel visibility (controls modals)
+  showMcpPanel: false,
+  showAgents: false,
+  showSettings: false,
+  showDocuments: false,
+
+  // Toast
+  toast: { show, message, type },
+
+  // Settings data
+  settingsData: {},
   mcpServers: [],
   mcpTools: [],
-  activeTab: 'general',
-  newServer: { name, transport_type, command, args, url, env }
+  documents: [],
+
+  // MCP form state
+  newServer: { name, transport_type, command, args, url, env },
+  editingServer: false,
+  editServer: { name, transport_type, command, args, url, env, enabled, originalName },
+
+  // Settings tab
+  settingsTab: 'general',
+
+  // Panel methods
+  toggleDarkMode(), initTheme(), toggleSidebar(), setSidebarWidth(w),
+  showToast(message, type),
+  openMcpPanel(), closeMcpPanel(),
+  openAgents(), closeAgents(),
+  openSettings(), closeSettings(),
+  openDocuments(), closeDocuments()
 }
 ```
-
-**`documents` store** — Knowledge base:
-```javascript
-{
-  show: false,
-  list: []
-}
-```
-
-**`tts` store** — TTS state:
-```javascript
-{
-  available: false,
-  currentAudio: null,
-  currentAudioMessageId: null,
-  isPlaying: false,
-  loading: {}
-}
-```
-
-### Component Registration
-
-Components are **exported as named factories** from their files and registered centrally in `main.js`:
-- `sidebar` — exported from `sidebar.js`, registered as `Alpine.data('sidebar', sidebar)`
-- `chatComponent` — exported from `chat.js`, registered as `Alpine.data('chat', chatComponent)`
-- `settings` — exported from `settings.js`, registered as `Alpine.data('settings', settings)`
-
-Component files do NOT call `Alpine.data()` directly — they only `export` their factory functions. Registration happens in `main.js` after Alpine is fully initialized.
 
 ### Alpine.js Initialization (ESM Module Build)
 
-Alpine.js is loaded via the **ESM module build** (`@alpinejs/[email protected]/dist/module.esm.js`), which does NOT auto-start. This gives full control over initialization.
+Alpine.js is loaded via the **ESM module build** (`alpinejs@3.15.12/+esm`), which does NOT auto-start. This gives full control over initialization.
 
 **Initialization flow** (deterministic, driven by ES module import graph):
 1. `base.html` defines store data as plain objects on `window` (`__chatStoreData__`, `__uiStoreData__`) via inline `<script>` — runs synchronously during HTML parse
@@ -395,14 +358,14 @@ Alpine.js is loaded via the **ESM module build** (`@alpinejs/[email protected]/d
 3. `main.js` imports Alpine ESM module → sets `window.Alpine` (no auto-start)
 4. `main.js` imports SSE/TTS services and utils (no Alpine dependency)
 5. `main.js` registers stores: `Alpine.store('chat', __chatStoreData__)`, `Alpine.store('ui', __uiStoreData__)`
-6. `main.js` imports component factories from their files, then calls `Alpine.data('name', factory)` for each
+6. `main.js` imports component factories, then calls `Alpine.data('name', factory)` for each
 7. `main.js` calls `Alpine.start()` — Alpine walks DOM, all stores and components are ready
 
-**Key insight**: ES module import order is guaranteed. No race conditions, no `Object.defineProperty` hacks, no `deferLoadingAlpine` workarounds. The module graph ensures everything registers before `Alpine.start()`.
+**Key insight**: ES module import order is guaranteed. No race conditions. The module graph ensures everything registers before `Alpine.start()`.
 
-**Component registration**: Component files export named factories (`export function sidebar() { ... }`). `main.js` registers them with `Alpine.data('name', factory)`. Templates use `x-data="sidebar"` (no parentheses).
+**Component registration**: Component files export named factories. `main.js` registers them with `Alpine.data('name', factory)`. Templates use `x-data="name"` (no parentheses).
 
-**x-cloak**: Added to Settings modal, Documents modal, and MCP panel to prevent flash of unstyled content before Alpine processes `x-show` directives.
+**Modal components**: Registered via `createModal()` factory in `main.js`. Each modal has its own `x-data` scope with local `open` state, synced with the global store via `$dispatch` events.
 
 ## Key Implementation Details
 
@@ -498,12 +461,15 @@ Web search is provided by MCP servers instead of a built-in adapter:
 2. Add CRUD accessor in `backend/database/crud.py`
 3. Run migration (or delete `llm_ui.db` to recreate schema)
 
-### Add a New Frontend Component
+### Add a New Modal
 
-1. Create `frontend/static/js/components/new_component.js`
-2. Register with `Alpine.data('name', fn)` (see sidebar.js, chat.js, settings.js)
-3. Import in `frontend/static/js/main.js`
-4. Use in templates with `x-data="newComponent()"`
+1. Add panel state to `ui` store: `showXxx: false`
+2. Add methods to `ui` store: `openXxx()`, `closeXxx()`
+3. Add methods to `__uiStoreData__` in `base.html`
+4. Register modal in `main.js`: `Alpine.data('modalXxx', createModal('xxx', 'openXxx', 'closeXxx'))`
+5. Add modal HTML to `index.html` using the consistent modal pattern
+6. Add sidebar button: `<button @click="$dispatch('open-xxx'); $store.ui.openXxx()">...</button>`
+7. Add z-index class in `theme.css`: `.modal-backdrop-xxx { z-index: N; }`
 
 ### Change Default Settings
 
@@ -526,6 +492,8 @@ Edit `settings.json` at project root, or use environment variables. The `Setting
 - **Settings not persisting**: Check `settings.json` file permissions, verify `SettingsManager.save_settings_to_file()` is called
 - **Message blocks not rendering**: Check `metadata.blocks` in DB, verify frontend `processStreamEvent()` is receiving correct events
 - **Web search not available**: Connect an MCP server that provides a search tool. Web search is no longer built-in.
+- **Modal not opening**: Check browser console for `$dispatch` errors, verify `@open-xxx.window` listener is on the modal element
+- **Modal close button not working**: Ensure `closeModal()` is defined as a method (not arrow function) in `x-data`, use `closeModal() { this.open = false }` not `closeModal: () => { this.open = false }`
 
 ## Technology Stack
 
@@ -538,9 +506,18 @@ Edit `settings.json` at project root, or use environment variables. The `Setting
 | **Reranking** | llama.cpp `/v1/rerank` endpoint |
 | **RAG** | Document processing + semantic retrieval via embeddings |
 | **TTS** | edge-tts, pyttsx3, Kokoro (optional) |
-| **Frontend** | Alpine.js (synchronous load + manual start), HTMX, Tailwind CSS, Marked.js |
+| **Frontend** | Alpine.js 3.15 (ESM module), Tailwind CSS, Marked.js |
 | **Database** | SQLite (async via aiosqlite) |
 | **Templates** | Jinja2 |
+
+## Page Routes
+
+| Path | Behavior |
+|------|----------|
+| `/` | Main chat interface with sidebar + all modals |
+| `/settings` | Redirects to `/` (settings in modal) |
+| `/knowledge` | Redirects to `/` (knowledge base in modal) |
+| `/agents` | Redirects to `/` (agents in modal) |
 
 ## File Sizes (for reference)
 
@@ -549,9 +526,8 @@ Edit `settings.json` at project root, or use environment variables. The `Setting
 | `backend/app/main.py` | ~1155 | 45KB |
 | `backend/mcp_client/client.py` | ~400 | Large |
 | `frontend/static/js/components/chat.js` | ~500 | Large |
-| `frontend/templates/partials/chat.html` | 565 | Large |
-| `frontend/templates/settings.html` | 380 | Medium |
-| `frontend/templates/partials/settings.html` | 367 | Medium |
-| `frontend/templates/agents.html` | 274 | Medium |
-| `frontend/templates/knowledge.html` | 177 | Medium |
-| `frontend/static/js/store.js` | ~130 | Small |
+| `frontend/templates/index.html` | ~1100 | Large (all modals inline) |
+| `frontend/static/js/store.js` | ~220 | Medium (stores + modal factory) |
+| `frontend/templates/partials/chat.html` | ~565 | Large |
+| `frontend/static/js/components/settings.js` | ~200 | Medium |
+| `frontend/static/js/components/sidebar.js` | ~150 | Small |

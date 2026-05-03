@@ -18,7 +18,9 @@ from database.crud import (
     update_message, get_message, create_document, update_document_status, get_documents,
     delete_message as db_delete_message, delete_document as db_delete_document, get_document,
     get_all_agents, get_agent, get_agent_by_name, create_agent,
-    update_agent, delete_agent
+    update_agent, delete_agent,
+    add_mcp_server, get_all_mcp_servers, get_enabled_mcp_servers,
+    toggle_mcp_server, remove_mcp_server
 )
 from mcp_client.client import MCPClientManager
 from tools.tool_executor import ToolExecutor
@@ -67,14 +69,14 @@ async def settings_page(request: Request):
 
 @app.get("/knowledge")
 async def knowledge_page(request: Request):
-    """Render knowledge base page"""
-    return templates.TemplateResponse("knowledge.html", {"request": request})
+    """Redirect to main page (knowledge base is now a modal)"""
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/agents")
 async def agents_page(request: Request):
-    """Render agents management page"""
-    return templates.TemplateResponse("agents.html", {"request": request})
+    """Redirect to main page (agents are now a modal)"""
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/api/conversations")

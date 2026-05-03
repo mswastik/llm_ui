@@ -9,60 +9,58 @@ export class SSEService {
   }
 
   stream(requestId, conversationId, options = {}) {
-    return new Promise((resolve) => {
-      this.controller = new AbortController()
-      const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
-        (options.enableRag ? '&enable_rag=1' : '') +
-        (options.model ? `&model=${encodeURIComponent(options.model)}` : '')
+    this.controller = new AbortController()
+    const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
+      (options.enableRag ? '&enable_rag=1' : '') +
+      (options.model ? `&model=${encodeURIComponent(options.model)}` : '')
 
-      fetch(url, { signal: this.controller.signal })
-        .then(response => {
-          const reader = response.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
+    fetch(url, { signal: this.controller.signal })
+      .then(response => {
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
 
-          const read = () => {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                this.handlers.complete.forEach(h => h())
-                return
-              }
+        const read = () => {
+          reader.read().then(({ done, value }) => {
+            if (done) {
+              this.handlers.complete.forEach(h => h())
+              return
+            }
 
-              buffer += decoder.decode(value, { stream: true })
-              const lines = buffer.split('\n')
-              buffer = lines.pop() || ''
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
 
-              for (const line of lines) {
-                if (!line.startsWith('data: ')) continue
-                try {
-                  const data = JSON.parse(line.slice(6))
-                  this.handlers.data.forEach(h => h(data))
-                } catch (e) { /* skip malformed */ }
-              }
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue
+              try {
+                const data = JSON.parse(line.slice(6))
+                this.handlers.data.forEach(h => h(data))
+              } catch (e) { /* skip malformed */ }
+            }
 
-              read()
-            }).catch(err => {
-              if (err.name !== 'AbortError') {
-                this.handlers.error.forEach(h => h(err))
-              }
-            })
-          }
+            read()
+          }).catch(err => {
+            if (err.name !== 'AbortError') {
+              this.handlers.error.forEach(h => h(err))
+            }
+          })
+        }
 
-          read()
-        })
-        .catch(err => {
-          if (err.name !== 'AbortError') {
-            this.handlers.error.forEach(h => h(err))
-          }
-        })
-
-      resolve({
-        onData: (fn) => this.handlers.data.push(fn),
-        onError: (fn) => this.handlers.error.push(fn),
-        onComplete: (fn) => this.handlers.complete.push(fn),
-        close: () => this.close()
+        read()
       })
-    })
+      .catch(err => {
+        if (err.name !== 'AbortError') {
+          this.handlers.error.forEach(h => h(err))
+        }
+      })
+
+    return {
+      onData: (fn) => this.handlers.data.push(fn),
+      onError: (fn) => this.handlers.error.push(fn),
+      onComplete: (fn) => this.handlers.complete.push(fn),
+      close: () => this.close()
+    }
   }
 
   close() {

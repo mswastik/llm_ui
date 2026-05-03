@@ -400,14 +400,27 @@ h4 { font-size: 0.95rem; font-weight: 600; }
 .modal-backdrop {
   position: fixed;
   inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-overlay);
   backdrop-filter: blur(4px);
   z-index: 100;
   animation: fadeIn var(--transition-base);
+  padding: 20px;
 }
-/* Documents modal stacks above settings modal */
+/* Modal z-index stacking — centered layout */
 .modal-backdrop-documents {
+  z-index: 103;
+}
+.modal-backdrop-agents {
+  z-index: 102;
+}
+.modal-backdrop-mcp {
   z-index: 101;
+}
+.modal-backdrop-form {
+  z-index: 104;
 }
 .modal-container {
   position: fixed;

@@ -35,8 +35,9 @@ window.ttsService = ttsService
 // ═══════════════════════════════════════════════════════════
 // 3. Import utils (provides formatters, markdownUtils, helpers, api)
 // ═══════════════════════════════════════════════════════════
-import { helpers } from './utils.js'
+import { helpers, formatters } from './utils.js'
 window.helpers = helpers
+window.formatters = formatters
 
 // ═══════════════════════════════════════════════════════════
 // 4. Register stores from inline data (available in base.html)
@@ -56,11 +57,16 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 import { sidebar } from './components/sidebar.js'
 import { chatComponent } from './components/chat.js'
 import { settings } from './components/settings.js'
+import { createModal } from './store.js'
 
 Alpine.data('sidebar', sidebar)
 Alpine.data('chat', chatComponent)
 Alpine.data('settings', settings)
-console.log('[main] Components registered: sidebar, chat, settings')
+Alpine.data('modalDocuments', createModal('documents', 'openDocuments', 'closeDocuments'))
+Alpine.data('modalSettings', createModal('settings', 'openSettings', 'closeSettings'))
+Alpine.data('modalMcp', createModal('mcp', 'openMcpPanel', 'closeMcpPanel'))
+Alpine.data('modalAgents', createModal('agents', 'openAgents', 'closeAgents'))
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalMcp, modalAgents')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

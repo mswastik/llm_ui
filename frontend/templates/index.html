@@ -101,19 +101,19 @@
         <!-- Footer -->
         <div class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1"
              x-show="!$store.ui.sidebarCollapsed">
-            <button @click="console.log('[DEBUG] KB clicked, showDocuments:', $store.ui.showDocuments); $store.ui.openDocuments()" class="sidebar-item">
+            <button @click="$dispatch('open-documents'); $store.ui.openDocuments()" class="sidebar-item">
                 <i class="ph ph-books text-base"></i>
                 <span>Knowledge Base</span>
             </button>
-            <button @click="console.log('[DEBUG] Settings clicked, showSettings:', $store.ui.showSettings); $store.ui.openSettings()" class="sidebar-item">
+            <button @click="$dispatch('open-settings'); $store.ui.openSettings()" class="sidebar-item">
                 <i class="ph ph-gear text-base"></i>
                 <span>Settings</span>
             </button>
-            <a href="/agents" class="sidebar-item">
+            <button @click="$dispatch('open-agents'); $store.ui.openAgents()" class="sidebar-item">
                 <i class="ph ph-users text-base"></i>
                 <span>AI Agents</span>
-            </a>
-            <button @click="$store.ui.toggleMcpPanel()" class="sidebar-item">
+            </button>
+            <button @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()" class="sidebar-item">
                 <i class="ph ph-plugs-connected text-base"></i>
                 <span>MCP Servers</span>
             </button>
@@ -122,16 +122,16 @@
         <!-- Footer (Collapsed) -->
         <div class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1 flex flex-col items-center"
              x-show="$store.ui.sidebarCollapsed">
-            <button @click="console.log('[DEBUG] KB collapsed clicked, showDocuments:', $store.ui.showDocuments); $store.ui.openDocuments()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="Knowledge Base">
+            <button @click="$dispatch('open-documents'); $store.ui.openDocuments()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="Knowledge Base">
                 <i class="ph ph-books text-lg"></i>
             </button>
-            <button @click="console.log('[DEBUG] Settings collapsed clicked, showSettings:', $store.ui.showSettings); $store.ui.openSettings()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="Settings">
+            <button @click="$dispatch('open-settings'); $store.ui.openSettings()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="Settings">
                 <i class="ph ph-gear text-lg"></i>
             </button>
-            <a href="/agents" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="AI Agents">
+            <button @click="$dispatch('open-agents'); $store.ui.openAgents()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="AI Agents">
                 <i class="ph ph-users text-lg"></i>
-            </a>
-            <button @click="$store.ui.toggleMcpPanel()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="MCP Servers">
+            </button>
+            <button @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()" class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors" title="MCP Servers">
                 <i class="ph ph-plugs-connected text-lg"></i>
             </button>
         </div>
@@ -261,14 +261,14 @@
                                 <template x-if="message.blocks?.length > 0">
                                     <div class="space-y-2">
                                         <template x-for="(block, blockIdx) in message.blocks" :key="'b-' + blockIdx">
+                                            <div>
+                                                <!-- Content Block -->
+                                                <div x-show="block.type === 'content'" class="prose">
+                                                    <div x-html="renderWithCitations(block.content, extractSources(message.blocks))"></div>
+                                                </div>
 
-                                            <!-- Content Block -->
-                                            <div x-show="block.type === 'content'" class="prose">
-                                                <div x-html="renderWithCitations(block.content, extractSources(message.blocks))"></div>
-                                            </div>
-
-                                            <!-- Thinking Block -->
-                                            <div x-show="block.type === 'thinking'" class="thinking-block rounded-lg overflow-hidden">
+                                                <!-- Thinking Block -->
+                                                <div x-show="block.type === 'thinking'" class="thinking-block rounded-lg overflow-hidden">
                                                 <div @click="toggleBlock('thinking-' + message.id + '-' + blockIdx)"
                                                      class="thinking-header flex items-center gap-2 px-3 py-2 text-sm">
                                                     <i class="ph ph-caret-right text-base transition-transform duration-200"
@@ -397,6 +397,7 @@
                                                     </div>
                                                 </div>
                                             </div>
+                                        </div>
                                         </template>
 
                                         <!-- Sources Section -->
@@ -529,102 +530,304 @@
         </div>
     </main>
 
-    <!-- ═══════════ MCP PANEL ═══════════ -->
-    <aside x-show="$store.ui.showMcpPanel" x-cloak x-transition:enter="animate-slide-right"
-           x-transition:leave="animate-slide-out-right"
-           class="w-[var(--mcp-panel-width)] bg-[var(--bg-secondary)] border-l border-[var(--border-primary)] flex flex-col overflow-hidden flex-shrink-0">
+    <!-- ═══════════ MCP SERVERS MODAL ═══════════ -->
+    <div x-data="modalMcp"
+         x-show="open"
+         x-cloak
+         @open-mcp.window="open = true"
+         @keydown.escape.window="closeModal()"
+         class="modal-backdrop modal-backdrop-mcp"
+         @click.self="closeModal()">
+        <div class="modal-content" style="max-width: 550px; width: 100%;">
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                    <i class="ph ph-plugs-connected text-[var(--accent-primary)]"></i>
+                    MCP Servers
+                </h2>
+                <button @click="closeModal()" class="btn btn-icon btn-ghost">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
 
+            <!-- Content -->
+            <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 140px);" x-data="{
+                servers: [],
+                async loadServers() {
+                    try {
+                        const [s, t] = await Promise.all([
+                            fetch('/api/mcp/servers').then(r => r.json()),
+                            fetch('/api/mcp/tools').then(r => r.json())
+                        ])
+                        this.servers = (s.servers || []).map(server => ({
+                            ...server,
+                            tools: (t.tools || []).filter(tool => tool.server === server.name),
+                            toolsExpanded: false,
+                            enabled: server.enabled !== false
+                        }))
+                    } catch(e) { this.servers = [] }
+                },
+                async $init() {
+                    await this.loadServers()
+                }
+            }" x-init="loadServers()">
+
+                <template x-if="servers.length === 0">
+                    <div class="text-center py-8 text-[var(--text-tertiary)] text-sm">
+                        <i class="ph ph-plugs text-3xl mb-2 block opacity-50"></i>
+                        No MCP servers configured
+                    </div>
+                </template>
+
+                <template x-for="server in servers" :key="server.name">
+                    <div class="card overflow-hidden">
+                        <div class="p-3">
+                            <div class="flex items-start justify-between mb-2">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-medium text-sm" x-text="server.name"></span>
+                                        <span class="badge-dot" :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"></span>
+                                    </div>
+                                    <div class="text-xs text-[var(--text-tertiary)]" x-text="server.transport_type"></div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" :checked="server.enabled" @change="server.enabled = $event.target.checked"
+                                           class="sr-only peer">
+                                    <div class="w-8 h-4 bg-[var(--bg-tertiary)] rounded-full peer peer-checked:bg-[var(--accent-primary)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-full"></div>
+                                </label>
+                            </div>
+                            <template x-if="server.tools?.length > 0">
+                                <button @click="server.toolsExpanded = !server.toolsExpanded"
+                                        class="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors mb-1">
+                                    <i class="ph ph-caret-right text-xs transition-transform" :class="server.toolsExpanded ? 'rotate-90' : ''"></i>
+                                    <span x-text="server.tools.length + ' tool' + (server.tools.length === 1 ? '' : 's')"></span>
+                                </button>
+                                <div x-show="server.toolsExpanded" x-collapse class="flex flex-wrap gap-1">
+                                    <template x-for="tool in server.tools" :key="tool.name">
+                                        <span class="pill pill-default text-xs px-2 py-0.5" :title="tool.description || tool.name" x-text="tool.name"></span>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-6 py-4 border-t border-[var(--border-primary)] bg-[var(--bg-tertiary)] flex-shrink-0">
+                <a href="/settings" class="text-xs text-[var(--text-link)] hover:underline flex items-center gap-1">
+                    <i class="ph ph-gear"></i> Manage MCP Servers
+                </a>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ═══════════ AI AGENTS MODAL ═══════════ -->
+<div x-data="modalAgents"
+     x-show="open"
+     x-cloak
+     @open-agents.window="open = true"
+     @keydown.escape.window="closeModal()"
+     class="modal-backdrop modal-backdrop-agents"
+     @click.self="closeModal()">
+    <div class="modal-content" style="max-width: 800px; width: 100%;">
         <!-- Header -->
-        <div class="px-4 py-3 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
-            <h3 class="font-semibold text-sm flex items-center gap-2">
-                <i class="ph ph-plugs-connected text-[var(--accent-primary)]"></i>
-                MCP Servers
-            </h3>
-            <button @click="$store.ui.showMcpPanel = false" class="btn btn-icon btn-ghost">
-                <i class="ph ph-x"></i>
+        <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+                <i class="ph ph-users text-[var(--accent-primary)]"></i>
+                AI Agents
+            </h2>
+            <button @click="closeModal()" class="btn btn-icon btn-ghost">
+                <i class="ph ph-x text-lg"></i>
             </button>
         </div>
 
         <!-- Content -->
-        <div class="flex-1 overflow-y-auto p-4 space-y-4" x-data="{
-            servers: [],
-            async loadServers() {
+        <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 140px);" x-data="{
+            agents: [],
+            loading: true,
+            showCreate: false,
+            editing: null,
+            formData: { name: '', description: '', system_prompt: '', model: '', temperature: 0.7, top_k: 3, max_tokens: 4096, enable_rag: false, rag_similarity_threshold: 0.7 },
+            async loadAgents() {
+                this.loading = true
                 try {
-                    const [s, t] = await Promise.all([
-                        fetch('/api/mcp/servers').then(r => r.json()),
-                        fetch('/api/mcp/tools').then(r => r.json())
-                    ])
-                    this.servers = (s.servers || []).map(server => ({
-                        ...server,
-                        tools: (t.tools || []).filter(tool => tool.server === server.name),
-                        toolsExpanded: false,
-                        enabled: server.enabled !== false
-                    }))
-                } catch(e) { this.servers = [] }
+                    const r = await fetch('/api/agents')
+                    const d = await r.json()
+                    this.agents = d.agents || []
+                } catch(e) { this.agents = [] }
+                this.loading = false
             },
-            async init() {
-                await this.loadServers()
+            newAgent() {
+                this.editing = null
+                this.formData = { name: '', description: '', system_prompt: '', model: '', temperature: 0.7, top_k: 3, max_tokens: 4096, enable_rag: false, rag_similarity_threshold: 0.7 }
+                this.showCreate = true
+            },
+            async saveAgent() {
+                try {
+                    const url = this.editing ? '/api/agents/' + this.editing.id : '/api/agents'
+                    const method = this.editing ? 'PUT' : 'POST'
+                    const res = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(this.formData) })
+                    if (res.ok) {
+                        const d = await res.json()
+                        if (this.editing) {
+                            const idx = this.agents.findIndex(a => a.id === this.editing.id)
+                            if (idx !== -1) this.agents[idx] = d.agent
+                        } else {
+                            this.agents.unshift(d.agent)
+                        }
+                        this.showCreate = false
+                        $store.ui.showToast(this.editing ? 'Agent updated' : 'Agent created', 'success')
+                    } else {
+                        $store.ui.showToast('Failed to save agent', 'error')
+                    }
+                } catch(e) { $store.ui.showToast('Failed to save agent', 'error') }
+            },
+            async deleteAgent(id) {
+                if (!confirm('Delete this agent?')) return
+                try {
+                    await fetch('/api/agents/' + id, { method: 'DELETE' })
+                    this.agents = this.agents.filter(a => a.id !== id)
+                    $store.ui.showToast('Agent deleted', 'success')
+                } catch(e) { $store.ui.showToast('Failed to delete', 'error') }
+            },
+            async $init() {
+                await this.loadAgents()
             }
-        }" x-init="loadServers()" x-effect="showMcpPanel => { if (showMcpPanel) loadServers() }">
+        }" x-init="loadAgents()">
 
-            <template x-if="servers.length === 0">
-                <div class="text-center py-8 text-[var(--text-tertiary)] text-sm">
-                    <i class="ph ph-plugs text-3xl mb-2 block opacity-50"></i>
-                    No MCP servers configured
-                </div>
-            </template>
-
-            <template x-for="server in servers" :key="server.name">
-                <div class="card overflow-hidden">
-                    <div class="p-3">
-                        <div class="flex items-start justify-between mb-2">
-                            <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2">
-                                    <span class="font-medium text-sm" x-text="server.name"></span>
-                                    <span class="badge-dot" :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"></span>
-                                </div>
-                                <div class="text-xs text-[var(--text-tertiary)]" x-text="server.transport_type"></div>
-                            </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" :checked="server.enabled" @change="server.enabled = $event.target.checked"
-                                       class="sr-only peer">
-                                <div class="w-8 h-4 bg-[var(--bg-tertiary)] rounded-full peer peer-checked:bg-[var(--accent-primary)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-full"></div>
-                            </label>
+            <!-- Create/Edit Form Modal -->
+            <div x-show="showCreate" x-cloak @click.self="showCreate = false"
+                 class="modal-backdrop modal-backdrop-form">
+                <div class="modal-content" style="max-width: 550px; width: 100%;">
+                    <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between">
+                        <h2 class="text-lg font-semibold" x-text="editing ? 'Edit Agent' : 'New Agent'"></h2>
+                        <button @click="showCreate = false" class="btn btn-icon btn-ghost">
+                            <i class="ph ph-x text-lg"></i>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4 overflow-y-auto" style="max-height: calc(90vh - 140px);">
+                        <div>
+                            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Name *</label>
+                            <input type="text" x-model="formData.name" class="input text-sm" placeholder="My Assistant">
                         </div>
-                        <template x-if="server.tools?.length > 0">
-                            <button @click="server.toolsExpanded = !server.toolsExpanded"
-                                    class="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors mb-1">
-                                <i class="ph ph-caret-right text-xs transition-transform" :class="server.toolsExpanded ? 'rotate-90' : ''"></i>
-                                <span x-text="server.tools.length + ' tool' + (server.tools.length === 1 ? '' : 's')"></span>
-                            </button>
-                            <div x-show="server.toolsExpanded" x-collapse class="flex flex-wrap gap-1">
-                                <template x-for="tool in server.tools" :key="tool.name">
-                                    <span class="pill pill-default text-xs px-2 py-0.5" :title="tool.description || tool.name" x-text="tool.name"></span>
-                                </template>
+                        <div>
+                            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Description</label>
+                            <input type="text" x-model="formData.description" class="input text-sm" placeholder="What does this agent do?">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">System Prompt</label>
+                            <textarea x-model="formData.system_prompt" rows="4" class="input text-sm resize-none" placeholder="You are a helpful assistant..."></textarea>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Model</label>
+                                <input type="text" x-model="formData.model" class="input text-sm" placeholder="model.gguf">
                             </div>
-                        </template>
+                            <div>
+                                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Temperature</label>
+                                <input type="number" step="0.01" min="0" max="2" x-model.number="formData.temperature" class="input text-sm">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Top K</label>
+                                <input type="number" x-model.number="formData.top_k" class="input text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Max Tokens</label>
+                                <input type="number" x-model.number="formData.max_tokens" class="input text-sm">
+                            </div>
+                        </div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" x-model="formData.enable_rag" class="rounded border-[var(--border-input)] text-[var(--accent-primary)]">
+                            <span class="text-sm text-[var(--text-secondary)]">Enable RAG</span>
+                        </label>
+                    </div>
+                    <div class="px-6 py-4 border-t border-[var(--border-primary)] flex justify-end gap-2">
+                        <button @click="showCreate = false" class="btn btn-secondary">Cancel</button>
+                        <button @click="saveAgent()" class="btn btn-primary">
+                            <i class="ph ph-check"></i> <span x-text="editing ? 'Update' : 'Create'"></span>
+                        </button>
                     </div>
                 </div>
+            </div>
+
+            <!-- Agent List -->
+            <template x-if="loading">
+                <div class="flex items-center justify-center py-12">
+                    <i class="ph ph-spinner animate-spin text-3xl text-[var(--accent-primary)]"></i>
+                </div>
             </template>
+
+            <template x-if="!loading && agents.length === 0">
+                <div class="text-center py-12">
+                    <i class="ph ph-robot text-4xl text-[var(--accent-primary)] mb-3 block opacity-50"></i>
+                    <h3 class="text-lg font-semibold mb-1">No Agents Yet</h3>
+                    <p class="text-sm text-[var(--text-tertiary)] mb-4">Create an AI agent with a custom personality and configuration.</p>
+                    <button @click="newAgent()" class="btn btn-primary">
+                        <i class="ph ph-plus"></i> Create First Agent
+                    </button>
+                </div>
+            </template>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3" x-show="!loading && agents.length > 0">
+                <template x-for="agent in agents" :key="agent.id">
+                    <div class="card p-4 group">
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="flex items-center gap-3 min-w-0 flex-1">
+                                <div class="w-9 h-9 rounded-xl bg-[var(--accent-primary-light)] flex items-center justify-center flex-shrink-0">
+                                    <i class="ph ph-robot text-lg text-[var(--accent-primary)]"></i>
+                                </div>
+                                <div class="min-w-0">
+                                    <h3 class="font-semibold text-sm truncate" x-text="agent.name"></h3>
+                                    <p class="text-xs text-[var(--text-tertiary)]" x-text="agent.model || 'No model'"></p>
+                                </div>
+                            </div>
+                            <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                <button @click="editing = agent; newAgent()" class="btn btn-icon btn-ghost text-xs text-[var(--text-tertiary)] hover:text-[var(--accent-primary)]">
+                                    <i class="ph ph-pencil-simple text-sm"></i>
+                                </button>
+                                <button @click="deleteAgent(agent.id)" class="btn btn-icon btn-ghost text-xs text-[var(--text-tertiary)] hover:text-[var(--error)]">
+                                    <i class="ph ph-trash text-sm"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-[var(--text-secondary)] mb-2 line-clamp-2" x-text="agent.description || 'No description'"></p>
+                        <div class="flex flex-wrap gap-1">
+                            <template x-if="agent.enable_rag">
+                                <span class="badge badge-success text-xs"><i class="ph ph-books text-xs"></i> RAG</span>
+                            </template>
+                            <template x-if="agent.enabled_tools?.length">
+                                <span class="badge badge-primary text-xs" x-text="agent.enabled_tools.length + ' tools'"></span>
+                            </template>
+                            <span class="badge badge-default text-xs" x-text="'Temp: ' + agent.temperature"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
 
         <!-- Footer -->
-        <div class="px-4 py-3 border-t border-[var(--border-primary)] bg-[var(--bg-tertiary)] flex-shrink-0">
-            <a href="/settings" class="text-xs text-[var(--text-link)] hover:underline flex items-center gap-1">
-                <i class="ph ph-gear"></i> Manage MCP Servers
-            </a>
+        <div class="px-6 py-4 border-t border-[var(--border-primary)] flex justify-end flex-shrink-0">
+            <button @click="newAgent()" class="btn btn-primary btn-sm">
+                <i class="ph ph-plus"></i> New Agent
+            </button>
         </div>
-    </aside>
-
+    </div>
 </div>
 
 <!-- ═══════════ SETTINGS MODAL ═══════════ -->
-<div x-show="$store.ui.showSettings"
+<div x-data="{ open: false, closeModal() { $store.ui.closeSettings(); this.open = false } }"
+     x-show="open"
      x-cloak
-     @keydown.escape.window="$store.ui.closeSettings()"
-     @keydown.window="if ($event.key === 's' && ($event.ctrlKey || $event.metaKey)) { $event.preventDefault(); $store.ui.showSettings = !$store.ui.showSettings }"
+     @open-settings.window="open = true"
+     @keydown.escape.window="closeModal()"
+     @keydown.window="if ($event.key === 's' && ($event.ctrlKey || $event.metaKey)) { $event.preventDefault(); closeModal() }"
      class="modal-backdrop"
-     @click.self="$store.ui.closeSettings()">
+     @click.self="closeModal()">
     <div class="modal-content" style="max-width: 700px; width: 100%;">
         <!-- Header -->
         <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between">
@@ -632,7 +835,7 @@
                 <i class="ph ph-gear text-[var(--accent-primary)]"></i>
                 Settings
             </h2>
-            <button @click="console.log('[DEBUG] Close settings clicked'); $store.ui.closeSettings()" class="btn btn-icon btn-ghost">
+            <button @click="closeModal()" class="btn btn-icon btn-ghost">
                 <i class="ph ph-x text-lg"></i>
             </button>
         </div>
@@ -886,7 +1089,7 @@
 
         <!-- Footer -->
         <div class="px-6 py-4 border-t border-[var(--border-primary)] flex justify-end gap-2 flex-shrink-0">
-            <button @click="$store.ui.closeSettings()" class="btn btn-secondary">Cancel</button>
+            <button @click="closeModal()" class="btn btn-secondary">Cancel</button>
             <button @click="saveSettings()" class="btn btn-primary">
                 <i class="ph ph-check"></i> Save Changes
             </button>
@@ -895,18 +1098,20 @@
 </div>
 
 <!-- ═══════════ DOCUMENTS MODAL ═══════════ -->
-<div x-show="$store.ui.showDocuments"
+<div x-data="{ open: false, closeModal() { $store.ui.closeDocuments(); this.open = false } }"
+     x-show="open"
      x-cloak
-     @keydown.escape.window="$store.ui.closeDocuments()"
+     @open-documents.window="open = true"
+     @keydown.escape.window="closeModal()"
      class="modal-backdrop modal-backdrop-documents"
-     @click.self="$store.ui.closeDocuments()">
+     @click.self="closeModal()">
     <div class="modal-content" style="max-width: 600px; width: 100%;">
         <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between">
             <h2 class="text-lg font-semibold flex items-center gap-2">
                 <i class="ph ph-books text-[var(--accent-primary)]"></i>
                 Knowledge Base
             </h2>
-            <button @click="console.log('[DEBUG] Close docs clicked'); $store.ui.closeDocuments()" class="btn btn-icon btn-ghost">
+            <button @click="closeModal()" class="btn btn-icon btn-ghost">
                 <i class="ph ph-x text-lg"></i>
             </button>
         </div>
@@ -928,7 +1133,7 @@
                             <i class="ph ph-file-text text-xl text-[var(--text-tertiary)]"></i>
                             <div>
                                 <p class="font-medium text-sm" x-text="doc.filename"></p>
-                                <p class="text-xs text-[var(--text-tertiary)]" x-text="doc.file_size ? (doc.file_size < 1024 ? doc.file_size + ' B' : doc.file_size < 1048576 ? (doc.file_size/1024).toFixed(1) + ' KB' : (doc.file_size/1048576).toFixed(1) + ' MB') + ' • ' + (doc.content_type || 'unknown')"></p>
+                                <p class="text-xs text-[var(--text-tertiary)]" x-text="doc.file_size ? formatters.formatFileSize(doc.file_size) + ' \u2022 ' + (doc.content_type || 'unknown') : (doc.content_type || 'unknown')"></p>
                             </div>
                         </div>
                         <button @click="if(confirm('Delete this document?')) { fetch('/api/documents/' + doc.id, { method: 'DELETE' }).then(() => { $store.ui.documents = $store.ui.documents.filter(d => d.id !== doc.id); $store.ui.showToast('Document deleted', 'success'); }).catch(() => $store.ui.showToast('Failed to delete', 'error')) }"

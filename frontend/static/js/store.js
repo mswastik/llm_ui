@@ -136,6 +136,7 @@ const stores = {
 
     // Panels
     showMcpPanel: false,
+    showAgents: false,
     showSettings: false,
     showDocuments: false,
 
@@ -178,8 +179,17 @@ const stores = {
       this.toast = { show: true, message, type }
       setTimeout(() => { this.toast = { show: false, message: '', type: 'success' } }, 3000)
     },
-    toggleMcpPanel() {
-      this.showMcpPanel = !this.showMcpPanel
+    openMcpPanel() {
+      this.showMcpPanel = true
+    },
+    closeMcpPanel() {
+      this.showMcpPanel = false
+    },
+    openAgents() {
+      this.showAgents = true
+    },
+    closeAgents() {
+      this.showAgents = false
     },
     openSettings() {
       this.showSettings = true
@@ -196,4 +206,34 @@ const stores = {
   }
 }
 
-export { stores }
+// ═══════════════════════════════════════════════════════════
+// Modal Component Factory — reusable modal with consistent behavior
+// ═══════════════════════════════════════════════════════════
+
+export function createModal(storeKey, openMethod, closeMethod) {
+  return function () {
+    return {
+      open: false,
+      openModal() {
+        this.open = true
+        if (typeof openMethod === 'function') {
+          try { openMethod() } catch(e) { console.error('[modal] openMethod error:', e) }
+        }
+      },
+      closeModal() {
+        // Close via store method if provided
+        if (closeMethod) {
+          try {
+            if (typeof closeMethod === 'function') closeMethod()
+            else if (typeof $store !== 'undefined' && typeof $store.ui[closeMethod] === 'function') {
+              $store.ui[closeMethod]()
+            }
+          } catch(e) { console.error('[modal] closeMethod error:', e) }
+        }
+        this.open = false
+      }
+    }
+  }
+}
+
+export {}

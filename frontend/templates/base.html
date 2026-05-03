@@ -49,7 +49,7 @@
         darkMode: localStorage.getItem('darkMode') === 'true',
         sidebarCollapsed: false,
         sidebarWidth: parseInt(localStorage.getItem('sidebarWidth') || '280'),
-        showMcpPanel: false, showSettings: false, showDocuments: false,
+        showMcpPanel: false, showAgents: false, showSettings: false, showDocuments: false,
         toast: { show: false, message: '', type: 'success' },
         settingsData: {}, mcpServers: [], mcpTools: [], documents: [],
         newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
@@ -61,7 +61,10 @@
         toggleSidebar() { this.sidebarCollapsed = !this.sidebarCollapsed; this.sidebarWidth = this.sidebarCollapsed ? 68 : 280; localStorage.setItem('sidebarWidth', this.sidebarWidth) },
         setSidebarWidth(w) { this.sidebarWidth = w; localStorage.setItem('sidebarWidth', w) },
         showToast(msg, type) { this.toast = { show: true, message: msg || '', type: type || 'success' }; setTimeout(() => { this.toast = { show: false, message: '', type: 'success' } }, 3000) },
-        toggleMcpPanel() { this.showMcpPanel = !this.showMcpPanel },
+        openMcpPanel() { this.showMcpPanel = true },
+        closeMcpPanel() { this.showMcpPanel = false },
+        openAgents() { this.showAgents = true },
+        closeAgents() { this.showAgents = false },
         openSettings() { this.showSettings = true },
         closeSettings() { this.showSettings = false },
         openDocuments() { this.showDocuments = true },
@@ -70,7 +73,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=23"></script>
+    <script type="module" src="/static/js/main.js?v=31"></script>
 
     {% block extra_head %}{% endblock %}
 </head>

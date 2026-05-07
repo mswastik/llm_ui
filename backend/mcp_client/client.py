@@ -301,7 +301,7 @@ class MCPClientManager:
             result: CallToolResult from FastMCP
             
         Returns:
-            Dictionary with tool result data
+            Dictionary with tool result data, including extracted sources
         """
         # CallToolResult has:
         # - content: list of content items (text, image, resource, etc.)
@@ -311,22 +311,45 @@ class MCPClientManager:
         parsed = {
             "content": [],
             "is_error": result.isError if hasattr(result, 'isError') else False,
-            "structured_content": None
+            "structured_content": None,
+            "sources": []
         }
         
         # Handle structured content if available
         if hasattr(result, 'structuredContent') and result.structuredContent:
             parsed["structured_content"] = result.structuredContent
+            # Extract sources from structured content (common pattern for search MCP servers)
+            if isinstance(result.structuredContent, dict):
+                structured = result.structuredContent
+                # Check for sources in various common key names
+                for key in ('sources', 'documents', 'results', 'hits', 'items'):
+                    if key in structured and isinstance(structured[key], list):
+                        parsed["sources"].extend(self._normalize_sources(structured[key]))
+                        break
+                # Also check structuredContent itself is a list
+                if not parsed["sources"] and isinstance(structured, list):
+                    parsed["sources"].extend(self._normalize_sources(structured))
             
-        # Handle content list
+        # Handle content list and extract sources from text items
         if result.content:
             for item in result.content:
                 if hasattr(item, 'type'):
                     if item.type == "text":
+                        text = item.text if hasattr(item, 'text') else str(item)
                         parsed["content"].append({
                             "type": "text",
-                            "text": item.text if hasattr(item, 'text') else str(item)
+                            "text": text
                         })
+                        # Try to extract sources from text content (JSON array)
+                        text_sources = self._extract_sources_from_text(text)
+                        if text_sources:
+                            parsed["sources"].extend(text_sources)
+                        # Check if item has a source URL (MCP spec citation)
+                        if hasattr(item, 'source') and item.source:
+                            parsed["sources"].append({
+                                "title": str(item.source),
+                                "url": str(item.source)
+                            })
                     elif item.type == "image":
                         parsed["content"].append({
                             "type": "image",
@@ -345,8 +368,208 @@ class MCPClientManager:
                         })
                 else:
                     parsed["content"].append({"type": "unknown", "data": str(item)})
+        
+        # Deduplicate sources by URL
+        if parsed["sources"]:
+            seen_urls = set()
+            unique_sources = []
+            for s in parsed["sources"]:
+                url = s.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    unique_sources.append(s)
+                elif not url and s not in unique_sources:
+                    unique_sources.append(s)
+            parsed["sources"] = unique_sources
                     
         return parsed
+
+    def _normalize_sources(self, sources_list: list) -> list:
+        """
+        Normalize sources from various MCP server formats to a standard format.
+        
+        Standard format: {title, url, snippet, document_id}
+        
+        Handles formats like:
+        - [{title, url, snippet}]
+        - [{name, uri, description}]
+        - [{text, source, ...}]
+        - [{url, title, ...}]
+        """
+        normalized = []
+        for source in sources_list:
+            if not isinstance(source, dict):
+                continue
+            
+            # Extract title
+            title = (
+                source.get("title") or
+                source.get("name") or
+                source.get("label") or
+                source.get("filename") or
+                source.get("source") or
+                str(source)
+            )
+            
+            # Extract URL
+            url = (
+                source.get("url") or
+                source.get("uri") or
+                source.get("link") or
+                source.get("href") or
+                source.get("source") or
+                ""
+            )
+            
+            # Extract snippet/description
+            snippet = (
+                source.get("snippet") or
+                source.get("description") or
+                source.get("summary") or
+                source.get("text") or
+                ""
+            )
+            
+            # Extract document_id
+            doc_id = (
+                source.get("document_id") or
+                source.get("id") or
+                source.get("doc_id") or
+                ""
+            )
+            
+            normalized.append({
+                "title": str(title),
+                "url": str(url),
+                "snippet": str(snippet),
+                "document_id": str(doc_id)
+            })
+        
+        return normalized
+
+    def _extract_sources_from_text(self, text: str) -> list:
+        """
+        Try to extract sources from text content.
+        
+        Handles multiple formats:
+        1. Plain text SOURCES section: "SOURCES:\n[1] Title — URL\n[2] Title — URL"
+        2. JSON array: [{title, url}, ...]
+        3. JSON array embedded in text
+        """
+        import json
+        
+        # Try plain text SOURCES format first (most common for search MCP servers)
+        # Format: SOURCES:\n[1] Title — URL\n[2] Title — URL
+        text_sources = self._extract_sources_from_text_format(text)
+        if text_sources:
+            return text_sources
+        
+        # Try JSON array
+        return self._extract_sources_from_json(text)
+
+    def _extract_sources_from_text_format(self, text: str) -> list:
+        """
+        Extract sources from plain text SOURCES section.
+        
+        Handles formats like:
+        SOURCES:
+        [1] Title — URL
+        [2] Title — URL
+        
+        Also handles variations:
+        SOURCES:\n[1] Title - URL\n[2] Title @ URL
+        """
+        text = text.strip()
+        
+        # Find SOURCES section
+        sources_marker = None
+        for marker in ['SOURCES:', 'SOURCES', 'REFERENCES:', 'REFERENCES', 'LINKS:', 'LINKS']:
+            idx = text.find(marker)
+            if idx != -1:
+                sources_marker = idx
+                break
+        
+        if sources_marker is None:
+            return []
+        
+        sources_text = text[sources_marker + len(marker):].strip()
+        if not sources_text:
+            return []
+        
+        sources = []
+        # Match lines like: [1] Title — URL or [1] Title - URL or [1] Title @ URL
+        # Also handle: [1] URL (just URL, no title)
+        import re
+        for line in sources_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Pattern: [N] Title — URL (or - or @ or :)
+            match = re.match(r'\[\s*(\d+)\s*\]\s*(.+?)\s*[—\-\-@:]+\s*(.+)', line)
+            if match:
+                title = match.group(2).strip()
+                url = match.group(3).strip()
+                sources.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": ""
+                })
+                continue
+            
+            # Pattern: [N] URL (just URL, no title)
+            match = re.match(r'\[\s*(\d+)\s*\]\s*(https?://.+)', line)
+            if match:
+                url = match.group(2).strip()
+                sources.append({
+                    "title": url,
+                    "url": url,
+                    "snippet": ""
+                })
+                continue
+        
+        return sources if sources else []
+
+    def _extract_sources_from_json(self, text: str) -> list:
+        """
+        Try to extract a JSON array of sources from text content.
+        
+        Looks for patterns like:
+        - [\n  { ... sources ... }\n]\n at the end of text
+        - JSON array anywhere in text
+        """
+        import json
+        
+        # Try to find a JSON array at the end of the text
+        text = text.strip()
+        if not text.startswith('['):
+            # Try to find JSON array embedded in text
+            bracket_start = text.find('[\n')
+            if bracket_start == -1:
+                bracket_start = text.find('[ ')
+            if bracket_start == -1:
+                bracket_start = text.find('[')
+            
+            if bracket_start == -1:
+                return []
+            
+            # Find the matching closing bracket
+            bracket_end = text.rfind(']')
+            if bracket_end == -1:
+                return []
+            
+            json_str = text[bracket_start:bracket_end + 1]
+        else:
+            json_str = text
+        
+        try:
+            sources = json.loads(json_str)
+            if isinstance(sources, list):
+                return self._normalize_sources(sources)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        
+        return []
 
     async def list_all_tools(self) -> List[Dict]:
         """

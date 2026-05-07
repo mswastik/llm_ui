@@ -25,7 +25,7 @@ from database.crud import (
 from mcp_client.client import MCPClientManager
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
-from backend.settings import settings_manager, QUERY_MODEL
+from backend.settings import settings_manager
 
 # Initialize MCP client manager
 mcp_manager = MCPClientManager()
@@ -315,14 +315,20 @@ async def _core_stream_handler(
                             pending_tool_call["result"] = {"error": progress_event.get("error")}
 
                     # Add tool call block to message blocks for sequential display
-                    message_blocks.append({
+                    tool_call_block = {
                         "type": "tool_call",
                         "name": pending_tool_call['name'],
                         "arguments": pending_tool_call['arguments'],
                         "status": pending_tool_call['status'],
                         "result": pending_tool_call['result'],
                         "progress_history": pending_tool_call['progress_history']
-                    })
+                    }
+                    # Extract sources from result for bottom-of-chat display
+                    if pending_tool_call['result'] and isinstance(pending_tool_call['result'], dict):
+                        sources = pending_tool_call['result'].get('sources', [])
+                        if sources:
+                            tool_call_block['sources'] = sources
+                    message_blocks.append(tool_call_block)
 
                     # Add tool result to conversation for LLM to continue
                     # Format for llama.cpp: role=tool with content as string
@@ -401,9 +407,14 @@ async def _core_stream_handler(
                         if first_user_message:
                             try:
                                 # Shield title generation from cancellation - it's a background task
+                                # Use the conversation's model so KV cache is preserved.
+                                # The title prompt gets appended to the existing context,
+                                # llama.cpp reuses KV cache for the matching prefix.
+                                # Timeout increased to 60s for thinking models that may spend
+                                # significant time/thinking tokens generating the title.
                                 title = await asyncio.wait_for(
-                                    asyncio.shield(llm_client.generate_title(first_user_message["content"], model=QUERY_MODEL)),
-                                    timeout=40.0
+                                    asyncio.shield(llm_client.generate_title(first_user_message["content"], model=model)),
+                                    timeout=60.0
                                 )
                                 await update_conversation_title(title_db, conversation_id, title)
                                 await title_db.commit()

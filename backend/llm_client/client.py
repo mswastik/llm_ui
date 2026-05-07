@@ -75,6 +75,7 @@ class LLMClient:
             "stream": True,
             "temperature": active_temperature,
             "max_tokens": active_max_tokens,
+            "cache_prompt": True,  # Reuse KV cache from previous request when prompt prefix matches
         }
 
         # Add tool definitions if available

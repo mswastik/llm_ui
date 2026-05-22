@@ -309,7 +309,7 @@ async def toggle_mcp_server(db: AsyncSession, server_name: str, enabled: bool):
         server.enabled = 1 if enabled else 0
 
 
-async def remove_mcp_server(db: AsyncSession, server_name: str):
+async def remove_mcp_server(db: AsyncSession, server_name: str) -> bool:
     """Remove an MCP server"""
     result = await db.execute(
         select(MCPServer).where(MCPServer.name == server_name)
@@ -318,6 +318,8 @@ async def remove_mcp_server(db: AsyncSession, server_name: str):
     
     if server:
         await db.delete(server)
+        return True
+    return False
 
 
 # Document operations

@@ -58,25 +58,25 @@ settings_manager.set_tts_service(tool_executor.tts_service)
 @app.get("/")
 async def index(request: Request):
     """Render main chat interface"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/settings")
 async def settings_page(request: Request):
     """Redirect to main page (settings are now a modal)"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/knowledge")
 async def knowledge_page(request: Request):
     """Redirect to main page (knowledge base is now a modal)"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/agents")
 async def agents_page(request: Request):
     """Redirect to main page (agents are now a modal)"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/api/conversations")
@@ -534,12 +534,17 @@ async def add_mcp_server(request: Request):
         if not command:
             raise HTTPException(status_code=400, detail="Command is required for stdio transport")
 
-    success = await mcp_manager.add_server(name, command, args, env, transport_type, url)
+    success, error = await mcp_manager.add_server(name, command, args, env, transport_type, url)
 
     if success:
-        return {"status": "success", "message": f"Server '{name}' added successfully"}
+        return {"status": "success", "message": f"Server '{name}' added and connected successfully", "connected": True}
     else:
-        raise HTTPException(status_code=400, detail="Failed to add server")
+        return {
+            "status": "warning",
+            "message": f"Server '{name}' added but connection failed.",
+            "connected": False,
+            "error": error
+        }
 
 
 @app.delete("/api/mcp/servers/{server_name}")
@@ -572,7 +577,7 @@ async def update_mcp_server(server_name: str, request: Request):
     timeout = data.get("timeout", 30.0)
     
     # Validate based on transport type
-    if transport_type in ("sse", "http"):
+    if transport_type in ("sse", "http", "streamable-http"):
         if not url:
             raise HTTPException(status_code=400, detail="URL is required for SSE/HTTP transport")
     elif transport_type == "stdio":
@@ -583,7 +588,7 @@ async def update_mcp_server(server_name: str, request: Request):
     await mcp_manager.remove_server(server_name)
     
     # Add with new configuration (using new name if provided)
-    success = await mcp_manager.add_server(
+    success, error = await mcp_manager.add_server(
         name=new_name,
         command=command,
         args=args,
@@ -592,11 +597,16 @@ async def update_mcp_server(server_name: str, request: Request):
         url=url,
         timeout=timeout
     )
-    
+
     if success:
-        return {"status": "success", "message": f"Server '{new_name}' updated successfully"}
+        return {"status": "success", "message": f"Server '{new_name}' updated successfully", "connected": True}
     else:
-        raise HTTPException(status_code=400, detail="Failed to update server")
+        return {
+            "status": "warning",
+            "message": f"Server '{new_name}' updated but connection failed.",
+            "connected": False,
+            "error": error
+        }
 
 
 @app.post("/api/mcp/servers/{server_name}/refresh")

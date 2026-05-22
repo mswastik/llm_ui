@@ -6,6 +6,8 @@ using the FastMCP Client class, which handles all protocol details and connectio
 """
 
 import asyncio
+import shutil
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
@@ -74,6 +76,7 @@ class MCPClientManager:
         async with get_db() as db:
             server_configs = await get_enabled_mcp_servers(db)
 
+        tasks = []
         for config in server_configs:
             server_config = MCPServerConfig(
                 name=config["name"],
@@ -86,11 +89,14 @@ class MCPClientManager:
             )
             
             if server_config.enabled:
-                await self._connect_server(server_config)
+                tasks.append(self._connect_server(server_config))
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
         self._initialized = True
 
-    async def _connect_server(self, config: MCPServerConfig) -> bool:
+    async def _connect_server(self, config: MCPServerConfig) -> tuple[bool, str | None]:
         """
         Connect to an MCP server and discover its tools.
 
@@ -98,7 +104,7 @@ class MCPClientManager:
             config: Server configuration
 
         Returns:
-            True if connection and discovery succeeded
+            Tuple of (is_connected, error_message)
         """
         try:
             # Create lock for this server if not exists
@@ -106,42 +112,55 @@ class MCPClientManager:
                 self._connection_locks[config.name] = asyncio.Lock()
 
             async with self._connection_locks[config.name]:
-                # Build FastMCP client based on transport type
-                client = self._create_client(config)
+                # Create server instance first and register it in memory
+                instance = MCPServerInstance(config=config)
+                self.servers[config.name] = instance
 
-                # Create server instance
-                instance = MCPServerInstance(config=config, client=client)
-
-                # Connect and initialize
                 try:
-                    # For all transport types, use the client's context manager
-                    # FastMCP handles transport-specific connection details internally
-                    async with client:
-                        # Discover tools
-                        tools = await client.list_tools()
+                    # Build FastMCP client based on transport type
+                    client = self._create_client(config)
+                    instance.client = client
+
+                    # Connect and initialize
+                    try:
+                        # For all transport types, use the client's context manager
+                        # FastMCP handles transport-specific connection details internally
+                        async def _connect_and_list():
+                            async with client:
+                                return await client.list_tools()
+
+                        # Apply timeout to connection and tool list discovery
+                        tools = await asyncio.wait_for(_connect_and_list(), timeout=config.timeout)
                         instance.tools = self._parse_tools(tools, config.name)
                         instance.is_connected = True
                         instance.is_initialized = True
                         instance.error = None
 
-                    print(f"Connected to MCP server '{config.name}': {len(instance.tools)} tools available")
+                        print(f"Connected to MCP server '{config.name}': {len(instance.tools)} tools available")
 
-                except Exception as conn_error:
-                    instance.error = str(conn_error)
+                    except BaseException as conn_error:
+                        instance.error = str(conn_error)
+                        instance.is_connected = False
+                        instance.is_initialized = False
+                        print(f"Failed to connect to MCP server '{config.name}': {conn_error}")
+                        import traceback
+                        traceback.print_exc()
+
+                except BaseException as create_error:
+                    instance.error = str(create_error)
                     instance.is_connected = False
                     instance.is_initialized = False
-                    print(f"Failed to connect to MCP server '{config.name}': {conn_error}")
+                    print(f"Failed to create MCP client for '{config.name}': {create_error}")
                     import traceback
                     traceback.print_exc()
 
-                self.servers[config.name] = instance
-                return instance.is_connected
+                return instance.is_connected, instance.error
 
-        except Exception as e:
-            print(f"Error connecting to MCP server '{config.name}': {e}")
+        except BaseException as e:
+            print(f"Error in _connect_server for '{config.name}': {e}")
             import traceback
             traceback.print_exc()
-            return False
+            return False, str(e)
 
     def _create_client(self, config: MCPServerConfig) -> FastMCPClient:
         """
@@ -166,11 +185,25 @@ class MCPClientManager:
             if not config.command:
                 raise ValueError("Command required for stdio transport")
 
+            command_path = config.command
+            if not Path(command_path).is_absolute():
+                resolved = shutil.which(command_path)
+                if resolved:
+                    command_path = resolved
+
+            if not Path(command_path).exists():
+                raise FileNotFoundError(
+                    f"Command not found for stdio transport: {config.command}. "
+                    f"Resolved path: {command_path}. "
+                    "On Windows, shell builtins like 'echo' are not valid executables; "
+                    "use a real executable or run through cmd.exe /c <command>."
+                )
+
             # For stdio transport, we need to use StdioTransport explicitly
             # This properly handles commands like 'uvx', 'npx' with arguments
             # Pass environment variables to the transport
             transport_kwargs = {
-                "command": config.command,
+                "command": command_path,
                 "args": config.args,
             }
             # Only add env if it's not empty
@@ -281,8 +314,11 @@ class MCPClientManager:
         try:
             # FastMCP requires using the context manager for tool calls
             # The context manager handles session lifecycle
-            async with instance.client:
-                result: CallToolResult = await instance.client.call_tool(tool_name, arguments)
+            async def _call():
+                async with instance.client:
+                    return await instance.client.call_tool(tool_name, arguments)
+
+            result: CallToolResult = await asyncio.wait_for(_call(), timeout=instance.config.timeout)
             
             # Parse result - FastMCP returns CallToolResult with content list
             return self._parse_tool_result(result)
@@ -656,7 +692,8 @@ class MCPClientManager:
             timeout=timeout
         )
 
-        return await self._connect_server(config)
+        success, error = await self._connect_server(config)
+        return success, error
 
     async def remove_server(self, name: str) -> bool:
         """
@@ -668,28 +705,27 @@ class MCPClientManager:
         Returns:
             True if server was removed
         """
-        if name not in self.servers:
-            return False
-
-        instance = self.servers[name]
-        
-        # Disconnect client if connected
-        if instance.client and instance.is_connected:
-            try:
-                await instance.client.close()
-            except Exception:
-                pass
-
-        # Remove from registry
-        del self.servers[name]
-
-        # Remove from database
+        # Remove from database first
         from database.crud import remove_mcp_server
         from database.models import get_db
         async with get_db() as db:
-            await remove_mcp_server(db, name)
+            db_removed = await remove_mcp_server(db, name)
 
-        return True
+        in_memory = name in self.servers
+        if in_memory:
+            instance = self.servers[name]
+            
+            # Disconnect client if connected
+            if instance.client and instance.is_connected:
+                try:
+                    await instance.client.close()
+                except Exception:
+                    pass
+
+            # Remove from registry
+            del self.servers[name]
+
+        return db_removed or in_memory
 
     async def reconnect_server(self, name: str) -> bool:
         """
@@ -738,9 +774,12 @@ class MCPClientManager:
             return False
             
         try:
-            async with instance.client:
-                tools = await instance.client.list_tools()
-                instance.tools = self._parse_tools(tools, server_name)
+            async def _refresh():
+                async with instance.client:
+                    return await instance.client.list_tools()
+
+            tools = await asyncio.wait_for(_refresh(), timeout=instance.config.timeout)
+            instance.tools = self._parse_tools(tools, server_name)
             return True
         except Exception:
             return False

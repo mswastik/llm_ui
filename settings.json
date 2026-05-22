@@ -3,7 +3,7 @@
   "llama_cpp_base_url": "http://localhost:8080",
   "llama_cpp_model": "qwen36-35b",
   "query_model": "qwen35-4b-nothink",
-  "app_host": "0.0.0.0",
+  "app_host": "localhost",
   "app_port": 8002,
   "debug": false,
   "max_upload_size": 10485760,

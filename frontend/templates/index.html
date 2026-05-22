@@ -1336,7 +1336,8 @@
 
 <!-- ═══════════ SETTINGS MODAL ═══════════ -->
 <div
-  x-data="{ open: false, closeModal() { $store.ui.closeSettings(); this.open = false } }"
+  x-data="settings"
+  x-init="init()"
   x-show="open"
   x-cloak
   @open-settings.window="open = true"
@@ -1535,7 +1536,7 @@
               >
               <select
                 x-model="$store.ui.settingsData.tts_engine"
-                @change="settings.onTtsEngineChange()"
+                @change="onTtsEngineChange()"
                 class="input text-sm"
               >
                 <option value="edge-tts">Edge TTS</option>
@@ -1605,8 +1606,6 @@
         <!-- MCP Tab -->
         <div
           x-show="$store.ui.settingsTab === 'mcp'"
-          x-data="settings"
-          x-init="init()"
         >
           <h3 class="font-semibold mb-4">Add MCP Server</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -1656,6 +1655,24 @@
                 class="input text-sm"
                 placeholder='["-y", "@anthropic-ai/claude-code"]'
               />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Optional. Example: <code class="text-[0.75rem]">["-y", "arg2"]</code>
+              </p>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Env (JSON)</label
+              >
+              <input
+                type="text"
+                x-model="newServer.env"
+                class="input text-sm"
+                placeholder='{"HOME": "/home/user"}'
+              />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Optional. Example: <code class="text-[0.75rem]">{"KEY": "value"}</code>
+              </p>
             </div>
             <div x-show="newServer.transport_type !== 'stdio'">
               <label

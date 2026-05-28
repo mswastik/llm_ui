@@ -33,21 +33,36 @@
           </template>
         </select>
 
-        <!-- RAG Toggle -->
-        <button
-          @click="toggleRAG()"
-          class="pill text-xs"
-          :class="enableRAG ? 'pill-active' : 'pill-default'"
-        >
-          <i class="ph ph-books text-xs"></i>
-          <span>Docs</span>
-          <template x-if="documents.length > 0">
-            <span
-              class="badge badge-success text-[10px]"
-              x-text="documents.length"
-            ></span>
-          </template>
-        </button>
+        <!-- Document Selector -->
+        <div class="relative" x-data="{ docDropdownOpen: false }" @click.outside="docDropdownOpen = false">
+          <button
+            @click="docDropdownOpen = !docDropdownOpen"
+            class="pill text-xs"
+            :class="selectedDocumentIds.length > 0 ? 'pill-active' : 'pill-default'"
+          >
+            <i class="ph ph-books text-xs"></i>
+            <span x-text="selectedDocumentIds.length > 0 ? (selectedDocumentIds.includes('all') ? 'All Docs' : selectedDocumentIds.length + ' docs') : 'Docs'"></span>
+          </button>
+          <div
+            x-show="docDropdownOpen"
+            x-cloak
+            class="absolute top-full left-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg shadow-xl z-50 min-w-[200px] max-h-[260px] overflow-y-auto py-1"
+          >
+            <label class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-tertiary)] cursor-pointer text-sm border-b border-[var(--border-primary)]">
+              <input type="checkbox" :checked="isDocumentSelected('all')" @change="toggleDocument('all')" class="rounded" style="accent-color: var(--accent-primary)" />
+              <span class="font-medium">All documents</span>
+            </label>
+            <template x-for="doc in documents" :key="doc.id">
+              <label class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-tertiary)] cursor-pointer text-sm">
+                <input type="checkbox" :checked="isDocumentSelected(doc.id)" @change="toggleDocument(doc.id)" class="rounded" style="accent-color: var(--accent-primary)" />
+                <span class="truncate" x-text="doc.filename"></span>
+              </label>
+            </template>
+            <div x-show="documents.length === 0" class="px-3 py-3 text-xs text-[var(--text-tertiary)] text-center">
+              No documents uploaded
+            </div>
+          </div>
+        </div>
 
         <!-- Title -->
         <input

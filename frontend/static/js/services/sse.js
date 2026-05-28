@@ -14,7 +14,8 @@ export class SSEService {
     this.handlers = { data: [], error: [], complete: [] }
     const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
       (options.enableRag ? '&enable_rag=1' : '') +
-      (options.model ? `&model=${encodeURIComponent(options.model)}` : '')
+      (options.model ? `&model=${encodeURIComponent(options.model)}` : '') +
+      (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '')
 
     fetch(url, { signal: this.controller.signal })
       .then(response => {

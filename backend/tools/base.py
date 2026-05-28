@@ -3,7 +3,11 @@ import aiohttp
 import os
 import requests
 import numpy as np
+import contextvars
 from typing import List, Dict, Optional, Any
+
+# ContextVar to pass document_ids from stream handler to tool executor
+current_document_ids: contextvars.ContextVar = contextvars.ContextVar('document_ids', default=None)
 
 class SharedLLMUtils:
     """Shared utilities for embeddings and reranking to reduce code duplication."""

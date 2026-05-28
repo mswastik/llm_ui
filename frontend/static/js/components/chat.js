@@ -11,7 +11,7 @@ const chatComponent = () => ({
   toolStatus: { active: false, tool: '', status: '', progress: null },
   selectedModel: '',
   selectedAgentId: null,
-  enableRAG: false,
+  selectedDocumentIds: [],
   editingMessageId: null,
   editContent: '',
   inputMessage: '',
@@ -31,6 +31,10 @@ const chatComponent = () => ({
     this.$store.chat.messages = val
   },
 
+  get isRAGActive() {
+    return this.selectedDocumentIds.length > 0
+  },
+
   // ─── Init ─────────────────────────────────────────────
   async init() {
     this.syncFromStore()
@@ -39,7 +43,7 @@ const chatComponent = () => ({
     this.selectedModel = this.$store.chat.selectedModel
     this.$store.chat.loadSavedAgent()
     this.selectedAgentId = this.$store.chat.selectedAgentId
-    this.enableRAG = this.$store.chat.enableRAG
+    this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     await ttsService.checkAvailability()
     this.checkActiveStream()
 
@@ -53,7 +57,7 @@ const chatComponent = () => ({
     this.toolStatus = { ...this.$store.chat.toolStatus }
     this.selectedModel = this.$store.chat.selectedModel
     this.selectedAgentId = this.$store.chat.selectedAgentId
-    this.enableRAG = this.$store.chat.enableRAG
+    this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     this.availableModels = this.$store.chat.availableModels
     this.availableAgents = this.$store.chat.availableAgents
     this.currentConversationTitle = this.$store.chat.currentConversationTitle
@@ -136,7 +140,7 @@ const chatComponent = () => ({
     try {
       const data = await api.post(
         `/api/conversations/${conversationId}/messages`,
-        { message: text, enable_rag: this.enableRAG }
+        { message: text, enable_rag: this.isRAGActive, document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds }
       )
       await this.streamResponse(data.request_id)
     } catch (e) {
@@ -168,7 +172,8 @@ const chatComponent = () => ({
     )
 
     const handlers = sseService.stream(requestId, this.$store.chat.currentConversationId, {
-      enableRag: this.enableRAG,
+      enableRag: this.isRAGActive,
+      documentIds: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
       model: this.selectedModel
     })
 
@@ -498,7 +503,7 @@ const chatComponent = () => ({
     this.$store.chat.setAgent(this.selectedAgentId)
     this.$store.chat.applyAgentConfig()
     this.selectedModel = this.$store.chat.selectedModel
-    this.enableRAG = this.$store.chat.enableRAG
+    this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
 
     // Update the current conversation's agent_id if one is active
     const convId = this.$store.chat.currentConversationId
@@ -518,8 +523,31 @@ const chatComponent = () => ({
     }
   },
 
-  toggleRAG() {
-    this.enableRAG = !this.enableRAG
+  toggleDocument(docId) {
+    if (docId === 'all') {
+      if (this.selectedDocumentIds.includes('all')) {
+        this.selectedDocumentIds = []
+      } else {
+        this.selectedDocumentIds = ['all']
+      }
+    } else {
+      const idx = this.selectedDocumentIds.indexOf(docId)
+      if (idx >= 0) {
+        this.selectedDocumentIds.splice(idx, 1)
+      } else {
+        this.selectedDocumentIds.push(docId)
+      }
+      const allIdx = this.selectedDocumentIds.indexOf('all')
+      if (allIdx >= 0 && this.selectedDocumentIds.length > 1) {
+        this.selectedDocumentIds.splice(allIdx, 1)
+      }
+    }
+    this.$store.chat.selectedDocumentIds = [...this.selectedDocumentIds]
+  },
+
+  isDocumentSelected(docId) {
+    if (docId === 'all') return this.selectedDocumentIds.includes('all')
+    return this.selectedDocumentIds.includes('all') || this.selectedDocumentIds.includes(docId)
   },
 
   updateTitle(e) {

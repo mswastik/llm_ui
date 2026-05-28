@@ -125,11 +125,12 @@ const settings = () => {
         transport_type: this.newServer.transport_type,
         command: this.newServer.command,
         args, env,
-        url: this.newServer.url || null
+        url: this.newServer.url || null,
+        timeout: this.newServer.timeout || 60
       })
 
       await this.loadMCPServers()
-      this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' }
+      this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 }
       if (response.connected === false) {
         this.$store.ui.showToast(response.error || response.message || 'Server added but connection failed', 'warning')
       } else {
@@ -148,14 +149,15 @@ const settings = () => {
       url: server.url || '',
       env: server.env ? JSON.stringify(server.env) : '{}',
       enabled: server.enabled !== false,
-      originalName: server.name
+      originalName: server.name,
+      timeout: server.timeout || 60
     }
     this.editingServer = true
   },
 
   closeEdit() {
     this.editingServer = false
-    this.editServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' }
+    this.editServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '', timeout: 60 }
   },
 
   async saveEdit() {
@@ -179,7 +181,8 @@ const settings = () => {
       const response = await api.put(`/api/mcp/servers/${this.editServer.originalName}`, {
         name: this.editServer.name, transport_type: this.editServer.transport_type,
         command: this.editServer.command, args, env,
-        url: this.editServer.url || null
+        url: this.editServer.url || null,
+        timeout: this.editServer.timeout || 60
       })
 
       await this.loadMCPServers()

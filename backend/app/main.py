@@ -7,7 +7,10 @@ import asyncio
 import json
 import os
 import uuid
+import contextvars
 from typing import AsyncGenerator, Dict, List, Optional
+
+from tools.base import current_document_ids
 
 from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from database.models import init_db, get_db
@@ -122,6 +125,7 @@ async def send_message(conversation_id: str, request: Request):
     data = await request.json()
     user_message = data.get("message", "")
     enable_rag = data.get("enable_rag", False)
+    document_ids = data.get("document_ids")
 
     if not user_message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -133,7 +137,8 @@ async def send_message(conversation_id: str, request: Request):
         return {
             "request_id": request_id,
             "status": "processing",
-            "enable_rag": enable_rag
+            "enable_rag": enable_rag,
+            "document_ids": document_ids
         }
 
 
@@ -186,13 +191,18 @@ async def _generate_title_with_model(
     title = ' '.join(words[:6]).strip().rstrip('.,;:!?\\-"\'')
     return title[:60]
 
+
+
+
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
     enable_rag: bool = False,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    document_ids: Optional[list] = None
 ) -> AsyncGenerator[str, None]:
     """Universal SSE handler for streaming LLM responses and tool execution."""
+    current_document_ids.set(document_ids)
     try:
         async with get_db() as db:
             # Get conversation to retrieve agent configuration
@@ -527,11 +537,13 @@ async def stream_response(
     request_id: str,
     conversation_id: str,
     enable_rag: bool = False,
-    model: str = None
+    model: str = None,
+    document_ids: str = None
 ):
     """Stream LLM response with real-time tool execution updates."""
+    doc_ids = document_ids.split(",") if document_ids else None
     return StreamingResponse(
-        _core_stream_handler(request_id, conversation_id, enable_rag, model),
+        _core_stream_handler(request_id, conversation_id, enable_rag, model, doc_ids),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -574,7 +586,8 @@ async def list_mcp_servers():
         servers_with_status.append({
             **server,
             "enabled": db_enabled.get(server["name"], True),
-            "disabled_tools": db_info.get("disabled_tools", [])
+            "disabled_tools": db_info.get("disabled_tools", []),
+            "timeout": db_info.get("timeout", 60.0)
         })
 
     # Also include servers from DB that might not be connected
@@ -608,6 +621,7 @@ async def add_mcp_server(request: Request):
     env = data.get("env", {})
     transport_type = data.get("transport_type", "stdio")
     url = data.get("url")
+    timeout = data.get("timeout", 60.0)
     
     # Validate based on transport type
     if transport_type in ("sse", "streamable-http"):
@@ -617,7 +631,7 @@ async def add_mcp_server(request: Request):
         if not command:
             raise HTTPException(status_code=400, detail="Command is required for stdio transport")
 
-    success, error = await mcp_manager.add_server(name, command, args, env, transport_type, url)
+    success, error = await mcp_manager.add_server(name, command, args, env, transport_type, url, timeout=timeout)
 
     if success:
         return {"status": "success", "message": f"Server '{name}' added and connected successfully", "connected": True}
@@ -657,7 +671,7 @@ async def update_mcp_server(server_name: str, request: Request):
     env = data.get("env", {})
     transport_type = data.get("transport_type", "stdio")
     url = data.get("url")
-    timeout = data.get("timeout", 30.0)
+    timeout = data.get("timeout", 60.0)
     
     # Validate based on transport type
     if transport_type in ("sse", "http", "streamable-http"):

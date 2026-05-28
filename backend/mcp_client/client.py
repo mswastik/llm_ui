@@ -29,7 +29,7 @@ class MCPServerConfig:
     # For HTTP/SSE transport
     url: Optional[str] = None
     # Connection timeout in seconds
-    timeout: float = 30.0
+    timeout: float = 60.0
     # Whether server is enabled
     enabled: bool = True
     # Tool names to exclude from LLM function calling (to reduce prompt size)
@@ -87,6 +87,7 @@ class MCPClientManager:
                 args=config.get("args", []),
                 env=config.get("env", {}),
                 url=config.get("url"),
+                timeout=config.get("timeout", 60.0),
                 enabled=config.get("enabled", True),
                 disabled_tools=config.get("disabled_tools", [])
             )
@@ -666,7 +667,7 @@ class MCPClientManager:
         env: Dict[str, str] = None,
         transport_type: str = "stdio",
         url: Optional[str] = None,
-        timeout: float = 30.0
+        timeout: float = 60.0
     ) -> bool:
         """
         Add and connect to a new MCP server.
@@ -691,7 +692,7 @@ class MCPClientManager:
         
         # Save to database
         async with get_db() as db:
-            await add_mcp_server(db, name, command, args, env, transport_type, url)
+            await add_mcp_server(db, name, command, args, env, transport_type, url, timeout=timeout)
 
         # Create config and connect
         config = MCPServerConfig(

@@ -78,6 +78,7 @@ class MCPServer(Base):
     
     enabled = Column(Integer, default=1)  # SQLite doesn't have native boolean
     disabled_tools = Column(JSON, default=list)  # List of tool names disabled for this server
+    timeout = Column(Float, default=60.0)  # Connection timeout in seconds
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

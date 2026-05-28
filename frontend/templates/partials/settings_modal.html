@@ -350,6 +350,20 @@
                 placeholder="https://..."
               />
             </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Timeout (seconds)</label
+              >
+              <input
+                type="number"
+                x-model.number="newServer.timeout"
+                class="input text-sm"
+                placeholder="60"
+                min="5"
+                max="300"
+              />
+            </div>
           </div>
           <button @click="addMCPServer()" class="btn btn-primary btn-sm mb-6">
             <i class="ph ph-plus"></i> Add Server
@@ -526,6 +540,20 @@
                     type="url"
                     x-model="editServer.url"
                     class="input text-sm"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Timeout (seconds)</label
+                  >
+                  <input
+                    type="number"
+                    x-model.number="editServer.timeout"
+                    class="input text-sm"
+                    placeholder="60"
+                    min="5"
+                    max="300"
                   />
                 </div>
                 <label class="flex items-center gap-2 cursor-pointer">

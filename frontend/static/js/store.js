@@ -39,7 +39,7 @@ const stores = {
     currentAgentConfig: null,
 
     // RAG
-    enableRAG: false,
+    selectedDocumentIds: [],
 
     // Editing
     editingMessageId: null,
@@ -121,7 +121,7 @@ const stores = {
       if (agent.model && this.availableModels.some(m => m.id === agent.model)) {
         this.selectedModel = agent.model
       }
-      this.enableRAG = !!agent.enable_rag
+      this.selectedDocumentIds = agent.enable_rag ? ['all'] : []
     }
   },
 
@@ -150,9 +150,9 @@ const stores = {
     documents: [],
 
     // MCP form state
-    newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
+    newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 },
     editingServer: false,
-    editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+    editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '', timeout: 60 },
 
     // Notes panel
     showNotes: false,

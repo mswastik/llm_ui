@@ -11,6 +11,7 @@ from tools.rag_service import RAGService, RAG_TOOL_DEFINITION
 from tools.tts_service import TTSService, TTS_TOOL_DEFINITION
 from tools.errors import yield_tool_errors
 from tools.progress import ToolProgress
+from tools.base import current_document_ids
 
 
 class ToolExecutor:
@@ -146,7 +147,7 @@ class ToolExecutor:
     ) -> AsyncGenerator[Dict, None]:
         """Document query with progress updates."""
         query = arguments.get("query", "")
-        document_ids = arguments.get("document_ids")
+        document_ids = arguments.get("document_ids") or current_document_ids.get()
         top_k = arguments.get("top_k", 10)
 
         if not query:

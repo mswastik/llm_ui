@@ -29,7 +29,7 @@
         activeStreaming: { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] },
         toolStatus: { active: false, tool: '', status: '', progress: null },
         selectedModel: '', availableModels: [], selectedAgentId: null, availableAgents: [], currentAgentConfig: null,
-        enableRAG: false, editingMessageId: null, editContent: '',
+        selectedDocumentIds: [], editingMessageId: null, editContent: '',
         addConversation(c) { this.conversations.unshift(c) },
         updateConversation(id, u) { const i = this.conversations.findIndex(x => x.id === id); if (i !== -1) Object.assign(this.conversations[i], u) },
         removeConversation(id) { this.conversations = this.conversations.filter(x => x.id !== id) },
@@ -43,7 +43,7 @@
         loadSavedAgent() { const s = localStorage.getItem('selectedAgentId'); if (s && this.availableAgents.some(a => a.id === parseInt(s))) { this.selectedAgentId = parseInt(s); this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId) } },
         startStreaming(rq, cid, mi, t, ms) { this.activeStreaming = { isStreaming: true, requestId: rq, conversationId: cid, msgIndex: mi, conversationTitle: t || '', messages: ms || [] }; this.isLoading = true },
         stopStreaming() { this.activeStreaming = { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] }; this.isLoading = false; this.toolStatus = { active: false, tool: '', status: '', progress: null } },
-        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model && this.availableModels.some(m => m.id === a.model)) this.selectedModel = a.model; this.enableRAG = !!a.enable_rag }
+        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model && this.availableModels.some(m => m.id === a.model)) this.selectedModel = a.model; this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
       };
       window.__uiStoreData__ = {
         darkMode: localStorage.getItem('darkMode') === 'true',
@@ -52,9 +52,9 @@
         showMcpPanel: false, showAgents: false, showSettings: false, showDocuments: false,
         toast: { show: false, message: '', type: 'success' },
         settingsData: {}, mcpServers: [], mcpTools: [],
-        newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
+        newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 },
         editingServer: false,
-        editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+        editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '', timeout: 60 },
         settingsTab: 'general',
         showNotes: false, notes: [], documents: [], activeAgentFilters: [], activeTagFilter: null, editingTagsForConversation: null, tagInput: '',
         toggleDarkMode() { this.darkMode = !this.darkMode; localStorage.setItem('darkMode', this.darkMode); document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },

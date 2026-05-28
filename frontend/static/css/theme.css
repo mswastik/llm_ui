@@ -495,6 +495,15 @@ h4 { font-size: 0.95rem; font-weight: 600; }
   border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
   box-shadow: var(--shadow-sm);
 }
+.message-user .prose {
+  color: white;
+}
+.message-user .prose strong {
+  color: white;
+}
+.message-user .prose a {
+  color: rgba(255, 255, 255, 0.85);
+}
 .message-assistant {
   background: var(--bg-card);
   color: var(--text-primary);
@@ -593,6 +602,7 @@ h4 { font-size: 0.95rem; font-weight: 600; }
   font-size: 0.85rem;
   font-weight: 450;
   text-decoration: none;
+  width: 100%;
 }
 .sidebar-item:hover {
   background: var(--bg-hover);

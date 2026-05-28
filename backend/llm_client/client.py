@@ -46,7 +46,9 @@ class LLMClient:
         tools: List[Dict] = None,
         model: str = None,
         max_retries: int = 3,
-        retry_delay: float = 2.0
+        retry_delay: float = 2.0,
+        chat_template_kwargs: dict = None,
+        tool_choice: str = None
     ) -> AsyncGenerator[Dict, None]:
         """
         Stream chat completion from llama.cpp with retry logic.
@@ -78,10 +80,16 @@ class LLMClient:
             "cache_prompt": True,  # Reuse KV cache from previous request when prompt prefix matches
         }
 
+        # Add chat_template_kwargs if provided (for thinking suppression on models that support it)
+        if chat_template_kwargs:
+            payload["chat_template_kwargs"] = chat_template_kwargs
+
         # Add tool definitions if available
         active_tools = tools or self._tools
         if active_tools:
             payload["tools"] = active_tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
 
         # Retry logic for transient server errors
         last_error = None
@@ -152,17 +160,20 @@ class LLMClient:
                                         # Check multiple field names that llama.cpp might use
                                         thinking_content = delta.get("thinking") or delta.get("reasoning_content")
                                         if thinking_content:
-                                            #print(f"[DEBUG] Streaming thinking: {repr(thinking_content[:50])}")
+                                            # This chunk has native thinking field - set flag so we skip
+                                            # redundant <think> tag yields from content
+                                            _skip_think_yield = True
                                             yield {
                                                 "type": "thinking",
                                                 "content": thinking_content
                                             }
                                             await asyncio.sleep(0)
+                                        else:
+                                            _skip_think_yield = False
 
                                         # Handle content - parse for <think> tags with streaming
                                         if "content" in delta and delta["content"]:
                                             content = delta["content"]
-                                            #print(f"[DEBUG] Content chunk: {repr(content[:100])}")
 
                                             # Process content for <think> tags - stream thinking as it arrives
                                             while content:
@@ -170,7 +181,6 @@ class LLMClient:
                                                 think_start = content.find('<think>')
 
                                                 if think_start != -1:
-                                                    print(f"[DEBUG] <think> found at position {think_start}")
                                                     # Yield content before thinking tag
                                                     before_think = content[:think_start]
                                                     if before_think:
@@ -186,21 +196,20 @@ class LLMClient:
 
                                                     if think_end != -1:
                                                         # Complete thinking block in same chunk
-                                                        thinking = after_start[:think_end]
-                                                        print(f"[DEBUG] Complete thinking block in one chunk: {len(thinking)} chars")
-                                                        yield {
-                                                            "type": "thinking",
-                                                            "content": thinking
-                                                        }
-                                                        await asyncio.sleep(0)
+                                                        # Skip yield if native thinking field already provided it
+                                                        if not _skip_think_yield:
+                                                            thinking = after_start[:think_end]
+                                                            yield {
+                                                                "type": "thinking",
+                                                                "content": thinking
+                                                            }
+                                                            await asyncio.sleep(0)
                                                         # Continue with remaining content
                                                         content = after_start[think_end + 9:]  # Skip '</think>'
                                                     else:
                                                         # Start streaming thinking - yield content as it arrives
                                                         thinking_buffer = after_start
-                                                        print(f"[DEBUG] Started thinking stream: {len(thinking_buffer)} chars")
-                                                        # Yield what we have so far
-                                                        if thinking_buffer:
+                                                        if thinking_buffer and not _skip_think_yield:
                                                             yield {
                                                                 "type": "thinking",
                                                                 "content": thinking_buffer
@@ -211,17 +220,15 @@ class LLMClient:
                                                     # If we're in thinking mode, this is continuation of thinking
                                                     if thinking_buffer is not None:
                                                         thinking_buffer += content
-                                                        print(f"[DEBUG] Streaming thinking continuation: {len(thinking_buffer)} chars total")
-                                                        # Stream the new content immediately
-                                                        yield {
-                                                            "type": "thinking",
-                                                            "content": content
-                                                        }
-                                                        await asyncio.sleep(0)
+                                                        if not _skip_think_yield:
+                                                            yield {
+                                                                "type": "thinking",
+                                                                "content": content
+                                                            }
+                                                            await asyncio.sleep(0)
                                                         # Check if this chunk contains the end tag
                                                         end_pos = content.find('</think>')
                                                         if end_pos != -1:
-                                                            print(f"[DEBUG] </think> found in streaming, clearing buffer")
                                                             thinking_buffer = None
                                                         content = ''
                                                     else:
@@ -280,9 +287,9 @@ class LLMClient:
                                                             streaming_tool_call = None
                                                             await asyncio.sleep(0)
 
-                                                        except json.JSONDecodeError:
+                                                        except json.JSONDecodeError as e:
                                                             # Arguments not complete yet, wait for more chunks
-                                                            #print(f"[DEBUG] Arguments not complete yet, waiting...")
+                                                            print(f"[DEBUG] Arguments parse failed (waiting for more): {streaming_tool_call['arguments_str'][:200]}... Error: {e}")
                                                             continue
 
                                                 except Exception as e:
@@ -351,14 +358,18 @@ class LLMClient:
         """
         Generate a conversation title from the first message.
         """
-        title_prompt = f"Generate a short, 3-5 word title for a conversation that starts with: '{first_message[:100]}'. Respond with ONLY the title, nothing else."
+        # Use the provided model or the instance default
+        title_model = model or self.model
+        
+        # Prompt that discourages thinking and emphasizes brevity
+        title_prompt = f"Generate a short 3-5 word title for a conversation that starts with: \"{first_message[:100]}\". Return ONLY the title with no thinking, no reasoning, no quotes, no punctuation."
         
         messages = [{"role": "user", "content": title_prompt}]
         
-        print(f"Generating title with model: {model or self.model}")
+        print(f"Generating title with model: {title_model}")
         title = ""
         try:
-            async for chunk in self.stream_chat(messages, temperature=0.5, max_tokens=20, model=model):
+            async for chunk in self.stream_chat(messages, temperature=0.5, max_tokens=500, model=title_model):
                 if chunk.get("type") == "content":
                     title += chunk.get("content", "")
                 elif chunk.get("type") == "error":
@@ -370,6 +381,11 @@ class LLMClient:
         
         # Clean up the title - remove quotes, newlines, and extra whitespace
         title = title.strip().strip('"\'').replace('\n', ' ').strip()
+        
+        # Only take first 3-5 words if the model rambled
+        words = title.split()
+        if len(words) > 10:
+            title = ' '.join(words[:8])
         
         print(f"Generated title: '{title}'")
         return title or first_message[:50].strip() or "New Chat"

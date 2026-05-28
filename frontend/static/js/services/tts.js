@@ -20,10 +20,11 @@ export class TTSService {
 
   async speak(message, onProgress, onError) {
     try {
+      const textContent = typeof message === 'object' ? (message.content || '') : message
       const res = await fetch('/api/tts/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: message.content || message })
+        body: JSON.stringify({ text: textContent })
       })
       if (!res.ok) throw new Error('TTS generation failed')
       const data = await res.json()

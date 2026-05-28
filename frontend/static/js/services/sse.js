@@ -10,6 +10,8 @@ export class SSEService {
 
   stream(requestId, conversationId, options = {}) {
     this.controller = new AbortController()
+    // Clear old handlers so stale closures don't process new stream data
+    this.handlers = { data: [], error: [], complete: [] }
     const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
       (options.enableRag ? '&enable_rag=1' : '') +
       (options.model ? `&model=${encodeURIComponent(options.model)}` : '')

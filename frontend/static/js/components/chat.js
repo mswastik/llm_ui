@@ -101,6 +101,24 @@ const chatComponent = () => ({
     this.isLoading = true
     this.$store.chat.isLoading = true
 
+    // Auto-create conversation if none selected
+    let conversationId = this.$store.chat.currentConversationId
+    if (!conversationId) {
+      try {
+        const conv = await api.post('/api/conversations', { title: 'New Chat' })
+        conversationId = conv.conversation.id
+        this.$store.chat.currentConversationId = conversationId
+        this.$store.chat.currentConversationTitle = conv.conversation.title
+        this.$store.chat.addConversation(conv.conversation)
+        this.$store.chat.clearMessages()
+      } catch (e) {
+        this.isLoading = false
+        this.$store.chat.isLoading = false
+        this.$store.ui.showToast('Failed to create conversation', 'error')
+        return
+      }
+    }
+
     // Add user message
     const userMsg = {
       id: helpers.generateId(),
@@ -112,7 +130,7 @@ const chatComponent = () => ({
 
     try {
       const data = await api.post(
-        `/api/conversations/${this.$store.chat.currentConversationId}/messages`,
+        `/api/conversations/${conversationId}/messages`,
         { message: text, enable_rag: this.enableRAG }
       )
       await this.streamResponse(data.request_id)
@@ -238,7 +256,6 @@ const chatComponent = () => ({
         this.$store.chat.currentConversationTitle = data.title
         const ci = this.$store.chat.conversations.findIndex(c => c.id === this.$store.chat.currentConversationId)
         if (ci !== -1) this.$store.chat.conversations[ci].title = data.title
-        sseService.close()
         break
 
       case 'done':
@@ -253,10 +270,10 @@ const chatComponent = () => ({
     this.messages = [...this.$store.chat.messages]
 
     // Scroll to bottom
-    this.$nextTick(() => {
-      const el = document.getElementById('messages-container')
-      if (el) el.scrollTop = el.scrollHeight
-    })
+    //this.$nextTick(() => {
+    //  const el = document.getElementById('messages-container')
+    //  if (el) el.scrollTop = el.scrollHeight
+    //})
   },
 
   appendBlock(msg, type, content) {

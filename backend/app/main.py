@@ -134,6 +134,55 @@ async def send_message(conversation_id: str, request: Request):
         }
 
 
+def _strip_thinking(text: str) -> str:
+    """Remove thinking tags and HTML tags from text."""
+    import re
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<[^>]+>', '', text).strip()
+    return text
+
+
+async def _generate_title_with_model(
+    llm_messages: list,
+    assistant_message: str,
+    llm_client,
+    tools: list = None
+) -> str:
+    """
+    Generate a title by appending to the existing conversation messages.
+    KV cache reuses the prefix from the main response (if model supports it).
+    The appended messages are not saved to DB — only the title is returned.
+    """
+    title_messages = list(llm_messages)
+    title_messages.append({"role": "assistant", "content": assistant_message})
+    title_messages.append({"role": "user", "content": "Generate a very short title (3-6 words) for this conversation. Output ONLY the title, nothing else."})
+
+    title = ""
+    try:
+        async for chunk in llm_client.stream_chat(
+            title_messages,
+            temperature=0.3,
+            max_tokens=200,  # Increased from 50 — model needs tokens for thinking + actual title
+            tools=tools,  # Pass same tools so system prompt rendering is identical
+            tool_choice="none"  # Prevent model from calling tools during title generation
+        ):
+            chunk_type = chunk.get("type")
+            if chunk_type == "content":
+                title += chunk.get("content", "")
+            if chunk_type not in ("content", "thinking"):
+                print(f"[TITLE GEN] unexpected chunk type: {chunk_type}")
+    except Exception as e:
+        print(f"Title generation error: {e}")
+        return ""
+
+    print(f"[TITLE GEN] raw title from model: '{title[:200]}'")
+    title = _strip_thinking(title)
+    words = title.split()
+    if not words:
+        return ""
+    title = ' '.join(words[:6]).strip().rstrip('.,;:!?\\-"\'')
+    return title[:60]
+
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
@@ -306,13 +355,18 @@ async def _core_stream_handler(
                             pending_tool_call["status"] = progress_event.get("status", "running")
                             pending_tool_call["progress"] = progress_event.get("progress", 0)
                             pending_tool_call["progress_history"].append(progress_event)
-                            if progress_event.get("result"):
-                                pending_tool_call["result"] = progress_event["result"]
+                            # Check for result in various possible locations
+                            # For MCP tools: result is in 'content' field (parsed CallToolResult)
+                            # For custom tools: result might be in 'result' field
+                            result = progress_event.get("result") or progress_event.get("content")
+                            if result:
+                                pending_tool_call["result"] = result
                                 pending_tool_call["status"] = "completed"
-                                tool_result = progress_event["result"]
+                                tool_result = result
                         elif progress_event.get("type") == "tool_error":
                             pending_tool_call["status"] = "error"
                             pending_tool_call["result"] = {"error": progress_event.get("error")}
+                            tool_result = {"error": progress_event.get("error")}
 
                     # Add tool call block to message blocks for sequential display
                     tool_call_block = {
@@ -333,6 +387,7 @@ async def _core_stream_handler(
                     # Add tool result to conversation for LLM to continue
                     # Format for llama.cpp: role=tool with content as string
                     tool_result_str = json.dumps(tool_result, default=str) if tool_result else "No result"
+                    print(f"[DEBUG] Tool result preview: {tool_result_str[:500] if tool_result_str else 'None'}...")
                     llm_messages.append({
                         "role": "tool",
                         "content": tool_result_str,
@@ -347,6 +402,9 @@ async def _core_stream_handler(
                     # No tool call, conversation is complete
                     print(f"[DEBUG] No pending tool call, conversation complete")
                     break
+            
+            # Log total messages sent to LLM after all iterations
+            print(f"[DEBUG] Total messages in llm_messages after {tool_iteration} iterations: {len(llm_messages)}")
             
             # Save assistant message with message blocks for sequential display
             # Always save if we have any content, thinking, or message blocks
@@ -390,45 +448,24 @@ async def _core_stream_handler(
                 await db.commit()
                 assistant_saved = True
 
-            # Yield done event before title generation (client may disconnect after this)
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-            # Title Generation Logic (only for first exchange)
-            # This is done AFTER yielding 'done' so client can disconnect without affecting main response
-            # The assistant message is already committed above, so we need a fresh session for title ops
+            # Generate title using model (reuses KV cache via cache_prompt: true)
             if assistant_saved:
                 async with get_db() as title_db:
-                    messages_after_save = await get_conversation_messages(title_db, conversation_id)
-                    user_count = len([m for m in messages_after_save if m["role"] == "user"])
-                    assistant_count = len([m for m in messages_after_save if m["role"] == "assistant"])
+                    msgs = await get_conversation_messages(title_db, conversation_id)
+                    user_count = len([m for m in msgs if m["role"] == "user"])
+                    assistant_count = len([m for m in msgs if m["role"] == "assistant"])
 
-                    if user_count == 1 and assistant_count == 1:
-                        first_user_message = next((m for m in messages_after_save if m["role"] == "user"), None)
-                        if first_user_message:
-                            try:
-                                # Shield title generation from cancellation - it's a background task
-                                # Use the conversation's model so KV cache is preserved.
-                                # The title prompt gets appended to the existing context,
-                                # llama.cpp reuses KV cache for the matching prefix.
-                                # Timeout increased to 60s for thinking models that may spend
-                                # significant time/thinking tokens generating the title.
-                                title = await asyncio.wait_for(
-                                    asyncio.shield(llm_client.generate_title(first_user_message["content"], model=model)),
-                                    timeout=60.0
-                                )
-                                await update_conversation_title(title_db, conversation_id, title)
-                                await title_db.commit()
-                                # Try to send title update, but client may have disconnected
-                                try:
-                                    yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
-                                except Exception:
-                                    # Client disconnected, but title was saved - this is fine
-                                    pass
-                            except asyncio.CancelledError:
-                                # Title generation was cancelled (client disconnected) - this is normal
-                                print(f"Title generation cancelled for conversation {conversation_id} (client disconnected)")
-                            except Exception as e:
-                                print(f"Error generating or updating title: {e}")
+                if user_count == 1 and assistant_count == 1:
+                    title = await _generate_title_with_model(
+                        llm_messages, assistant_message, llm_client, tools=all_tools
+                    )
+                    if title:
+                        await update_conversation_title(db, conversation_id, title)
+                        await db.commit()
+                        yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+
+            # Yield done event
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     except asyncio.CancelledError:
         # Request was cancelled by client - this is normal, don't log as error

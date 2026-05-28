@@ -287,10 +287,9 @@ class LLMClient:
                                                             streaming_tool_call = None
                                                             await asyncio.sleep(0)
 
-                                                        except json.JSONDecodeError as e:
-                                                            # Arguments not complete yet, wait for more chunks
-                                                            print(f"[DEBUG] Arguments parse failed (waiting for more): {streaming_tool_call['arguments_str'][:200]}... Error: {e}")
-                                                            continue
+                                                        except json.JSONDecodeError:
+                                                             # Arguments not complete yet, wait for more chunks
+                                                             pass
 
                                                 except Exception as e:
                                                     print(f"[DEBUG] Error processing tool_call: {e}, tool_call data: {tool_call}")

@@ -637,6 +637,8 @@ class MCPClientManager:
                 "name": instance.config.name,
                 "transport_type": instance.config.transport_type,
                 "command": instance.config.command,
+                "args": instance.config.args,
+                "env": instance.config.env,
                 "url": instance.config.url,
                 "tool_count": len(instance.tools),
                 "is_connected": instance.is_connected,

@@ -957,7 +957,7 @@
                   <input
                     type="checkbox"
                     :checked="server.enabled"
-                    @change="server.enabled = $event.target.checked"
+                    @change="server.enabled = $event.target.checked; fetch('/api/mcp/servers/' + encodeURIComponent(server.name) + '/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: $event.target.checked}) }).then(r => { if(!r.ok) { server.enabled = !$event.target.checked; console.error('Toggle failed'); } }).catch(e => { server.enabled = !$event.target.checked; console.error(e) })"
                     class="sr-only peer"
                   />
                   <div
@@ -1002,7 +1002,8 @@
         class="px-6 py-4 border-t border-[var(--border-primary)] bg-[var(--bg-tertiary)] flex-shrink-0"
       >
         <a
-          href="/settings"
+          href="#"
+          @click.prevent="closeModal(); $dispatch('open-settings'); $store.ui.settingsTab = 'mcp'; $store.ui.openSettings()"
           class="text-xs text-[var(--text-link)] hover:underline flex items-center gap-1"
         >
           <i class="ph ph-gear"></i> Manage MCP Servers
@@ -1756,12 +1757,6 @@
                       <i class="ph ph-arrow-clockwise text-xs"></i>
                     </button>
                     <button
-                      @click="reconnectServer(server.name)"
-                      class="btn btn-secondary btn-xs"
-                    >
-                      <i class="ph ph-arrows-clockwise text-xs"></i>
-                    </button>
-                    <button
                       @click="removeServer(server.name)"
                       class="btn btn-danger btn-xs"
                     >
@@ -1830,7 +1825,23 @@
                     type="text"
                     x-model="editServer.args"
                     class="input text-sm"
+                    placeholder='["-y", "package"]'
                   />
+                </div>
+                <div x-show="editServer.transport_type === 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Env (JSON)</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.env"
+                    class="input text-sm"
+                    placeholder='{"HOME": "/home/user"}'
+                  />
+                  <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                    Optional. Example: <code class="text-[0.75rem]">{"KEY": "value"}</code>
+                  </p>
                 </div>
                 <div x-show="editServer.transport_type !== 'stdio'">
                   <label

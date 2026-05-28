@@ -175,17 +175,11 @@ const settings = () => {
         return
       }
 
-      await api.delete(`/api/mcp/servers/${this.editServer.originalName}`)
-      const response = await api.post('/api/mcp/servers', {
+      const response = await api.put(`/api/mcp/servers/${this.editServer.originalName}`, {
         name: this.editServer.name, transport_type: this.editServer.transport_type,
         command: this.editServer.command, args, env,
         url: this.editServer.url || null
       })
-      if (this.editServer.enabled) {
-        await api.post(`/api/mcp/servers/${this.editServer.name}/reconnect`)
-      } else {
-        await api.post(`/api/mcp/servers/${this.editServer.name}/toggle`, { enabled: false })
-      }
 
       await this.loadMCPServers()
       this.closeEdit()

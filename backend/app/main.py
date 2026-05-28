@@ -22,7 +22,7 @@ from database.crud import (
     add_mcp_server, get_all_mcp_servers, get_enabled_mcp_servers,
     toggle_mcp_server, remove_mcp_server
 )
-from mcp_client.client import MCPClientManager
+from mcp_client.client import MCPClientManager, MCPServerConfig
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
 from backend.settings import settings_manager
@@ -274,7 +274,7 @@ async def _core_stream_handler(
 
                 # Stream LLM response
                 assistant_message, thinking_content = "", ""
-                pending_tool_call = None
+                pending_tool_calls = []
 
                 async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
                     try:
@@ -318,14 +318,17 @@ async def _core_stream_handler(
 
                                 # Store the pending tool call
                                 if tool_name:
-                                    pending_tool_call = {
+                                    # Use a unique key to avoid duplicates from streaming
+                                    call_key = f"{tool_name}_{len(pending_tool_calls)}"
+                                    pending_tool_calls.append({
                                         "name": tool_name,
                                         "arguments": tool_args if isinstance(tool_args, dict) else {},
                                         "status": "pending",
                                         "result": None,
-                                        "progress_history": []
-                                    }
-                                    print(f"[DEBUG] Pending tool call: {tool_name}, args: {pending_tool_call['arguments']}")
+                                        "progress_history": [],
+                                        "key": call_key
+                                    })
+                                    print(f"[DEBUG] Pending tool call #{len(pending_tool_calls)-1}: {tool_name}, args: {pending_tool_calls[-1]['arguments']}")
 
                     except Exception as e:
                         print(f"[DEBUG] Error processing chunk: {e}")
@@ -334,67 +337,68 @@ async def _core_stream_handler(
                         traceback.print_exc()
                     await asyncio.sleep(0)
 
-                # If we have a pending tool call, execute it and continue the loop
-                if pending_tool_call:
-                    print(f"Executing tool: {pending_tool_call['name']}")
+                # If we have pending tool calls, execute them and continue the loop
+                if pending_tool_calls:
+                    for i, pending_tool_call in enumerate(pending_tool_calls):
+                        print(f"Executing tool {i+1}/{len(pending_tool_calls)}: {pending_tool_call['name']}")
 
-                    # Send tool call start event
-                    yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': pending_tool_call['name'], 'args': pending_tool_call['arguments']})}\n\n"
-                    tool_calls_history.append(pending_tool_call)
+                        # Send tool call start event
+                        yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': pending_tool_call['name'], 'args': pending_tool_call['arguments']})}\n\n"
+                        tool_calls_history.append(pending_tool_call)
 
-                    # Execute the tool
-                    tool_result = None
-                    async for progress_event in tool_executor.execute_tool(
-                        pending_tool_call['name'],
-                        pending_tool_call['arguments'],
-                        request_id
-                    ):
-                        # Forward the progress event
-                        yield f"data: {json.dumps(progress_event)}\n\n"
-                        if progress_event.get("type") == "tool_progress":
-                            pending_tool_call["status"] = progress_event.get("status", "running")
-                            pending_tool_call["progress"] = progress_event.get("progress", 0)
-                            pending_tool_call["progress_history"].append(progress_event)
-                            # Check for result in various possible locations
-                            # For MCP tools: result is in 'content' field (parsed CallToolResult)
-                            # For custom tools: result might be in 'result' field
-                            result = progress_event.get("result") or progress_event.get("content")
-                            if result:
-                                pending_tool_call["result"] = result
-                                pending_tool_call["status"] = "completed"
-                                tool_result = result
-                        elif progress_event.get("type") == "tool_error":
-                            pending_tool_call["status"] = "error"
-                            pending_tool_call["result"] = {"error": progress_event.get("error")}
-                            tool_result = {"error": progress_event.get("error")}
+                        # Execute the tool
+                        tool_result = None
+                        async for progress_event in tool_executor.execute_tool(
+                            pending_tool_call['name'],
+                            pending_tool_call['arguments'],
+                            request_id
+                        ):
+                            # Forward the progress event
+                            yield f"data: {json.dumps(progress_event)}\n\n"
+                            if progress_event.get("type") == "tool_progress":
+                                pending_tool_call["status"] = progress_event.get("status", "running")
+                                pending_tool_call["progress"] = progress_event.get("progress", 0)
+                                pending_tool_call["progress_history"].append(progress_event)
+                                # Check for result in various possible locations
+                                # For MCP tools: result is in 'content' field (parsed CallToolResult)
+                                # For custom tools: result might be in 'result' field
+                                result = progress_event.get("result") or progress_event.get("content")
+                                if result:
+                                    pending_tool_call["result"] = result
+                                    pending_tool_call["status"] = "completed"
+                                    tool_result = result
+                            elif progress_event.get("type") == "tool_error":
+                                pending_tool_call["status"] = "error"
+                                pending_tool_call["result"] = {"error": progress_event.get("error")}
+                                tool_result = {"error": progress_event.get("error")}
 
-                    # Add tool call block to message blocks for sequential display
-                    tool_call_block = {
-                        "type": "tool_call",
-                        "name": pending_tool_call['name'],
-                        "arguments": pending_tool_call['arguments'],
-                        "status": pending_tool_call['status'],
-                        "result": pending_tool_call['result'],
-                        "progress_history": pending_tool_call['progress_history']
-                    }
-                    # Extract sources from result for bottom-of-chat display
-                    if pending_tool_call['result'] and isinstance(pending_tool_call['result'], dict):
-                        sources = pending_tool_call['result'].get('sources', [])
-                        if sources:
-                            tool_call_block['sources'] = sources
-                    message_blocks.append(tool_call_block)
+                        # Add tool call block to message blocks for sequential display
+                        tool_call_block = {
+                            "type": "tool_call",
+                            "name": pending_tool_call['name'],
+                            "arguments": pending_tool_call['arguments'],
+                            "status": pending_tool_call['status'],
+                            "result": pending_tool_call['result'],
+                            "progress_history": pending_tool_call['progress_history']
+                        }
+                        # Extract sources from result for bottom-of-chat display
+                        if pending_tool_call['result'] and isinstance(pending_tool_call['result'], dict):
+                            sources = pending_tool_call['result'].get('sources', [])
+                            if sources:
+                                tool_call_block['sources'] = sources
+                        message_blocks.append(tool_call_block)
 
-                    # Add tool result to conversation for LLM to continue
-                    # Format for llama.cpp: role=tool with content as string
-                    tool_result_str = json.dumps(tool_result, default=str) if tool_result else "No result"
-                    print(f"[DEBUG] Tool result preview: {tool_result_str[:500] if tool_result_str else 'None'}...")
-                    llm_messages.append({
-                        "role": "tool",
-                        "content": tool_result_str,
-                        "tool_call_id": pending_tool_call['name']
-                    })
+                        # Add tool result to conversation for LLM to continue
+                        # Format for llama.cpp: role=tool with content as string
+                        tool_result_str = json.dumps(tool_result, default=str) if tool_result else "No result"
+                        print(f"[DEBUG] Tool result {i+1} preview: {tool_result_str[:500] if tool_result_str else 'None'}...")
+                        llm_messages.append({
+                            "role": "tool",
+                            "content": tool_result_str,
+                            "tool_call_id": f"{pending_tool_call['name']}_{i}"
+                        })
 
-                    print(f"[DEBUG] Tool executed, continuing conversation with result")
+                    print(f"[DEBUG] All {len(pending_tool_calls)} tools executed, continuing conversation with results")
                     # Continue the while loop to get LLM's response to the tool result
                     # (LLM may respond with content, thinking, or another tool call)
 
@@ -541,6 +545,8 @@ async def list_mcp_servers():
                 "name": db_server["name"],
                 "transport_type": db_server.get("transport_type", "stdio"),
                 "command": db_server.get("command"),
+                "args": db_server.get("args"),
+                "env": db_server.get("env"),
                 "url": db_server.get("url"),
                 "tool_count": 0,
                 "is_connected": False,
@@ -686,14 +692,43 @@ async def reconnect_mcp_server(server_name: str):
 async def toggle_mcp_server_endpoint(server_name: str, request: Request):
     """
     Enable or disable an MCP server.
+    When disabling, disconnects the server from the runtime manager.
+    When enabling, reconnects the server with stored config.
     """
     from database.crud import toggle_mcp_server as db_toggle_mcp_server
-    
+    from database.crud import get_all_mcp_servers
+
     data = await request.json()
     enabled = data.get("enabled", True)
 
     async with get_db() as db:
         await db_toggle_mcp_server(db, server_name, enabled)
+
+    if enabled:
+        # Reconnect: fetch config from DB and connect
+        async with get_db() as db:
+            all_servers = await get_all_mcp_servers(db)
+        config_data = next((s for s in all_servers if s["name"] == server_name), None)
+        if config_data:
+            config = MCPServerConfig(
+                name=config_data["name"],
+                transport_type=config_data.get("transport_type", "stdio"),
+                command=config_data.get("command"),
+                args=config_data.get("args", []),
+                env=config_data.get("env", {}),
+                url=config_data.get("url")
+            )
+            await mcp_manager._connect_server(config)
+    else:
+        # Disconnect: remove from manager but keep in DB
+        if server_name in mcp_manager.servers:
+            instance = mcp_manager.servers[server_name]
+            if instance.client and instance.is_connected:
+                try:
+                    await instance.client.close()
+                except Exception:
+                    pass
+            del mcp_manager.servers[server_name]
 
     return {"status": "success", "message": f"Server '{server_name}' {'enabled' if enabled else 'disabled'}"}
 

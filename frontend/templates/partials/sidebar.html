@@ -1,0 +1,336 @@
+<!-- ═══════════ SIDEBAR ═══════════ -->
+  <aside
+    x-data="sidebar"
+    :style="`width: ${$store.ui.sidebarWidth}px`"
+    class="flex flex-col bg-[var(--bg-secondary)] border-r border-[var(--border-primary)] overflow-hidden relative flex-shrink-0 transition-[width] duration-[var(--transition-base)]"
+  >
+    <!-- Resize Handle (always visible, wider for easier grabbing) -->
+    <div
+      @mousedown="startResize"
+      class="absolute right-0 top-0 w-2 h-full cursor-col-resize z-50 flex items-center justify-center hover:bg-[var(--accent-primary)]/15 active:bg-[var(--accent-primary)]/25 transition-colors"
+      :class="isResizing ? 'bg-[var(--accent-primary)]/20' : 'bg-transparent'"
+    >
+      <!-- Grip dots visible on hover -->
+      <div
+        class="flex flex-col gap-1 opacity-0 hover:opacity-100 transition-opacity"
+        :class="isResizing ? 'opacity-100' : ''"
+      >
+        <div class="w-0.5 h-0.5 rounded-full bg-[var(--text-tertiary)]"></div>
+        <div class="w-0.5 h-0.5 rounded-full bg-[var(--text-tertiary)]"></div>
+        <div class="w-0.5 h-0.5 rounded-full bg-[var(--text-tertiary)]"></div>
+      </div>
+    </div>
+
+    <!-- Expand Trigger (only visible when collapsed) -->
+    <button
+      @click="$store.ui.toggleSidebar()"
+      x-show="$store.ui.sidebarCollapsed"
+      class="absolute right-1 top-1/2 -translate-y-1/2 z-40 p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all"
+      title="Expand sidebar"
+    >
+      <i class="ph ph-arrow-right text-lg"></i>
+    </button>
+
+    <!-- Header -->
+    <div
+      class="p-3 border-b border-[var(--border-primary)] flex items-center gap-2 flex-shrink-0"
+    >
+      <button
+        @click="createNewConversation()"
+        class="flex-1 btn btn-primary flex items-center justify-center gap-2"
+      >
+        <i class="ph ph-plus text-lg"></i>
+        <span x-show="$store.ui.sidebarWidth > 180" class="font-medium"
+          >New Chat</span
+        >
+      </button>
+      <button
+        @click="$store.ui.toggleSidebar()"
+        class="btn btn-icon btn-ghost"
+        title="Toggle sidebar"
+      >
+        <i
+          class="ph ph-sidebar-simple text-lg"
+          :class="{'ph-arrow-right': $store.ui.sidebarCollapsed, 'ph-arrow-left': !$store.ui.sidebarCollapsed}"
+        ></i>
+      </button>
+    </div>
+
+    <!-- Search -->
+    <div class="px-3 pt-3 pb-1" x-show="$store.ui.sidebarWidth > 180">
+      <div class="relative">
+        <i
+          class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] text-sm"
+        ></i>
+        <input
+          x-model="searchQuery"
+          type="text"
+          placeholder="Search conversations..."
+          class="input pl-9 pr-3 py-2 text-sm"
+          :class="$store.ui.sidebarWidth <= 180 ? 'hidden' : ''"
+        />
+      </div>
+    </div>
+
+    <!-- Agent Filter (Multi-Select Dropdown) -->
+    <div class="px-3 pt-2 pb-0" x-show="$store.ui.sidebarWidth > 180" x-data="{ filterOpen: false }">
+      <div class="relative" @click.outside="filterOpen = false">
+        <button
+          @click="filterOpen = !filterOpen"
+          class="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs rounded-lg font-medium transition-all"
+          :class="$store.ui.activeAgentFilters.length > 0 ? 'bg-[var(--accent-primary)] text-white shadow-sm' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
+        >
+          <i class="ph ph-funnel text-xs"></i>
+          <span class="flex-1 text-left" x-text="$store.ui.activeAgentFilters.length > 0 ? $store.ui.activeAgentFilters.length + ' filtered' : 'Filter by agent'"></span>
+          <i class="ph ph-caret-down text-xs" :class="filterOpen ? 'rotate-180' : ''"></i>
+        </button>
+        <!-- Dropdown Panel -->
+        <div
+          x-show="filterOpen"
+          x-cloak
+          class="absolute left-0 right-0 top-full mt-1 z-50 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl shadow-xl overflow-hidden"
+        >
+          <div class="max-h-56 overflow-y-auto py-1">
+            <!-- Default (no agent) option -->
+            <label class="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-xs">
+              <input
+                type="checkbox"
+                :checked="$store.ui.activeAgentFilters.includes('default')"
+                @click.stop="$store.ui.toggleAgentFilter('default')"
+                class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+              />
+              <i class="ph ph-user text-[var(--text-tertiary)]"></i>
+              <span>Default (no agent)</span>
+            </label>
+            <!-- Agent options -->
+            <template x-for="agent in $store.chat.availableAgents" :key="agent.id">
+              <label class="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-xs">
+              <input
+                type="checkbox"
+                :checked="$store.ui.activeAgentFilters.includes(agent.id)"
+                @click.stop="$store.ui.toggleAgentFilter(agent.id)"
+                class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+              />
+                <i class="ph ph-robot text-[var(--text-tertiary)]"></i>
+                <span x-text="agent.name"></span>
+              </label>
+            </template>
+          </div>
+          <div class="border-t border-[var(--border-primary)] px-2 py-1.5 flex justify-center">
+            <button
+              @click="$store.ui.clearFilters(); filterOpen = false"
+              class="text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors px-3 py-1 rounded-md hover:bg-[var(--bg-hover)]"
+            >
+              <i class="ph ph-x-circle mr-1"></i>Clear all filters
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- Tag Filters (show when there are tags) -->
+      <div x-show="$store.chat.conversations.some(c => c.tags?.length > 0)" class="flex gap-1 mt-1.5 overflow-x-auto scrollbar-none" style="-ms-overflow-style: none; scrollbar-width: none;">
+        <template x-for="tag in [...new Set($store.chat.conversations.flatMap(c => c.tags || []))]" :key="tag">
+          <button
+            @click="$store.ui.activeTagFilter = ($store.ui.activeTagFilter === tag ? null : tag)"
+            class="whitespace-nowrap px-2 py-0.5 text-[10px] rounded-full font-medium transition-all flex-shrink-0"
+            :class="$store.ui.activeTagFilter === tag ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] border border-[var(--accent-primary)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] border border-transparent hover:border-[var(--border-primary)]'"
+          >
+            <i class="ph ph-tag text-[10px] mr-0.5"></i>
+            <span x-text="tag"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Conversation List -->
+    <div
+      class="flex-1 overflow-y-auto px-2 py-2 space-y-1"
+      x-show="!$store.ui.sidebarCollapsed"
+      style="scrollbar-width: thin"
+    >
+      <template x-for="conv in filteredConversations" :key="conv.id">
+        <div
+          @click="loadConversation(conv.id)"
+          class="sidebar-item group"
+          :class="{'sidebar-item-active': currentConversationId === conv.id}"
+        >
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="truncate font-medium text-sm" x-text="conv.title"></span>
+              <!-- Agent badge -->
+              <template x-if="getAgentName(conv.agent_id)">
+                <span class="badge badge-primary text-[10px] px-1.5 py-0 flex-shrink-0">
+                  <i class="ph ph-robot text-[9px]"></i>
+                  <span x-text="getAgentName(conv.agent_id)"></span>
+                </span>
+              </template>
+            </div>
+            <div class="flex items-center gap-2 mt-0.5">
+              <span class="text-[11px] text-[var(--text-tertiary)]" x-text="formatDate(conv.updated_at)"></span>
+            </div>
+            <!-- Tags -->
+            <div x-show="conv.tags?.length > 0" class="flex flex-wrap gap-1 mt-1">
+              <template x-for="tag in conv.tags" :key="tag">
+                <span
+                  @click.stop="$store.ui.activeTagFilter = ($store.ui.activeTagFilter === tag ? null : tag)"
+                  class="text-[10px] px-1.5 py-0.5 rounded-full cursor-pointer transition-all"
+                  :class="$store.ui.activeTagFilter === tag ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]'"
+                  x-text="tag"
+                ></span>
+              </template>
+            </div>
+            <!-- Tag editing -->
+            <div x-show="editingTagsForConversation === conv.id" class="mt-1" @click.stop>
+              <div class="flex gap-1">
+                <input
+                  x-model="$store.ui.tagInput"
+                  @keydown.enter.prevent="addTag(conv.id, $store.ui.tagInput)"
+                  @keydown.escape="$store.ui.stopEditTags()"
+                  type="text"
+                  placeholder="Add tag..."
+                  class="input text-xs py-1 px-2 flex-1 min-w-0"
+                />
+                <button @click="addTag(conv.id, $store.ui.tagInput)" class="btn btn-primary btn-xs px-1.5">
+                  <i class="ph ph-check text-xs"></i>
+                </button>
+                <button @click="$store.ui.stopEditTags()" class="btn btn-secondary btn-xs px-1.5">
+                  <i class="ph ph-x text-xs"></i>
+                </button>
+              </div>
+              <!-- Existing tags inline -->
+              <div x-show="conv.tags?.length > 0" class="flex flex-wrap gap-1 mt-1">
+                <template x-for="tag in conv.tags" :key="tag">
+                  <span class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]">
+                    <span x-text="tag"></span>
+                    <button @click="removeTag(conv.id, tag)" class="hover:text-[var(--error)]">
+                      <i class="ph ph-x text-[10px]"></i>
+                    </button>
+                  </span>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-0.5">
+            <button
+              @click.stop="$store.ui.startEditTags(conv.id)"
+              class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] transition-all"
+              title="Edit tags"
+            >
+              <i class="ph ph-tag text-sm"></i>
+            </button>
+            <button
+              @click.stop="deleteConversation(conv.id, $event)"
+              class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--error-bg)] text-[var(--text-tertiary)] hover:text-[var(--error)] transition-all"
+              title="Delete"
+            >
+              <i class="ph ph-trash text-sm"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div
+        x-show="filteredConversations.length === 0"
+        class="text-center py-8 text-[var(--text-tertiary)] text-sm"
+      >
+        <i class="ph ph-chat-teardrop-text text-3xl mb-2 block"></i>
+        <span x-show="searchQuery">No conversations match</span>
+        <span x-show="!searchQuery">No conversations yet</span>
+      </div>
+    </div>
+
+    <!-- Collapsed Icons -->
+    <div
+      class="flex-1 overflow-y-auto px-2 py-3 space-y-1 flex flex-col items-center"
+      x-show="$store.ui.sidebarCollapsed"
+    >
+      <template x-for="conv in conversations.slice(0, 8)" :key="conv.id">
+        <div
+          @click="loadConversation(conv.id); $store.ui.sidebarCollapsed = false"
+          class="p-2.5 rounded-lg cursor-pointer transition-colors"
+          :class="currentConversationId === conv.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : 'text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
+          :title="conv.title"
+        >
+          <i
+            class="ph ph-chat-circle text-lg"
+            :class="currentConversationId === conv.id ? 'ph-fill' : ''"
+          ></i>
+        </div>
+      </template>
+    </div>
+
+    <!-- Footer -->
+    <div
+      class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1"
+      x-show="!$store.ui.sidebarCollapsed"
+    >
+      <button
+        @click="$dispatch('open-documents'); $store.ui.openDocuments()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-books text-base"></i>
+        <span>Knowledge Base</span>
+      </button>
+      <button
+        @click="$dispatch('open-notes'); $store.ui.openNotes()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-notepad text-base"></i>
+        <span>Notes</span>
+      </button>
+      <button
+        @click="$dispatch('open-settings'); $store.ui.openSettings()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-gear text-base"></i>
+        <span>Settings</span>
+      </button>
+      <button
+        @click="$dispatch('open-agents'); $store.ui.openAgents()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-users text-base"></i>
+        <span>AI Agents</span>
+      </button>
+      <button
+        @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-plugs-connected text-base"></i>
+        <span>MCP Servers</span>
+      </button>
+    </div>
+
+    <!-- Footer (Collapsed) -->
+    <div
+      class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1 flex flex-col items-center"
+      x-show="$store.ui.sidebarCollapsed"
+    >
+      <button
+        @click="$dispatch('open-documents'); $store.ui.openDocuments()"
+        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        title="Knowledge Base"
+      >
+        <i class="ph ph-books text-lg"></i>
+      </button>
+      <button
+        @click="$dispatch('open-settings'); $store.ui.openSettings()"
+        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        title="Settings"
+      >
+        <i class="ph ph-gear text-lg"></i>
+      </button>
+      <button
+        @click="$dispatch('open-agents'); $store.ui.openAgents()"
+        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        title="AI Agents"
+      >
+        <i class="ph ph-users text-lg"></i>
+      </button>
+      <button
+        @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()"
+        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        title="MCP Servers"
+      >
+        <i class="ph ph-plugs-connected text-lg"></i>
+      </button>
+    </div>
+  </aside>

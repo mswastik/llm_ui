@@ -1,0 +1,566 @@
+<!-- ═══════════ SETTINGS MODAL ═══════════ -->
+<div
+  x-data="settings"
+  x-init="init()"
+  x-show="open"
+  x-cloak
+  @open-settings.window="open = true"
+  @keydown.escape.window="closeModal()"
+  @keydown.window="if ($event.key === 's' && ($event.ctrlKey || $event.metaKey)) { $event.preventDefault(); closeModal() }"
+  class="modal-backdrop"
+  @click.self="closeModal()"
+>
+  <div class="modal-content" style="max-width: 700px; width: 100%">
+    <!-- Header -->
+    <div
+      class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between"
+    >
+      <h2 class="text-lg font-semibold flex items-center gap-2">
+        <i class="ph ph-gear text-[var(--accent-primary)]"></i>
+        Settings
+      </h2>
+      <button @click="closeModal()" class="btn btn-icon btn-ghost">
+        <i class="ph ph-x text-lg"></i>
+      </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="border-b border-[var(--border-primary)] px-6">
+      <nav class="flex gap-1 -mb-px">
+        <button
+          @click="$store.ui.settingsTab = 'general'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'general' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          General
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'llm'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'llm' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          LLM
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'tts'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'tts' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          TTS
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'mcp'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'mcp' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          MCP Servers
+        </button>
+      </nav>
+    </div>
+
+    <!-- Body -->
+    <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 200px)">
+      <div class="space-y-6">
+        <!-- General Tab -->
+        <div x-show="$store.ui.settingsTab === 'general'">
+          <h3 class="font-semibold mb-4">General</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >System Prompt</label
+              >
+              <textarea
+                x-model="$store.ui.settingsData.system_prompt"
+                rows="3"
+                class="input text-sm"
+              ></textarea>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Database URL</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.database_url"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Host</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.app_host"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Port</label
+              >
+              <input
+                type="number"
+                x-model.number="$store.ui.settingsData.app_port"
+                class="input text-sm"
+              />
+            </div>
+            <div class="md:col-span-2">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  x-model="$store.ui.settingsData.debug"
+                  class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                />
+                <span class="text-sm text-[var(--text-secondary)]"
+                  >Enable Debug Mode</span
+                >
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- LLM Tab -->
+        <div x-show="$store.ui.settingsTab === 'llm'">
+          <h3 class="font-semibold mb-4">LLM Configuration</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >LLM Server URL</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.llama_cpp_base_url"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Default Model</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.llama_cpp_model"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Query Model</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.query_model"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Temperature</label
+              >
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="2"
+                x-model.number="$store.ui.settingsData.default_temperature"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Max Tokens</label
+              >
+              <input
+                type="number"
+                x-model.number="$store.ui.settingsData.default_max_tokens"
+                class="input text-sm"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- TTS Tab -->
+        <div x-show="$store.ui.settingsTab === 'tts'">
+          <h3 class="font-semibold mb-4">Text-to-Speech</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Engine</label
+              >
+              <select
+                x-model="$store.ui.settingsData.tts_engine"
+                @change="onTtsEngineChange()"
+                class="input text-sm"
+              >
+                <option value="edge-tts">Edge TTS</option>
+                <option value="pyttsx3">Pyttsx3</option>
+                <option value="kokoro">Kokoro TTS</option>
+              </select>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Voice</label
+              >
+              <template x-if="$store.ui.settingsData.tts_engine === 'kokoro'">
+                <select
+                  x-model="$store.ui.settingsData.tts_voice"
+                  class="input text-sm"
+                >
+                  <option value="af_bella">Bella (Female, American)</option>
+                  <option value="af_sarah">Sarah (Female, American)</option>
+                  <option value="af_sky">Sky (Female, American)</option>
+                  <option value="am_adam">Adam (Male, American)</option>
+                  <option value="am_michael">Michael (Male, American)</option>
+                  <option value="bf_emma">Emma (Female, British)</option>
+                  <option value="bf_isabella">
+                    Isabella (Female, British)
+                  </option>
+                  <option value="bm_george">George (Male, British)</option>
+                </select>
+              </template>
+              <template x-if="$store.ui.settingsData.tts_engine !== 'kokoro'">
+                <input
+                  type="text"
+                  x-model="$store.ui.settingsData.tts_voice"
+                  class="input text-sm"
+                />
+              </template>
+            </div>
+            <div x-show="$store.ui.settingsData.tts_engine === 'kokoro'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Language</label
+              >
+              <select
+                x-model="$store.ui.settingsData.kokoro_lang"
+                class="input text-sm"
+              >
+                <option value="a">American English</option>
+                <option value="b">British English</option>
+              </select>
+            </div>
+            <div x-show="$store.ui.settingsData.tts_engine === 'kokoro'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Device</label
+              >
+              <select
+                x-model="$store.ui.settingsData.kokoro_device"
+                class="input text-sm"
+              >
+                <option value="cpu">CPU</option>
+                <option value="cuda">CUDA</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- MCP Tab -->
+        <div
+          x-show="$store.ui.settingsTab === 'mcp'"
+        >
+          <h3 class="font-semibold mb-4">Add MCP Server</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Name</label
+              >
+              <input
+                type="text"
+                x-model="newServer.name"
+                class="input text-sm"
+                placeholder="my-server"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Transport</label
+              >
+              <select x-model="newServer.transport_type" class="input text-sm">
+                <option value="stdio">stdio</option>
+                <option value="sse">SSE</option>
+                <option value="streamable-http">Streamable HTTP</option>
+              </select>
+            </div>
+            <div x-show="newServer.transport_type === 'stdio'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Command</label
+              >
+              <input
+                type="text"
+                x-model="newServer.command"
+                class="input text-sm"
+                placeholder="npx"
+              />
+            </div>
+            <div x-show="newServer.transport_type === 'stdio'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Args (JSON)</label
+              >
+              <input
+                type="text"
+                x-model="newServer.args"
+                class="input text-sm"
+                placeholder='["-y", "@anthropic-ai/claude-code"]'
+              />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Optional. Example: <code class="text-[0.75rem]">["-y", "arg2"]</code>
+              </p>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Env (JSON)</label
+              >
+              <input
+                type="text"
+                x-model="newServer.env"
+                class="input text-sm"
+                placeholder='{"HOME": "/home/user"}'
+              />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Optional. Example: <code class="text-[0.75rem]">{"KEY": "value"}</code>
+              </p>
+            </div>
+            <div x-show="newServer.transport_type !== 'stdio'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >URL</label
+              >
+              <input
+                type="url"
+                x-model="newServer.url"
+                class="input text-sm"
+                placeholder="https://..."
+              />
+            </div>
+          </div>
+          <button @click="addMCPServer()" class="btn btn-primary btn-sm mb-6">
+            <i class="ph ph-plus"></i> Add Server
+          </button>
+
+          <h3 class="font-semibold mb-3">Configured Servers</h3>
+          <template x-if="mcpServers.length === 0">
+            <p class="text-sm text-[var(--text-tertiary)]">
+              No servers configured.
+            </p>
+          </template>
+          <div class="space-y-3">
+            <template x-for="server in mcpServers" :key="server.name">
+              <div class="card p-4">
+                <div class="flex items-start justify-between">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span
+                        class="font-medium text-sm"
+                        x-text="server.name"
+                      ></span>
+                      <span
+                        class="badge-dot"
+                        :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"
+                      ></span>
+                    </div>
+                    <p
+                      class="text-xs text-[var(--text-tertiary)] mt-0.5"
+                      x-text="server.transport_type"
+                    ></p>
+                    <p
+                      class="text-xs text-[var(--text-tertiary)]"
+                      x-show="server.url"
+                      x-text="'URL: ' + server.url"
+                    ></p>
+                    <p
+                      class="text-xs text-[var(--error)]"
+                      x-show="server.error"
+                      x-text="'Error: ' + server.error"
+                    ></p>
+                    <!-- Tool toggle area -->
+                    <div class="mt-2" x-show="server.tools?.length > 0">
+                      <button
+                        @click="server.toolsExpanded = !server.toolsExpanded"
+                        class="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                      >
+                        <i class="ph ph-caret-right text-xs transition-transform" :class="server.toolsExpanded ? 'rotate-90' : ''"></i>
+                        <i class="ph ph-wrench text-xs"></i>
+                        <span x-text="server.tools.length + ' tool' + (server.tools.length === 1 ? '' : 's')"></span>
+                        <span
+                          class="text-[10px] ml-1"
+                          :class="(server.disabled_tools || []).length > 0 ? 'text-[var(--warning)]' : 'text-[var(--text-tertiary)]'"
+                          x-text="(server.disabled_tools || []).length > 0 ? '(' + server.disabled_tools.length + ' disabled)' : '(all enabled)'"
+                        ></span>
+                      </button>
+                      <div x-show="server.toolsExpanded" x-collapse class="flex flex-wrap gap-1.5 mt-2">
+                        <template x-for="tool in server.tools" :key="tool.name">
+                          <label
+                            class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer transition-colors select-none text-xs"
+                            :class="(server.disabled_tools || []).includes(tool.name) ? 'bg-red-500/10 text-red-400 hover:bg-red-500/15' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15'"
+                            :title="tool.description || tool.name"
+                          >
+                            <span x-text="tool.name"></span>
+                            <input type="checkbox" :checked="!(server.disabled_tools || []).includes(tool.name)" @click.stop @change="toggleTool(server.name, tool.name, !$event.target.checked)" class="w-3 h-3 rounded-sm" style="accent-color: var(--accent-primary)" />
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex gap-1.5 mt-2">
+                    <button @click="openEdit(server)" class="btn btn-secondary btn-xs"
+                    >
+                      <i class="ph ph-pencil-simple text-xs"></i>
+                    </button>
+                    <button
+                      @click="refreshTools(server.name)"
+                      class="btn btn-secondary btn-xs"
+                    >
+                      <i class="ph ph-arrow-clockwise text-xs"></i>
+                    </button>
+                    <button
+                      @click="removeServer(server.name)"
+                      class="btn btn-danger btn-xs"
+                    >
+                      <i class="ph ph-trash text-xs"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Edit Modal -->
+          <div
+            x-show="editingServer"
+            x-cloak
+            @click.self="closeEdit()"
+            class="fixed inset-0 bg-[var(--bg-overlay)] flex items-center justify-center z-[101] p-4"
+          >
+            <div
+              class="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-xl shadow-xl max-w-lg w-full p-6"
+            >
+              <h3 class="font-semibold mb-4">Edit Server</h3>
+              <div class="space-y-3">
+                <div>
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Name</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.name"
+                    class="input text-sm"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Transport</label
+                  >
+                  <select
+                    x-model="editServer.transport_type"
+                    class="input text-sm"
+                  >
+                    <option value="stdio">stdio</option>
+                    <option value="sse">SSE</option>
+                    <option value="streamable-http">Streamable HTTP</option>
+                  </select>
+                </div>
+                <div x-show="editServer.transport_type === 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Command</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.command"
+                    class="input text-sm"
+                  />
+                </div>
+                <div x-show="editServer.transport_type === 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Args (JSON)</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.args"
+                    class="input text-sm"
+                    placeholder='["-y", "package"]'
+                  />
+                </div>
+                <div x-show="editServer.transport_type === 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Env (JSON)</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.env"
+                    class="input text-sm"
+                    placeholder='{"HOME": "/home/user"}'
+                  />
+                  <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                    Optional. Example: <code class="text-[0.75rem]">{"KEY": "value"}</code>
+                  </p>
+                </div>
+                <div x-show="editServer.transport_type !== 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >URL</label
+                  >
+                  <input
+                    type="url"
+                    x-model="editServer.url"
+                    class="input text-sm"
+                  />
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    x-model="editServer.enabled"
+                    class="rounded border-[var(--border-input)] text-[var(--accent-primary)]"
+                  />
+                  <span class="text-sm text-[var(--text-secondary)]"
+                    >Enabled</span
+                  >
+                </label>
+              </div>
+              <div class="flex justify-end gap-2 mt-5">
+                <button @click="closeEdit()" class="btn btn-secondary btn-sm">
+                  Cancel
+                </button>
+                <button @click="saveEdit()" class="btn btn-primary btn-sm">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div
+      class="px-6 py-4 border-t border-[var(--border-primary)] flex justify-end gap-2 flex-shrink-0"
+    >
+      <button @click="closeModal()" class="btn btn-secondary">Cancel</button>
+      <button @click="saveSettings()" class="btn btn-primary">
+        <i class="ph ph-check"></i> Save Changes
+      </button>
+    </div>
+  </div>
+</div>

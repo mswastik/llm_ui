@@ -64,6 +64,7 @@ const settings = () => {
       this.mcpServers = (serversData.servers || []).map(s => ({
         ...s,
         tools: (toolsData.tools || []).filter(t => t.server === s.name),
+        disabled_tools: s.disabled_tools || [],
         toolsExpanded: false,
         enabled: s.enabled !== false,
         error: s.error || null
@@ -227,6 +228,24 @@ const settings = () => {
   toggleServer(name, enabled) {
     const server = this.mcpServers.find(s => s.name === name)
     if (server) server.enabled = enabled
+  },
+
+  async toggleTool(serverName, toolName, disabled) {
+    try {
+      await api.put(`/api/mcp/servers/${encodeURIComponent(serverName)}/tools/toggle`, {
+        tool_name: toolName,
+        disabled
+      })
+      // Sync the local state reactively
+      const server = this.mcpServers.find(s => s.name === serverName)
+      if (server) {
+        if (disabled) {
+          if (!server.disabled_tools.includes(toolName)) server.disabled_tools.push(toolName)
+        } else {
+          server.disabled_tools = server.disabled_tools.filter(t => t !== toolName)
+        }
+      }
+    } catch (e) { console.error('[settings] toggleTool error:', e) }
   }
   }
 }

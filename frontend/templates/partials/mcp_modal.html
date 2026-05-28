@@ -1,0 +1,156 @@
+<!-- ═══════════ MCP SERVERS MODAL ═══════════ -->
+  <div
+    x-data="modalMcp"
+    x-show="open"
+    x-cloak
+    @open-mcp.window="open = true"
+    @keydown.escape.window="closeModal()"
+    class="modal-backdrop modal-backdrop-mcp"
+    @click.self="closeModal()"
+  >
+    <div class="modal-content" style="max-width: 550px; width: 100%">
+      <!-- Header -->
+      <div
+        class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0"
+      >
+        <h2 class="text-lg font-semibold flex items-center gap-2">
+          <i class="ph ph-plugs-connected text-[var(--accent-primary)]"></i>
+          MCP Servers
+        </h2>
+        <button @click="closeModal()" class="btn btn-icon btn-ghost">
+          <i class="ph ph-x text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Content -->
+      <div
+        class="p-6 overflow-y-auto"
+        style="max-height: calc(90vh - 140px)"
+        x-data="{
+                servers: [],
+                async loadServers() {
+                    try {
+                        const [s, t] = await Promise.all([
+                            fetch('/api/mcp/servers').then(r => r.json()),
+                            fetch('/api/mcp/tools').then(r => r.json())
+                        ])
+                        this.servers = (s.servers || []).map(server => ({
+                            ...server,
+                            tools: (t.tools || []).filter(tool => tool.server === server.name),
+                            toolsExpanded: false,
+                            enabled: server.enabled !== false
+                        }))
+                    } catch(e) { this.servers = [] }
+                },
+                async $init() {
+                    await this.loadServers()
+                }
+            }"
+        x-init="loadServers()"
+      >
+        <template x-if="servers.length === 0">
+          <div class="text-center py-8 text-[var(--text-tertiary)] text-sm">
+            <i class="ph ph-plugs text-3xl mb-2 block opacity-50"></i>
+            No MCP servers configured
+          </div>
+        </template>
+
+        <template x-for="server in servers" :key="server.name">
+          <div class="card overflow-hidden">
+            <div class="p-3">
+              <div class="flex items-start justify-between mb-2">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="font-medium text-sm"
+                      x-text="server.name"
+                    ></span>
+                    <span
+                      class="badge-dot"
+                      :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"
+                    ></span>
+                  </div>
+                  <div
+                    class="text-xs text-[var(--text-tertiary)]"
+                    x-text="server.transport_type"
+                  ></div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    :checked="server.enabled"
+                    @change="server.enabled = $event.target.checked; fetch('/api/mcp/servers/' + encodeURIComponent(server.name) + '/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: $event.target.checked}) }).then(r => { if(!r.ok) { server.enabled = !$event.target.checked; console.error('Toggle failed'); } }).catch(e => { server.enabled = !$event.target.checked; console.error(e) })"
+                    class="sr-only peer"
+                  />
+                  <div
+                    class="w-8 h-4 bg-[var(--bg-tertiary)] rounded-full peer peer-checked:bg-[var(--accent-primary)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-full"
+                  ></div>
+                </label>
+              </div>
+              <template x-if="server.tools?.length > 0">
+                <div>
+                  <button
+                    @click="server.toolsExpanded = !server.toolsExpanded"
+                    class="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors mb-1"
+                  >
+                    <i
+                      class="ph ph-caret-right text-xs transition-transform"
+                      :class="server.toolsExpanded ? 'rotate-90' : ''"
+                    ></i>
+                    <span
+                      x-text="server.tools.length + ' tool' + (server.tools.length === 1 ? '' : 's')"
+                    ></span>
+                  </button>
+                  <div
+                    x-show="server.toolsExpanded"
+                    x-collapse
+                    class="flex flex-wrap gap-1"
+                  >
+                    <template x-for="tool in server.tools" :key="tool.name">
+                      <label class="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors select-none"
+                        :class="(server.disabled_tools || []).includes(tool.name) ? 'bg-red-500/10 text-red-400 hover:bg-red-500/15' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/15'"
+                        :title="tool.description || tool.name">
+                        <span class="text-xs" x-text="tool.name"></span>
+                        <input
+                          type="checkbox"
+                          :checked="!(server.disabled_tools || []).includes(tool.name)"
+                          @click.stop
+                          @change="(async () => {
+                            const isDisabled = server.disabled_tools.includes(tool.name);
+                            const wantDisabled = !$event.target.checked;
+                            if (isDisabled === wantDisabled) return;
+                            try {
+                              const res = await fetch('/api/mcp/servers/' + encodeURIComponent(server.name) + '/tools/toggle', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tool_name: tool.name, disabled: wantDisabled}) });
+                              if (res.ok) {
+                                if (wantDisabled) { server.disabled_tools.push(tool.name); }
+                                else { server.disabled_tools = server.disabled_tools.filter(t => t !== tool.name); }
+                              }
+                            } catch(e) { console.error(e); }
+                          })()"
+                          class="w-3 h-3 rounded-sm border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                          style="accent-color: var(--accent-primary)"
+                        />
+                      </label>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Footer -->
+      <div
+        class="px-6 py-4 border-t border-[var(--border-primary)] bg-[var(--bg-tertiary)] flex-shrink-0"
+      >
+        <a
+          href="#"
+          @click.prevent="closeModal(); $dispatch('open-settings'); $store.ui.settingsTab = 'mcp'; $store.ui.openSettings()"
+          class="text-xs text-[var(--text-link)] hover:underline flex items-center gap-1"
+        >
+          <i class="ph ph-gear"></i> Manage MCP Servers
+        </a>
+      </div>
+    </div>
+  </div>

@@ -154,6 +154,20 @@ const stores = {
     editingServer: false,
     editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
 
+    // Notes panel
+    showNotes: false,
+    notes: [],
+
+    // Agent filter for sidebar (multi-select)
+    activeAgentFilters: [],  // array of agent IDs + 'default' for unassigned; empty = show all
+
+    // Tag filter for sidebar
+    activeTagFilter: null,    // null or tag string
+
+    // Tag editing state
+    editingTagsForConversation: null,
+    tagInput: '',
+
     // Settings tab
     settingsTab: 'general',
 
@@ -202,6 +216,35 @@ const stores = {
     },
     closeDocuments() {
       this.showDocuments = false
+    },
+    openNotes() {
+      this.showNotes = true
+    },
+    closeNotes() {
+      this.showNotes = false
+    },
+    toggleAgentFilter(filterValue) {
+      // 'default' for unassigned, or agent.id for specific agents
+      const idx = this.activeAgentFilters.indexOf(filterValue)
+      if (idx >= 0) {
+        this.activeAgentFilters.splice(idx, 1)
+      } else {
+        this.activeAgentFilters.push(filterValue)
+      }
+      this.activeTagFilter = null
+    },
+    clearFilters() {
+      // Empty array = show all conversations
+      this.activeAgentFilters = []
+      this.activeTagFilter = null
+    },
+    startEditTags(convId) {
+      this.editingTagsForConversation = convId
+      this.tagInput = ''
+    },
+    stopEditTags() {
+      this.editingTagsForConversation = null
+      this.tagInput = ''
     }
   }
 }

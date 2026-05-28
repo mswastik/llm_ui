@@ -20,7 +20,9 @@ from database.crud import (
     get_all_agents, get_agent, get_agent_by_name, create_agent,
     update_agent, delete_agent,
     add_mcp_server, get_all_mcp_servers, get_enabled_mcp_servers,
-    toggle_mcp_server, remove_mcp_server
+    toggle_mcp_server, remove_mcp_server, update_mcp_server_disabled_tools,
+    update_conversation_tags, update_conversation_agent,
+    create_note, get_all_notes, delete_note, get_notes_for_conversation
 )
 from mcp_client.client import MCPClientManager, MCPServerConfig
 from tools.tool_executor import ToolExecutor
@@ -92,9 +94,10 @@ async def new_conversation(request: Request):
     """Create a new conversation"""
     data = await request.json()
     title = data.get("title", "New Chat")
+    agent_id = data.get("agent_id")
     
     async with get_db() as db:
-        conversation = await create_conversation(db, title)
+        conversation = await create_conversation(db, title, agent_id)
         return {"conversation": conversation}
 
 
@@ -211,7 +214,9 @@ async def _core_stream_handler(
                             "temperature": agent.temperature,
                             "top_k": agent.top_k,
                             "max_tokens": agent.max_tokens,
-                            "enable_rag": bool(agent.enable_rag)
+                            "enable_rag": bool(agent.enable_rag),
+                            "enabled_tools": agent.enabled_tools or [],
+                            "enabled_mcp_servers": agent.enabled_mcp_servers or []
                         }
             
             # Get current date for system prompt
@@ -242,20 +247,52 @@ async def _core_stream_handler(
             # Get MCP tools for LLM function calling
             mcp_tools = []
             if mcp_manager:
-                mcp_tools = await mcp_manager.list_all_tools()
+                # Get MCP tools, excluding disabled ones to save tokens in the LLM prompt.
+                mcp_tools = await mcp_manager.list_all_tools(include_disabled=False)
+                if mcp_tools:
+                    print(f"[TOOLS] {len(mcp_tools)} MCP tools available for LLM")
 
-            # Get all tool definitions - include query_documents if enabled
-            # The LLM will decide which tools to call based on the user's request
+            # ── Filter tools by agent binding ──────────────────────────
+            # Agent can restrict which MCP servers and custom tools are sent to the LLM.
+            # Empty list = allow everything (backward compatible).
+            # Non-empty list = only allow those specific servers/tools.
+            enabled_mcp_servers = []
+            if agent_config and agent_config.get("enabled_mcp_servers"):
+                enabled_mcp_servers = agent_config["enabled_mcp_servers"]
+            if enabled_mcp_servers:
+                allowed_servers = set(enabled_mcp_servers)
+                mcp_tools = [t for t in mcp_tools if t.get("server") in allowed_servers]
+                print(f"[TOOLS] Filtered to {len(mcp_tools)} MCP tools from servers: {allowed_servers}")
+
+            # ── Filter custom tools by agent's enabled_tools ──────────────
+            # Custom tools are controlled differently:
+            #   - query_documents (RAG) → controlled by enable_rag flag
+            #   - generate_speech (TTS) → controlled by exclude_tools param
+            # If enabled_tools is configured, exclude tools not in the list.
+            exclude_tools = []
+            effective_enable_rag = enable_rag
+            if agent_config and agent_config.get("enabled_tools"):
+                enabled_custom = set(agent_config["enabled_tools"])
+                if "query_documents" not in enabled_custom:
+                    effective_enable_rag = False
+                if "generate_speech" not in enabled_custom:
+                    exclude_tools.append("generate_speech")
+            elif agent_config is not None:
+                # No specific tools restriction — use agent's enable_rag setting
+                if agent_config.get("enable_rag"):
+                    effective_enable_rag = True
+
+            # Get tool definitions with agent-based filtering
             all_tools = tool_executor.get_tool_definitions(
-                exclude_tools=[],
+                exclude_tools=exclude_tools,
                 mcp_tools=mcp_tools,
-                enable_rag=enable_rag
+                enable_rag=effective_enable_rag
             )
 
             # Debug logging - show exactly what tools are being sent
             print(f"[TOOLS] MCP tools discovered: {len(mcp_tools)}")
             print(f"[TOOLS] Total tools sent to LLM: {len(all_tools)}")
-            print(f"[TOOLS] enable_rag={enable_rag}")
+            print(f"[TOOLS] enable_rag={effective_enable_rag}")
             for tool in all_tools:
                 tool_name = tool.get("function", {}).get("name", "unknown")
                 tool_server = tool.get("server", "builtin")
@@ -530,12 +567,14 @@ async def list_mcp_servers():
         db_servers = await get_all_mcp_servers(db)
         db_enabled = {s["name"]: s["enabled"] for s in db_servers}
 
-    # Merge runtime info with enabled status
+    # Merge runtime info with enabled status and disabled_tools
     servers_with_status = []
     for server in runtime_servers:
+        db_info = next((s for s in db_servers if s["name"] == server["name"]), {})
         servers_with_status.append({
             **server,
-            "enabled": db_enabled.get(server["name"], True)
+            "enabled": db_enabled.get(server["name"], True),
+            "disabled_tools": db_info.get("disabled_tools", [])
         })
 
     # Also include servers from DB that might not be connected
@@ -552,7 +591,8 @@ async def list_mcp_servers():
                 "is_connected": False,
                 "is_initialized": False,
                 "error": None,
-                "enabled": db_server.get("enabled", True)
+                "enabled": db_server.get("enabled", True),
+                "disabled_tools": db_server.get("disabled_tools", [])
             })
 
     return {"servers": servers_with_status}
@@ -731,6 +771,39 @@ async def toggle_mcp_server_endpoint(server_name: str, request: Request):
             del mcp_manager.servers[server_name]
 
     return {"status": "success", "message": f"Server '{server_name}' {'enabled' if enabled else 'disabled'}"}
+
+
+@app.put("/api/mcp/servers/{server_name}/tools/toggle")
+async def toggle_mcp_tool_endpoint(server_name: str, request: Request):
+    """
+    Enable or disable a specific tool on an MCP server.
+    Disabled tools are excluded from the LLM prompt, saving context tokens.
+    """
+    data = await request.json()
+    tool_name = data.get("tool_name")
+    disabled = data.get("disabled", True)
+    
+    if not tool_name:
+        raise HTTPException(status_code=400, detail="tool_name is required")
+    
+    # Update in database
+    async with get_db() as db:
+        await update_mcp_server_disabled_tools(db, server_name, tool_name, disabled)
+    
+    # Update runtime config so filtering takes effect immediately
+    if server_name in mcp_manager.servers:
+        instance = mcp_manager.servers[server_name]
+        current = set(instance.config.disabled_tools or [])
+        if disabled:
+            current.add(tool_name)
+        else:
+            current.discard(tool_name)
+        instance.config.disabled_tools = list(current)
+    
+    return {
+        "status": "success",
+        "message": f"Tool '{tool_name}' {'disabled' if disabled else 'enabled'} on '{server_name}'"
+    }
 
 
 # Conversation Management
@@ -1246,6 +1319,75 @@ async def get_audio_file(filename: str):
         media_type="audio/mpeg",
         filename=filename
     )
+
+
+# ─── Tags ─────────────────────────────────────────────────
+@app.put("/api/conversations/{conversation_id}/tags")
+async def update_tags(conversation_id: str, request: Request):
+    """Update tags for a conversation"""
+    data = await request.json()
+    tags = data.get("tags", [])
+    async with get_db() as db:
+        result = await update_conversation_tags(db, conversation_id, tags)
+        if not result:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return result
+
+
+@app.put("/api/conversations/{conversation_id}/agent")
+async def update_conversation_agent_endpoint(conversation_id: str, request: Request):
+    """Update the agent associated with a conversation"""
+    data = await request.json()
+    agent_id = data.get("agent_id")
+    async with get_db() as db:
+        result = await update_conversation_agent(db, conversation_id, agent_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return result
+
+
+# ─── Notes ────────────────────────────────────────────────
+@app.get("/api/notes")
+async def list_notes():
+    """Get all notes"""
+    async with get_db() as db:
+        notes = await get_all_notes(db)
+        return {"notes": notes}
+
+
+@app.get("/api/conversations/{conversation_id}/notes")
+async def get_conversation_notes(conversation_id: str):
+    """Get notes for a specific conversation"""
+    async with get_db() as db:
+        notes = await get_notes_for_conversation(db, conversation_id)
+        return {"notes": notes}
+
+
+@app.post("/api/notes")
+async def add_note(request: Request):
+    """Create a new note"""
+    data = await request.json()
+    conversation_id = data.get("conversation_id")
+    message_id = data.get("message_id")
+    content = data.get("content", "")
+    source_text = data.get("source_text")
+    
+    if not conversation_id or not content.strip():
+        raise HTTPException(status_code=400, detail="conversation_id and content are required")
+    
+    async with get_db() as db:
+        note = await create_note(db, conversation_id, message_id, content.strip(), source_text)
+        return {"note": note}
+
+
+@app.delete("/api/notes/{note_id}")
+async def delete_note_endpoint(note_id: str):
+    """Delete a note"""
+    async with get_db() as db:
+        success = await delete_note(db, note_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Note not found")
+        return {"status": "success", "message": "Note deleted"}
 
 
 if __name__ == "__main__":

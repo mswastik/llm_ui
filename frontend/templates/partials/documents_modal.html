@@ -1,0 +1,79 @@
+<!-- ═══════════ DOCUMENTS MODAL ═══════════ -->
+<div
+  x-data="{ open: false, closeModal() { $store.ui.closeDocuments(); this.open = false } }"
+  x-show="open"
+  x-cloak
+  @open-documents.window="open = true"
+  @keydown.escape.window="closeModal()"
+  class="modal-backdrop modal-backdrop-documents"
+  @click.self="closeModal()"
+>
+  <div class="modal-content" style="max-width: 600px; width: 100%">
+    <div
+      class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between"
+    >
+      <h2 class="text-lg font-semibold flex items-center gap-2">
+        <i class="ph ph-books text-[var(--accent-primary)]"></i>
+        Knowledge Base
+      </h2>
+      <button @click="closeModal()" class="btn btn-icon btn-ghost">
+        <i class="ph ph-x text-lg"></i>
+      </button>
+    </div>
+    <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 140px)">
+      <div class="mb-4">
+        <label
+          class="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer border-[var(--border-input)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-primary-light)]/20 transition-colors"
+        >
+          <div class="flex flex-col items-center justify-center pt-5 pb-6">
+            <i
+              class="ph ph-upload-simple text-2xl text-[var(--text-tertiary)] mb-2"
+            ></i>
+            <p class="text-sm text-[var(--text-secondary)]">
+              Click to upload or drag and drop
+            </p>
+            <p class="text-xs text-[var(--text-tertiary)] mt-1">
+              PDF, DOCX, TXT, MD, JSON, YAML
+            </p>
+          </div>
+          <input
+            type="file"
+            class="hidden"
+            @change="$store.ui.documents = $store.ui.documents || []; const docs = $store.ui.documents; (async () => { const formData = new FormData(); formData.append('file', $event.target.files[0]); const res = await fetch('/api/documents/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); docs.unshift(data.document); $store.ui.showToast('Document uploaded!', 'success'); } else { const err = await res.json().catch(() => ({})); $store.ui.showToast('Error: ' + (err.detail || 'Upload failed'), 'error'); } })()"
+          />
+        </label>
+      </div>
+      <div class="space-y-2">
+        <template x-for="doc in ($store.ui.documents || [])" :key="doc.id">
+          <div class="flex items-center justify-between p-3 card">
+            <div class="flex items-center gap-3">
+              <i
+                class="ph ph-file-text text-xl text-[var(--text-tertiary)]"
+              ></i>
+              <div>
+                <p class="font-medium text-sm" x-text="doc.filename"></p>
+                <p
+                  class="text-xs text-[var(--text-tertiary)]"
+                  x-text="doc.file_size ? formatters.formatFileSize(doc.file_size) + ' \u2022 ' + (doc.content_type || 'unknown') : (doc.content_type || 'unknown')"
+                ></p>
+              </div>
+            </div>
+            <button
+              @click="if(confirm('Delete this document?')) { fetch('/api/documents/' + doc.id, { method: 'DELETE' }).then(() => { $store.ui.documents = $store.ui.documents.filter(d => d.id !== doc.id); $store.ui.showToast('Document deleted', 'success'); }).catch(() => $store.ui.showToast('Failed to delete', 'error')) }"
+              class="btn btn-icon btn-ghost text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--error-bg)]"
+            >
+              <i class="ph ph-trash"></i>
+            </button>
+          </div>
+        </template>
+        <div
+          x-show="!($store.ui.documents && $store.ui.documents.length)"
+          class="text-center py-8 text-[var(--text-tertiary)] text-sm"
+        >
+          <i class="ph ph-file-x text-3xl mb-2 block opacity-50"></i>
+          No documents uploaded yet
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

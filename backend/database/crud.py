@@ -5,19 +5,21 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 import os
 
-from .models import Conversation, Message, MCPServer, Document, Agent
+from .models import Conversation, Message, MCPServer, Document, Agent, Note
 
 
 # Conversation operations
-async def create_conversation(db: AsyncSession, title: str = "New Chat") -> Dict:
+async def create_conversation(db: AsyncSession, title: str = "New Chat", agent_id: int = None) -> Dict:
     """Create a new conversation"""
-    conversation = Conversation(title=title)
+    conversation = Conversation(title=title, agent_id=agent_id)
     db.add(conversation)
     await db.flush()
     
     return {
         "id": conversation.id,
         "title": conversation.title,
+        "agent_id": conversation.agent_id,
+        "tags": conversation.tags or [],
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
@@ -36,6 +38,8 @@ async def get_conversation(db: AsyncSession, conversation_id: str) -> Optional[D
     return {
         "id": conversation.id,
         "title": conversation.title,
+        "agent_id": conversation.agent_id,
+        "tags": conversation.tags or [],
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
@@ -45,6 +49,7 @@ async def get_all_conversations(db: AsyncSession, limit: int = 50) -> List[Dict]
     """Get all conversations ordered by most recent"""
     result = await db.execute(
         select(Conversation)
+        .options(selectinload(Conversation.agent))
         .order_by(desc(Conversation.updated_at))
         .limit(limit)
     )
@@ -54,6 +59,9 @@ async def get_all_conversations(db: AsyncSession, limit: int = 50) -> List[Dict]
         {
             "id": conv.id,
             "title": conv.title,
+            "agent_id": conv.agent_id,
+            "agent_name": conv.agent.name if conv.agent else None,
+            "tags": conv.tags or [],
             "created_at": conv.created_at.isoformat(),
             "updated_at": conv.updated_at.isoformat(),
         }
@@ -252,6 +260,7 @@ async def add_mcp_server(
         "env": server.env,
         "url": server.url,
         "enabled": bool(server.enabled),
+        "disabled_tools": server.disabled_tools or [],
     }
 
 
@@ -272,6 +281,7 @@ async def get_all_mcp_servers(db: AsyncSession) -> List[Dict]:
             "env": server.env,
             "url": server.url,
             "enabled": bool(server.enabled),
+            "disabled_tools": server.disabled_tools or [],
         }
         for server in servers
     ]
@@ -293,9 +303,29 @@ async def get_enabled_mcp_servers(db: AsyncSession) -> List[Dict]:
             "args": server.args,
             "env": server.env,
             "url": server.url,
+            "disabled_tools": server.disabled_tools or [],
         }
         for server in servers
     ]
+
+
+async def update_mcp_server_disabled_tools(db: AsyncSession, server_name: str, tool_name: str, disabled: bool) -> bool:
+    """Toggle a tool's disabled state for a server."""
+    result = await db.execute(
+        select(MCPServer).where(MCPServer.name == server_name)
+    )
+    server = result.scalar_one_or_none()
+    
+    if not server:
+        return False
+    
+    current = set(server.disabled_tools or [])
+    if disabled:
+        current.add(tool_name)
+    else:
+        current.discard(tool_name)
+    server.disabled_tools = list(current)
+    return True
 
 
 async def toggle_mcp_server(db: AsyncSession, server_name: str, enabled: bool):
@@ -568,6 +598,136 @@ async def delete_agent(db: AsyncSession, agent_id: int) -> bool:
     agent.updated_at = datetime.utcnow()
     await db.commit()
     return True
+
+
+async def update_conversation_tags(db: AsyncSession, conversation_id: str, tags: List[str]) -> Optional[Dict]:
+    """Update tags for a conversation"""
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conversation = result.scalar_one_or_none()
+    
+    if not conversation:
+        return None
+    
+    conversation.tags = tags
+    conversation.updated_at = datetime.utcnow()
+    await db.flush()
+    
+    return {
+        "id": conversation.id,
+        "tags": conversation.tags or [],
+    }
+
+
+async def update_conversation_agent(db: AsyncSession, conversation_id: str, agent_id: Optional[int]) -> Optional[Dict]:
+    """Update the agent associated with a conversation"""
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conversation = result.scalar_one_or_none()
+    
+    if not conversation:
+        return None
+    
+    conversation.agent_id = agent_id
+    conversation.updated_at = datetime.utcnow()
+    await db.flush()
+    
+    return {
+        "id": conversation.id,
+        "agent_id": conversation.agent_id,
+    }
+
+
+# Note operations
+
+async def create_note(
+    db: AsyncSession,
+    conversation_id: str,
+    message_id: Optional[str],
+    content: str,
+    source_text: Optional[str] = None
+) -> Dict:
+    """Create a note for a conversation/message"""
+    note = Note(
+        conversation_id=conversation_id,
+        message_id=message_id,
+        content=content,
+        source_text=source_text
+    )
+    db.add(note)
+    await db.flush()
+    
+    return {
+        "id": note.id,
+        "conversation_id": note.conversation_id,
+        "message_id": note.message_id,
+        "content": note.content,
+        "source_text": note.source_text,
+        "created_at": note.created_at.isoformat(),
+    }
+
+
+async def get_all_notes(db: AsyncSession, limit: int = 100) -> List[Dict]:
+    """Get all notes ordered by most recent"""
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Note)
+        .options(selectinload(Note.conversation))
+        .order_by(desc(Note.created_at))
+        .limit(limit)
+    )
+    notes = result.scalars().all()
+    
+    return [
+        {
+            "id": note.id,
+            "conversation_id": note.conversation_id,
+            "message_id": note.message_id,
+            "content": note.content,
+            "source_text": note.source_text,
+            "conversation_title": note.conversation.title if note.conversation else "Unknown",
+            "created_at": note.created_at.isoformat(),
+        }
+        for note in notes
+    ]
+
+
+async def delete_note(db: AsyncSession, note_id: str) -> bool:
+    """Delete a note"""
+    result = await db.execute(
+        select(Note).where(Note.id == note_id)
+    )
+    note = result.scalar_one_or_none()
+    
+    if not note:
+        return False
+    
+    await db.delete(note)
+    return True
+
+
+async def get_notes_for_conversation(db: AsyncSession, conversation_id: str) -> List[Dict]:
+    """Get all notes for a conversation"""
+    result = await db.execute(
+        select(Note)
+        .where(Note.conversation_id == conversation_id)
+        .order_by(desc(Note.created_at))
+    )
+    notes = result.scalars().all()
+    
+    return [
+        {
+            "id": note.id,
+            "conversation_id": note.conversation_id,
+            "message_id": note.message_id,
+            "content": note.content,
+            "source_text": note.source_text,
+            "created_at": note.created_at.isoformat(),
+        }
+        for note in notes
+    ]
 
 
 

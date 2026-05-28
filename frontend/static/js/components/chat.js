@@ -42,6 +42,10 @@ const chatComponent = () => ({
     this.enableRAG = this.$store.chat.enableRAG
     await ttsService.checkAvailability()
     this.checkActiveStream()
+
+    window.addEventListener('sync-agent', (e) => {
+      this.selectedAgentId = e.detail.agentId
+    })
   },
 
   syncFromStore() {
@@ -105,7 +109,8 @@ const chatComponent = () => ({
     let conversationId = this.$store.chat.currentConversationId
     if (!conversationId) {
       try {
-        const conv = await api.post('/api/conversations', { title: 'New Chat' })
+        const agentId = this.selectedAgentId || null
+        const conv = await api.post('/api/conversations', { title: 'New Chat', agent_id: agentId })
         conversationId = conv.conversation.id
         this.$store.chat.currentConversationId = conversationId
         this.$store.chat.currentConversationTitle = conv.conversation.title
@@ -334,8 +339,11 @@ const chatComponent = () => ({
 
   async forkConversation(originalId, newContent) {
     try {
+      const currentConv = this.$store.chat.conversations.find(c => c.id === this.$store.chat.currentConversationId)
+      const agentId = currentConv?.agent_id || this.selectedAgentId || null
       const data = await api.post('/api/conversations', {
-        title: 'Forked: ' + newContent.substring(0, 30) + '...'
+        title: 'Forked: ' + newContent.substring(0, 30) + '...',
+        agent_id: agentId
       })
       const newId = data.conversation.id
       this.$store.chat.addConversation(data.conversation)
@@ -404,6 +412,38 @@ const chatComponent = () => ({
     this.$store.ui.showToast('Request cancelled', 'info')
   },
 
+  // ─── Take Note ────────────────────────────────────────
+  async takeNote(msg) {
+    const text = msg.content?.trim()
+    if (!text) return
+
+    // Get highlighted text or use first 200 chars as source
+    const selected = window.getSelection()?.toString()?.trim()
+    const sourceText = selected || text.substring(0, 500)
+
+    // Prompt for note content
+    const noteContent = prompt('Enter your note:', selected ? `» ${selected}` : '')
+    if (!noteContent?.trim()) return
+
+    try {
+      const res = await api.post('/api/notes', {
+        conversation_id: this.$store.chat.currentConversationId,
+        message_id: msg.id,
+        content: noteContent.trim(),
+        source_text: sourceText.substring(0, 1000)
+      })
+      if (res.note) {
+        // Add to UI store notes
+        if (!this.$store.ui.notes) this.$store.ui.notes = []
+        this.$store.ui.notes.unshift(res.note)
+        this.$store.ui.showToast('Note saved!', 'success')
+      }
+    } catch (e) {
+      console.error('[chat] Note error:', e)
+      this.$store.ui.showToast('Failed to save note', 'error')
+    }
+  },
+
   // ─── TTS ──────────────────────────────────────────────
   async speakMessage(msg) {
     const loading = this.$store.ui
@@ -454,11 +494,28 @@ const chatComponent = () => ({
     this.$store.chat.setModel(this.selectedModel)
   },
 
-  updateSelectedAgent() {
+  async updateSelectedAgent() {
     this.$store.chat.setAgent(this.selectedAgentId)
     this.$store.chat.applyAgentConfig()
     this.selectedModel = this.$store.chat.selectedModel
     this.enableRAG = this.$store.chat.enableRAG
+
+    // Update the current conversation's agent_id if one is active
+    const convId = this.$store.chat.currentConversationId
+    if (convId) {
+      try {
+        const res = await api.put(`/api/conversations/${convId}/agent`, {
+          agent_id: this.selectedAgentId || null
+        })
+        // Update the conversation's agent_id in the store for filter to work
+        const conv = this.$store.chat.conversations.find(c => c.id === convId)
+        if (conv) {
+          conv.agent_id = res.agent_id
+        }
+      } catch (e) {
+        console.error('[chat] Failed to update conversation agent:', e)
+      }
+    }
   },
 
   toggleRAG() {

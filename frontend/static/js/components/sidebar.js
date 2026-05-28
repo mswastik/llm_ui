@@ -1,5 +1,5 @@
 /**
- * Sidebar Component — Conversation management with search, animations
+ * Sidebar Component — Conversation management with search, agent filters, tags
  */
 import { api } from '../utils.js'
 
@@ -11,11 +11,46 @@ const sidebar = () => ({
   isResizing: false,
   minWidth: 68,
   maxWidth: 450,
+  availableAgents: [],
+
+  // ─── Computed ─────────────────────────────────────────
+  get activeAgentFilters() { return this.$store.ui.activeAgentFilters },
+  get activeTagFilter() { return this.$store.ui.activeTagFilter },
+  get editingTagsForConversation() { return this.$store.ui.editingTagsForConversation },
 
   get filteredConversations() {
-    if (!this.searchQuery?.trim()) return this.conversations
-    const q = this.searchQuery.toLowerCase()
-    return this.conversations.filter(c => c.title?.toLowerCase().includes(q))
+    let list = this.conversations
+
+    // Apply agent filter (multi-select: OR logic across selected filters)
+    if (this.activeAgentFilters.length > 0) {
+      list = list.filter(c => {
+        return this.activeAgentFilters.some(f => {
+          if (f === 'default') return c.agent_id === null
+          return c.agent_id === f
+        })
+      })
+    }
+
+    // Apply tag filter
+    if (this.activeTagFilter) {
+      list = list.filter(c => c.tags?.includes(this.activeTagFilter))
+    }
+
+    // Apply search
+    if (this.searchQuery?.trim()) {
+      const q = this.searchQuery.toLowerCase()
+      list = list.filter(c => c.title?.toLowerCase().includes(q))
+    }
+
+    return list
+  },
+
+  get allTags() {
+    const tagSet = new Set()
+    this.conversations.forEach(c => {
+      if (c.tags?.length) c.tags.forEach(t => tagSet.add(t))
+    })
+    return [...tagSet].sort()
   },
 
   async init() {
@@ -23,7 +58,15 @@ const sidebar = () => ({
     this.currentConversationId = this.$store.chat.currentConversationId
     this.currentConversationTitle = this.$store.chat.currentConversationTitle
     this.conversations = this.$store.chat.conversations || []
+    this.availableAgents = this.$store.chat.availableAgents || []
     await this.loadConversations()
+
+    // Listen for load-conversation events (e.g., from Notes modal)
+    window.addEventListener('load-conversation', (e) => {
+      if (e.detail?.id) {
+        this.loadConversation(e.detail.id)
+      }
+    })
   },
 
   // ─── Conversations ────────────────────────────────────
@@ -37,7 +80,8 @@ const sidebar = () => ({
 
   async createNewConversation() {
     try {
-      const data = await api.post('/api/conversations', { title: 'New Chat' })
+      const agentId = this.$store.chat.selectedAgentId || null
+      const data = await api.post('/api/conversations', { title: 'New Chat', agent_id: agentId })
       this.$store.chat.addConversation(data.conversation)
       this.conversations = this.$store.chat.conversations
       await this.loadConversation(data.conversation.id)
@@ -67,6 +111,11 @@ const sidebar = () => ({
       this.$store.chat.messages = this.normalizeMessages(data.messages || [])
       this.currentConversationId = id
       this.currentConversationTitle = data.conversation.title
+
+      const convAgentId = data.conversation.agent_id || null
+      this.$store.chat.setAgent(convAgentId)
+      this.$store.chat.applyAgentConfig()
+      window.dispatchEvent(new CustomEvent('sync-agent', { detail: { agentId: convAgentId } }))
     } catch (e) {
       this.$store.ui.showToast('Failed to load conversation', 'error')
     }
@@ -91,6 +140,41 @@ const sidebar = () => ({
     }
   },
 
+  // ─── Tag Management ───────────────────────────────────
+  getConvTags(convId) {
+    const conv = this.conversations.find(c => c.id === convId)
+    return conv?.tags || []
+  },
+
+  async addTag(convId, tag) {
+    if (!tag?.trim()) return
+    const conv = this.conversations.find(c => c.id === convId)
+    if (!conv) return
+    const currentTags = conv.tags || []
+    if (currentTags.includes(tag.trim())) return
+    const newTags = [...currentTags, tag.trim()]
+    try {
+      await api.put(`/api/conversations/${convId}/tags`, { tags: newTags })
+      conv.tags = newTags
+      this.$store.ui.tagInput = ''
+      this.$store.ui.showToast('Tag added', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Failed to add tag', 'error')
+    }
+  },
+
+  async removeTag(convId, tag) {
+    const conv = this.conversations.find(c => c.id === convId)
+    if (!conv) return
+    const newTags = (conv.tags || []).filter(t => t !== tag)
+    try {
+      await api.put(`/api/conversations/${convId}/tags`, { tags: newTags })
+      conv.tags = newTags
+    } catch (e) {
+      this.$store.ui.showToast('Failed to remove tag', 'error')
+    }
+  },
+
   // ─── Resize ───────────────────────────────────────────
   startResize(e) {
     this.isResizing = true
@@ -98,7 +182,6 @@ const sidebar = () => ({
     e.stopPropagation()
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-    // Use { passive: false } so preventDefault() actually works
     document.addEventListener('mousemove', this._mousemoveBound, { passive: false })
     document.addEventListener('mouseup', this._mouseupBound)
   },
@@ -121,7 +204,6 @@ const sidebar = () => ({
     }
   },
 
-  // Bind handlers once so we can remove them later
   _initResize() {
     this._mousemoveBound = (e) => this.handleMouseMove(e)
     this._mouseupBound = () => this.handleMouseUp()
@@ -134,7 +216,6 @@ const sidebar = () => ({
       if (blocks?.length) {
         return { ...msg, blocks, tool_calls: msg.tool_calls || [] }
       }
-      // Backward compat: build blocks from old format
       const blocksArr = []
       if (msg.thinking) {
         blocksArr.push({ type: 'thinking', content: msg.thinking })
@@ -159,6 +240,13 @@ const sidebar = () => ({
       }
       return { ...msg, blocks: blocksArr.length ? blocksArr : null, tool_calls: msg.tool_calls || [] }
     })
+  },
+
+  getAgentName(agentId) {
+    if (!agentId) return null
+    const agents = this.$store.chat.availableAgents || []
+    const agent = agents.find(a => a.id === agentId)
+    return agent?.name || null
   },
 
   formatDate: (s) => api ? new Date(s).toLocaleDateString() : ''

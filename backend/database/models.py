@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Text, DateTime, Integer, Float, JSON, ForeignKey
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ class Conversation(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String, default="New Chat")
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True)
+    tags = Column(JSON, default=list)  # Array of tag strings
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # Relationship to messages
@@ -75,6 +77,7 @@ class MCPServer(Base):
     url = Column(String, nullable=True)
     
     enabled = Column(Integer, default=1)  # SQLite doesn't have native boolean
+    disabled_tools = Column(JSON, default=list)  # List of tool names disabled for this server
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -96,6 +99,21 @@ class Document(Base):
     # Timestamps
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
+
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False)
+    message_id = Column(String, ForeignKey("messages.id"), nullable=True)
+    content = Column(Text, nullable=False)
+    source_text = Column(Text, nullable=True)  # The original LLM text that the note was taken from
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    conversation = relationship("Conversation")
+    message = relationship("Message")
 
 
 class Agent(Base):
@@ -138,9 +156,24 @@ class Agent(Base):
 
 
 async def init_db():
-    """Initialize database tables"""
+    """Initialize database tables and run migrations"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # ── Migration: add disabled_tools column to mcp_servers ──────────────
+    # SQLite's create_all does not alter existing tables, so new columns on
+    # an already-created table must be added via ALTER TABLE.
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE mcp_servers ADD COLUMN disabled_tools JSON DEFAULT '[]'"
+                )
+            )
+        print("[DB] Migrated mcp_servers: added disabled_tools column")
+    except OperationalError:
+        # Column already exists — that's fine
+        pass
 
 
 @asynccontextmanager

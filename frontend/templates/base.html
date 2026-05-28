@@ -51,11 +51,12 @@
         sidebarWidth: parseInt(localStorage.getItem('sidebarWidth') || '280'),
         showMcpPanel: false, showAgents: false, showSettings: false, showDocuments: false,
         toast: { show: false, message: '', type: 'success' },
-        settingsData: {}, mcpServers: [], mcpTools: [], documents: [],
+        settingsData: {}, mcpServers: [], mcpTools: [],
         newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
         editingServer: false,
         editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
         settingsTab: 'general',
+        showNotes: false, notes: [], documents: [], activeAgentFilters: [], activeTagFilter: null, editingTagsForConversation: null, tagInput: '',
         toggleDarkMode() { this.darkMode = !this.darkMode; localStorage.setItem('darkMode', this.darkMode); document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },
         initTheme() { document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },
         toggleSidebar() { this.sidebarCollapsed = !this.sidebarCollapsed; this.sidebarWidth = this.sidebarCollapsed ? 68 : 280; localStorage.setItem('sidebarWidth', this.sidebarWidth) },
@@ -68,7 +69,13 @@
         openSettings() { this.showSettings = true },
         closeSettings() { this.showSettings = false },
         openDocuments() { this.showDocuments = true },
-        closeDocuments() { this.showDocuments = false }
+        closeDocuments() { this.showDocuments = false },
+        openNotes() { this.showNotes = true },
+        closeNotes() { this.showNotes = false },
+        toggleAgentFilter(v) { const i = this.activeAgentFilters.indexOf(v); if (i >= 0) { this.activeAgentFilters.splice(i, 1) } else { this.activeAgentFilters.push(v) }; this.activeTagFilter = null },
+        clearFilters() { this.activeAgentFilters = []; this.activeTagFilter = null },
+        startEditTags(id) { this.editingTagsForConversation = id; this.tagInput = '' },
+        stopEditTags() { this.editingTagsForConversation = null; this.tagInput = '' }
       };
     </script>
 

@@ -66,7 +66,8 @@ Alpine.data('modalDocuments', createModal('documents', 'openDocuments', 'closeDo
 Alpine.data('modalSettings', createModal('settings', 'openSettings', 'closeSettings'))
 Alpine.data('modalMcp', createModal('mcp', 'openMcpPanel', 'closeMcpPanel'))
 Alpine.data('modalAgents', createModal('agents', 'openAgents', 'closeAgents'))
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalMcp, modalAgents')
+Alpine.data('modalNotes', createModal('notes', 'openNotes', 'closeNotes'))
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalMcp, modalAgents, modalNotes')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

@@ -32,6 +32,8 @@ class MCPServerConfig:
     timeout: float = 30.0
     # Whether server is enabled
     enabled: bool = True
+    # Tool names to exclude from LLM function calling (to reduce prompt size)
+    disabled_tools: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -85,7 +87,8 @@ class MCPClientManager:
                 args=config.get("args", []),
                 env=config.get("env", {}),
                 url=config.get("url"),
-                enabled=config.get("enabled", True)
+                enabled=config.get("enabled", True),
+                disabled_tools=config.get("disabled_tools", [])
             )
             
             if server_config.enabled:
@@ -607,9 +610,13 @@ class MCPClientManager:
         
         return []
 
-    async def list_all_tools(self) -> List[Dict]:
+    async def list_all_tools(self, include_disabled: bool = True) -> List[Dict]:
         """
         List all tools from all connected servers.
+        
+        Args:
+            include_disabled: If True, includes disabled tools too (used for UI display).
+                If False, filters out disabled tools (used for LLM tool definitions).
 
         Returns:
             List of tool dictionaries with server info
@@ -618,7 +625,10 @@ class MCPClientManager:
 
         for server_name, instance in self.servers.items():
             if instance.is_connected:
+                disabled = set(instance.config.disabled_tools or [])
                 for tool in instance.tools:
+                    if not include_disabled and tool.get("name") in disabled:
+                        continue
                     # Add server name to each tool
                     tool_with_server = {**tool, 'server': server_name}
                     all_tools.append(tool_with_server)

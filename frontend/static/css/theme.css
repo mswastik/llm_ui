@@ -594,7 +594,7 @@ h4 { font-size: 0.95rem; font-weight: 600; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 3px 4px;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -689,6 +689,10 @@ h4 { font-size: 0.95rem; font-weight: 600; }
 /* Message enter animation */
 .message-enter {
   animation: slideUp 0.3s ease-out;
+}
+
+button[title="Send"] .ph {
+  margin:auto;
 }
 
 /* Loading shimmer */

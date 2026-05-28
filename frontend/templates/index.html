@@ -86,10 +86,6 @@
           class="sidebar-item group"
           :class="{'sidebar-item-active': currentConversationId === conv.id}"
         >
-          <i
-            class="ph ph-chat-circle text-base flex-shrink-0"
-            :class="currentConversationId === conv.id ? 'ph-fill' : ''"
-          ></i>
           <div class="flex-1 min-w-0">
             <div class="truncate font-medium" x-text="conv.title"></div>
             <div

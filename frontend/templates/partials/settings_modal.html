@@ -55,6 +55,13 @@
         >
           MCP Servers
         </button>
+        <button
+          @click="$store.ui.settingsTab = 'backup'; loadBackupStatus()"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'backup' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          Backup
+        </button>
       </nav>
     </div>
 
@@ -265,6 +272,68 @@
               </select>
             </div>
           </div>
+        </div>
+
+        <!-- Backup Tab -->
+        <div x-show="$store.ui.settingsTab === 'backup'">
+          <h3 class="font-semibold mb-4">Database Backup</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Enable Automatic Backups</label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" x-model="$store.ui.settingsData.backup_enabled" class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]" />
+                <span class="text-sm text-[var(--text-secondary)]">Enabled</span>
+              </label>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Backup Directory</label>
+              <input type="text" x-model="$store.ui.settingsData.backup_path" class="input text-sm" placeholder="./backups" />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">Path to cloud-synced folder for backups</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Interval (hours)</label>
+              <input type="number" x-model.number="$store.ui.settingsData.backup_interval_hours" class="input text-sm" min="1" max="168" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Max Backups to Keep</label>
+              <input type="number" x-model.number="$store.ui.settingsData.backup_max_keep" class="input text-sm" min="1" max="999" />
+            </div>
+          </div>
+
+          <div class="mt-6 flex gap-3">
+            <button @click="backupNow()" class="btn btn-primary btn-sm" :disabled="backupRunning">
+              <i class="ph ph-database"></i>
+              <span x-text="backupRunning ? 'Backing up...' : 'Backup Now'"></span>
+            </button>
+          </div>
+
+          <template x-if="backupStatus">
+            <div class="mt-4 p-3 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)] space-y-1">
+              <p class="text-xs text-[var(--text-secondary)]">
+                Last backup: <span class="text-[var(--text-primary)]" x-text="backupStatus.last_backup ? new Date(backupStatus.last_backup).toLocaleString() : 'Never'"></span>
+              </p>
+              <p class="text-xs text-[var(--text-secondary)]" x-show="backupStatus.last_backup_file">
+                File: <span class="text-[var(--text-primary)]" x-text="backupStatus.last_backup_file"></span>
+              </p>
+              <p class="text-xs text-[var(--text-secondary)]" x-show="backupStatus.last_backup_size">
+                Size: <span class="text-[var(--text-primary)]" x-text="(backupStatus.last_backup_size / 1024).toFixed(1) + ' KB'"></span>
+              </p>
+            </div>
+          </template>
+
+          <template x-if="backupFiles.length > 0">
+            <div class="mt-4">
+              <h4 class="text-sm font-medium mb-2">Backup History</h4>
+              <div class="space-y-1 max-h-48 overflow-y-auto">
+                <template x-for="f in backupFiles" :key="f.name">
+                  <div class="flex items-center justify-between py-1.5 px-2 rounded hover:bg-[var(--bg-tertiary)] text-xs">
+                    <span class="text-[var(--text-secondary)] truncate mr-2" x-text="f.name"></span>
+                    <span class="text-[var(--text-tertiary)] whitespace-nowrap" x-text="(f.size / 1024).toFixed(1) + ' KB'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
         </div>
 
         <!-- MCP Tab -->

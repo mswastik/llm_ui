@@ -49,6 +49,12 @@ DEFAULTS = {
     # SQLAlchemy Logging
     "sqlalchemy_echo": os.getenv("SQLALCHEMY_ECHO", "false").lower() == "true",
 
+    # Database Backup Settings
+    "backup_enabled": False,
+    "backup_path": "./backups",
+    "backup_interval_hours": 4,
+    "backup_max_keep": 24,
+
     # TTS Settings
     "tts_engine": "edge-tts",
     "tts_voice": "en-IN-NeerjaNeural",
@@ -96,6 +102,12 @@ class Settings(BaseModel):
     # SQLAlchemy Logging
     sqlalchemy_echo: bool = Field(default=DEFAULTS["sqlalchemy_echo"], description="Enable verbose SQLAlchemy logging")
 
+    # Database Backup Settings
+    backup_enabled: bool = Field(default=DEFAULTS["backup_enabled"], description="Enable automatic database backups")
+    backup_path: str = Field(default=DEFAULTS["backup_path"], description="Directory to store database backups")
+    backup_interval_hours: int = Field(default=DEFAULTS["backup_interval_hours"], description="Interval between automatic backups in hours")
+    backup_max_keep: int = Field(default=DEFAULTS["backup_max_keep"], description="Maximum number of backup files to keep")
+
     # TTS Settings
     tts_engine: str = Field(default=DEFAULTS["tts_engine"], description="TTS engine to use (edge-tts, pyttsx3, kokoro)")
     tts_voice: str = Field(default=DEFAULTS["tts_voice"], description="Voice to use for TTS")
@@ -122,6 +134,10 @@ UPLOAD_DIR = None
 CORS_ORIGINS = None
 SYSTEM_PROMPT = None
 SQLALCHEMY_ECHO = None
+BACKUP_ENABLED = None
+BACKUP_PATH = None
+BACKUP_INTERVAL_HOURS = None
+BACKUP_MAX_KEEP = None
 
 
 def _update_module_constants(settings_mgr):
@@ -129,6 +145,7 @@ def _update_module_constants(settings_mgr):
     global DATABASE_URL, LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
     global APP_HOST, APP_PORT, DEBUG, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
     global MAX_UPLOAD_SIZE, UPLOAD_DIR, CORS_ORIGINS, SYSTEM_PROMPT, SQLALCHEMY_ECHO
+    global BACKUP_ENABLED, BACKUP_PATH, BACKUP_INTERVAL_HOURS, BACKUP_MAX_KEEP
 
     DATABASE_URL = settings_mgr.settings.database_url
     LLAMA_CPP_BASE_URL = settings_mgr.settings.llama_cpp_base_url
@@ -144,6 +161,10 @@ def _update_module_constants(settings_mgr):
     CORS_ORIGINS = settings_mgr.settings.cors_origins.split(',')
     SYSTEM_PROMPT = settings_mgr.settings.system_prompt
     SQLALCHEMY_ECHO = settings_mgr.settings.sqlalchemy_echo
+    BACKUP_ENABLED = settings_mgr.settings.backup_enabled
+    BACKUP_PATH = settings_mgr.settings.backup_path
+    BACKUP_INTERVAL_HOURS = settings_mgr.settings.backup_interval_hours
+    BACKUP_MAX_KEEP = settings_mgr.settings.backup_max_keep
 
 
 class SettingsManager:

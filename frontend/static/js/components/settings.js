@@ -14,11 +14,15 @@ const settings = () => {
   newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
   editingServer: false,
   editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+  backupStatus: null,
+  backupFiles: [],
+  backupRunning: false,
 
   async init() {
     console.log('[settings] init() called, loading settings and MCP servers')
     await this.loadSettings()
     await this.loadMCPServers()
+    await this.loadBackupStatus()
   },
 
   // ─── Settings ─────────────────────────────────────────
@@ -32,6 +36,9 @@ const settings = () => {
   async saveSettings() {
     try {
       await api.put('/api/settings', this.$store.ui.settingsData)
+      // Restart backup scheduler after settings change
+      try { await api.post('/api/backup/scheduler/restart') } catch (e) { /* ignore */ }
+      await this.loadBackupStatus()
       this.$store.ui.showToast('Settings saved!', 'success')
     } catch (e) {
       this.$store.ui.showToast('Error saving: ' + e.message, 'error')
@@ -51,6 +58,28 @@ const settings = () => {
       settings.kokoro_device = settings.kokoro_device || 'cpu'
     } else if (settings.tts_engine === 'edge-tts') {
       settings.tts_voice = 'en-IN-NeerjaNeural'
+    }
+  },
+
+  // ─── Backup ──────────────────────────────────────────
+  async loadBackupStatus() {
+    try {
+      const data = await api.get('/api/backup/status')
+      this.backupStatus = data
+      this.backupFiles = data.backup_files || []
+    } catch (e) { console.error('[settings] Backup status error:', e) }
+  },
+  async backupNow() {
+    if (this.backupRunning) return
+    this.backupRunning = true
+    try {
+      const result = await api.post('/api/backup/run')
+      await this.loadBackupStatus()
+      this.$store.ui.showToast('Backup completed!', 'success')
+    } catch (e) {
+      this.$store.ui.showToast('Backup error: ' + e.message, 'error')
+    } finally {
+      this.backupRunning = false
     }
   },
 

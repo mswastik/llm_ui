@@ -31,6 +31,7 @@ from mcp_client.client import MCPClientManager, MCPServerConfig
 from tools.tool_executor import ToolExecutor
 from llm_client.client import LLMClient
 from backend.settings import settings_manager
+from backend.database.backup import backup_scheduler
 
 # Initialize MCP client manager
 mcp_manager = MCPClientManager()
@@ -40,8 +41,10 @@ async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     await mcp_manager.initialize()
+    backup_scheduler.start()
     yield
     # Shutdown
+    await backup_scheduler.stop()
     await mcp_manager.cleanup()
 
 app = FastAPI(title="LLM UI with MCP Support", lifespan=lifespan)
@@ -170,7 +173,7 @@ async def _generate_title_with_model(
         async for chunk in llm_client.stream_chat(
             title_messages,
             temperature=0.3,
-            max_tokens=200,  # Increased from 50 — model needs tokens for thinking + actual title
+            max_tokens=500,  # Generous budget — thinking models need extra tokens for reasoning before the actual title
             tools=tools,  # Pass same tools so system prompt rendering is identical
             tool_choice="none"  # Prevent model from calling tools during title generation
         ):
@@ -1295,6 +1298,32 @@ async def get_tts_status():
         "kokoro": kokoro_available,
         "engine": tool_executor.tts_service.config.engine
     }
+
+
+# Backup Management
+@app.get("/api/backup/status")
+async def get_backup_status():
+    """Get database backup status and history"""
+    from backend.database.backup import get_backup_status
+    return get_backup_status()
+
+
+@app.post("/api/backup/run")
+async def trigger_backup():
+    """Trigger a manual database backup"""
+    from backend.database.backup import backup_database
+    result = backup_database()
+    if result.get("success"):
+        return {"status": "success", "message": "Backup completed", "file": result["file"], "size": result["size"]}
+    else:
+        raise HTTPException(status_code=500, detail=result.get("error", "Backup failed"))
+
+
+@app.post("/api/backup/scheduler/restart")
+async def restart_backup_scheduler():
+    """Restart the backup scheduler (e.g., after settings change)"""
+    backup_scheduler.restart()
+    return {"status": "success", "message": "Backup scheduler restarted"}
 
 
 # Settings Management

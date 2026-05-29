@@ -655,17 +655,17 @@
 
     <!-- Input Area -->
     <div
-      class="border-t border-[var(--border-primary)] p-4 bg-[var(--bg-secondary)] flex-shrink-0"
+      class="px-4 flex-shrink-0"
     >
       <!-- Input Box -->
       <form @submit.prevent="sendMessage()" class="flex gap-3 items-end">
         <textarea
           x-model="inputMessage"
-          @keydown.enter.prevent="if (!$event.shiftKey) sendMessage()"
+          @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
           placeholder="Type a message... (Shift+Enter for new line)"
           rows="1"
-          class="input flex-1 resize-none"
-          style="min-height: 44px; max-height: 200px"
+          class="input flex-1 resize-none min-h-[40px] focus:min-h-[104px] transition-[min-height] duration-150"
+          style="max-height: 200px"
           :disabled="isLoading"
           id="chat-input"
         ></textarea>
@@ -682,7 +682,7 @@
 
       <!-- Keyboard hint -->
       <div
-        class="flex items-center gap-2 mt-2 text-xs text-[var(--text-tertiary)]"
+        class="flex items-center gap-2 mt-2 mb-1 text-xs text-[var(--text-tertiary)]"
       >
         <span><kbd class="kbd">Enter</kbd> Send</span>
         <span><kbd class="kbd">Shift+Enter</kbd> New line</span>

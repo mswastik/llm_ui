@@ -34,7 +34,7 @@
 
   --border-primary: #e2e8f0;
   --border-secondary: #f1f5f9;
-  --border-focus: #6366f1;
+  --border-focus: #7577ecd9;
   --border-input: #cbd5e1;
   --border-card: #e2e8f0;
 
@@ -289,8 +289,9 @@ h4 { font-size: 0.95rem; font-weight: 600; }
   outline: none;
 }
 .input:focus {
+  outline: none;
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 0 0 4px rgba(72, 75, 244, 0.2);
 }
 .input::placeholder {
   color: var(--text-tertiary);
@@ -311,6 +312,7 @@ h4 { font-size: 0.95rem; font-weight: 600; }
   outline: none;
 }
 .select:focus {
+  outline: none;
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
 }

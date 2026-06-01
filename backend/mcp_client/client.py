@@ -478,14 +478,63 @@ class MCPClientManager:
                 ""
             )
             
+            # Validate URL — if it's not a valid absolute/safe-relative URL,
+            # try to extract an http/https URL from the string (some MCP servers
+            # embed the URL in text like "Title — https://...").
+            # This prevents malformed relative URLs like "GitHub — https://..."
+            # from being resolved against localhost:8002 by the browser.
+            url_str = str(url)
+            if url_str and not self._is_valid_source_url(url_str):
+                extracted = self._extract_url_from_text(url_str)
+                if extracted:
+                    url_str = extracted
+                else:
+                    continue
+
             normalized.append({
                 "title": str(title),
-                "url": str(url),
+                "url": url_str,
                 "snippet": str(snippet),
                 "document_id": str(doc_id)
             })
         
         return normalized
+
+    def _is_valid_source_url(self, url: str) -> bool:
+        """Check if a source URL is safe to use as-is (absolute or known safe relative)."""
+        if not url:
+            return False
+        # Absolute URLs with schemes
+        if url.startswith(('http://', 'https://', 'ftp://', 'file://', 'mailto:')):
+            return True
+        # Fragment/anchor links (used by RAG service)
+        if url.startswith('#'):
+            return True
+        # Absolute path references
+        if url.startswith('/'):
+            return True
+        # Data URIs
+        if url.startswith('data:'):
+            return True
+        # Anything else (text, relative path without leading /, etc.) would be
+        # resolved against the app origin by the browser — not safe to use as-is
+        return False
+
+    def _extract_url_from_text(self, text: str) -> str:
+        """
+        Extract the first http/https URL from a text string.
+
+        Some MCP servers embed the URL inside text like:
+          "GitHub \u2014 https://github.com/..."
+          "check out https://example.com for details"
+
+        Returns the extracted URL, or empty string if none found.
+        """
+        import re
+        match = re.search(r'https?://\S+', text)
+        if match:
+            return match.group(0)
+        return ""
 
     def _extract_sources_from_text(self, text: str) -> list:
         """
@@ -545,20 +594,20 @@ class MCPClientManager:
             if not line:
                 continue
             
-            # Pattern: [N] Title — URL (or - or @ or :)
-            match = re.match(r'\[\s*(\d+)\s*\]\s*(.+?)\s*[—\-\-@:]+\s*(.+)', line)
+            # Pattern 1: [N] Title — URL (em dash separator — most distinctive)
+            match = re.match(r'\[\s*(\d+)\s*\]\s*(.+?)\s*—\s*(.+)', line)
             if match:
-                title = match.group(2).strip()
-                url = match.group(3).strip()
-                sources.append({
-                    "title": title,
-                    "url": url,
-                    "snippet": ""
-                })
-                continue
-            
-            # Pattern: [N] URL (just URL, no title)
-            match = re.match(r'\[\s*(\d+)\s*\]\s*(https?://.+)', line)
+                url = self._extract_url_from_text(match.group(3).strip())
+                if url:
+                    sources.append({
+                        "title": match.group(2).strip(),
+                        "url": url,
+                        "snippet": ""
+                    })
+                    continue
+
+            # Pattern 2: [N] URL (just URL, no title)
+            match = re.match(r'\[\s*(\d+)\s*\]\s*(https?://\S+)', line)
             if match:
                 url = match.group(2).strip()
                 sources.append({
@@ -567,6 +616,21 @@ class MCPClientManager:
                     "snippet": ""
                 })
                 continue
+
+            # Pattern 3: [N] Title —/ - /@/: URL (require http/https in URL portion)
+            # This is a fallback for lines without em dash. The non-greedy match
+            # naturally handles hyphens/colons within titles.
+            match = re.match(r'\[\s*(\d+)\s*\]\s*(.*?)\s*[—\-@:]\s+(https?://\S+)', line)
+            if match:
+                title = match.group(2).strip()
+                url = match.group(3).strip()
+                if url.startswith(('http://', 'https://')):
+                    sources.append({
+                        "title": title if title else url,
+                        "url": url,
+                        "snippet": ""
+                    })
+                    continue
         
         return sources if sources else []
 

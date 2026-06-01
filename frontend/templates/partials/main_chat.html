@@ -655,7 +655,7 @@
 
     <!-- Input Area -->
     <div
-      class="px-4 flex-shrink-0"
+      class="px-4 flex-shrink-0 pb-4"
     >
       <!-- Input Box -->
       <form @submit.prevent="sendMessage()" class="flex gap-3 items-end">
@@ -679,13 +679,5 @@
           <i class="ph ph-paper-plane-right text-lg"></i>
         </button>
       </form>
-
-      <!-- Keyboard hint -->
-      <div
-        class="flex items-center gap-2 mt-2 mb-1 text-xs text-[var(--text-tertiary)]"
-      >
-        <span><kbd class="kbd">Enter</kbd> Send</span>
-        <span><kbd class="kbd">Shift+Enter</kbd> New line</span>
-      </div>
     </div>
   </main>

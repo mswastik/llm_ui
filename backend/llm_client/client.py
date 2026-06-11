@@ -352,43 +352,7 @@ class LLMClient:
         Returns the tools that were set via set_tools().
         """
         return self._tools or []
-    
-    async def generate_title(self, first_message: str, model: str = None) -> str:
-        """
-        Generate a conversation title from the first message.
-        """
-        # Use the provided model or the instance default
-        title_model = model or self.model
-        
-        # Prompt that discourages thinking and emphasizes brevity
-        title_prompt = f"Generate a short 3-5 word title for a conversation that starts with: \"{first_message[:100]}\". Return ONLY the title with no thinking, no reasoning, no quotes, no punctuation."
-        
-        messages = [{"role": "user", "content": title_prompt}]
-        
-        print(f"Generating title with model: {title_model}")
-        title = ""
-        try:
-            async for chunk in self.stream_chat(messages, temperature=0.5, max_tokens=500, model=title_model):
-                if chunk.get("type") == "content":
-                    title += chunk.get("content", "")
-                elif chunk.get("type") == "error":
-                    print(f"Error in title generation: {chunk.get('error')}")
-                    return first_message[:50].strip() or "New Chat"
-        except Exception as e:
-            print(f"Exception in title generation: {e}")
-            return first_message[:50].strip() or "New Chat"
-        
-        # Clean up the title - remove quotes, newlines, and extra whitespace
-        title = title.strip().strip('"\'').replace('\n', ' ').strip()
-        
-        # Only take first 3-5 words if the model rambled
-        words = title.split()
-        if len(words) > 10:
-            title = ' '.join(words[:8])
-        
-        print(f"Generated title: '{title}'")
-        return title or first_message[:50].strip() or "New Chat"
-    
+
     async def complete(
         self,
         messages: List[Dict[str, str]],

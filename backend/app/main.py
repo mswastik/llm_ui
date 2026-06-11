@@ -157,36 +157,49 @@ async def _generate_title_with_model(
     llm_messages: list,
     assistant_message: str,
     llm_client,
-    tools: list = None
+    tools: list = None,
+    model: str = None
 ) -> str:
     """
     Generate a title by appending to the existing conversation messages.
-    KV cache reuses the prefix from the main response (if model supports it).
+    KV cache reuses the prefix from the main response.
     The appended messages are not saved to DB — only the title is returned.
+    The title generation request is built from a copy of llm_messages, so the
+    original is untouched and future requests can still reuse the KV cache.
     """
     title_messages = list(llm_messages)
     title_messages.append({"role": "assistant", "content": assistant_message})
-    title_messages.append({"role": "user", "content": "Generate a very short title (3-6 words) for this conversation. Output ONLY the title, nothing else."})
+    title_messages.append({"role": "user", "content": "Generate a title (3-6 words) for this conversation. No reasoning. Just output the title."})
 
     title = ""
+    thinking = ""
     try:
         async for chunk in llm_client.stream_chat(
             title_messages,
-            temperature=0.3,
-            max_tokens=500,  # Generous budget — thinking models need extra tokens for reasoning before the actual title
-            tools=tools,  # Pass same tools so system prompt rendering is identical
-            tool_choice="none"  # Prevent model from calling tools during title generation
+            model=model,
+            temperature=0.0,
+            max_tokens=1024,
+            tools=tools,
+            tool_choice="none"
         ):
             chunk_type = chunk.get("type")
             if chunk_type == "content":
                 title += chunk.get("content", "")
-            if chunk_type not in ("content", "thinking"):
+            elif chunk_type == "thinking":
+                thinking += chunk.get("content", "")
+            else:
                 print(f"[TITLE GEN] unexpected chunk type: {chunk_type}")
     except Exception as e:
         print(f"Title generation error: {e}")
         return ""
 
-    print(f"[TITLE GEN] raw title from model: '{title[:200]}'")
+    print(f"[TITLE GEN] raw title: '{title[:200]}'")
+    print(f"[TITLE GEN] thinking length: {len(thinking)} chars")
+
+    # If content is empty but thinking has content, the title might be inside thinking
+    if not title.strip() and thinking.strip():
+        title = thinking
+
     title = _strip_thinking(title)
     words = title.split()
     if not words:
@@ -511,7 +524,7 @@ async def _core_stream_handler(
 
                 if user_count == 1 and assistant_count == 1:
                     title = await _generate_title_with_model(
-                        llm_messages, assistant_message, llm_client, tools=all_tools
+                        llm_messages, assistant_message, llm_client, tools=all_tools, model=model
                     )
                     if title:
                         await update_conversation_title(db, conversation_id, title)

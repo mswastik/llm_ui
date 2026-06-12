@@ -446,8 +446,9 @@ class RAGService:
         for i, result in enumerate(results, 1):
             sources.append({
                 "id": i,
+                "type": "chunk",  # Identifies this as a document chunk source
                 "title": f"Document {result.get('document_id', 'Unknown')} - Chunk {result.get('chunk_index', i)}",
-                "url": f"#document-{result.get('document_id', 'unknown')}-{result.get('chunk_index', i)}",
+                "url": f"#chunk-{result.get('document_id', 'unknown')}-{result.get('chunk_index', i)}",
                 "snippet": result.get("content", "")[:300] + "..." if len(result.get("content", "")) > 300 else result.get("content", ""),
                 "chunk_content": result.get("content", "")
             })
@@ -455,12 +456,18 @@ class RAGService:
         return {"results": results, "context": context, "sources": sources}
     
     async def _get_embedding(self, text: str) -> np.ndarray:
-        """Get embedding for text"""
-        return await SharedLLMUtils.get_embedding(text, max_retries=self.config.max_retries)
+        """Get embedding for text using configured embedding model"""
+        from settings import settings_manager
+        settings = settings_manager.get_settings()
+        model = settings.get('embedding_model', 'Qwen3-4B-Embedding')
+        return await SharedLLMUtils.get_embedding(text, model=model, max_retries=self.config.max_retries)
     
     async def _rerank(self, query: str, chunks: List[str]) -> List[int]:
-        """Rerank chunks and return indices in new order"""
-        return await SharedLLMUtils.rerank(query, chunks, max_retries=self.config.max_retries)
+        """Rerank chunks using configured reranking model"""
+        from settings import settings_manager
+        settings = settings_manager.get_settings()
+        model = settings.get('reranking_model', 'Qwen3-4B-Embedding')
+        return await SharedLLMUtils.rerank(query, chunks, model=model, max_retries=self.config.max_retries)
     
     def _format_context(self, results: List[Dict], query: str) -> str:
         """Format search results as context for LLM"""

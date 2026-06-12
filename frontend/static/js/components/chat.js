@@ -30,6 +30,10 @@ const chatComponent = () => ({
   // Expanded state for collapsible blocks
   expandedBlocks: {},
 
+  // Source content modal state
+  selectedSource: null,
+  showSourceModal: false,
+
   // ─── Getters (reactive to store) ──────────────────────
   get messages() {
     // Deduplicate by version_group — keep only the latest version of each group.
@@ -657,6 +661,26 @@ const chatComponent = () => ({
 
   isExpanded(key) {
     return !!this.expandedBlocks[key]
+  },
+
+  handleSourceClick(source) {
+    // For chunk sources (from query_documents), show in modal
+    if (source.type === 'chunk') {
+      this.selectedSource = source
+      this.showSourceModal = true
+      return
+    }
+    
+    // For URL sources (from web search tools) or sources without type, open in new tab
+    // This maintains backward compatibility with external tools that don't set type
+    if (source.url) {
+      window.open(source.url, '_blank', 'noopener')
+    }
+  },
+
+  closeSourceModal() {
+    this.showSourceModal = false
+    this.selectedSource = null
   },
 
   // ─── Formatters ───────────────────────────────────────

@@ -501,10 +501,10 @@
                               >
                                 <li class="text-[var(--text-secondary)]">
                                   <a
-                                    :href="source.url"
-                                    target="_blank"
+                                    @click.prevent="handleSourceClick(source)"
+                                    :href="source.url || '#'"
                                     rel="noopener"
-                                    class="text-[var(--text-link)] hover:underline"
+                                    class="text-[var(--text-link)] hover:underline cursor-pointer"
                                     x-text="source.title || source.url"
                                   ></a>
                                 </li>
@@ -764,5 +764,44 @@
           </button>
         </div>
       </form>
+    </div>
+
+    <!-- Source Content Modal -->
+    <div
+      x-show="showSourceModal"
+      x-cloak
+      @click.self="closeSourceModal()"
+      @keydown.escape.window="closeSourceModal()"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+    >
+      <div class="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+        <!-- Modal Header -->
+        <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
+          <h3 class="font-semibold flex items-center gap-2">
+            <i class="ph ph-file-text text-[var(--accent-primary)]"></i>
+            <span x-text="selectedSource?.title || 'Source Content'"></span>
+          </h3>
+          <button @click="closeSourceModal()" class="btn btn-icon btn-ghost">
+            <i class="ph ph-x text-lg"></i>
+          </button>
+        </div>
+        
+        <!-- Modal Content -->
+        <div class="flex-1 overflow-y-auto px-6 py-4">
+          <div class="prose prose-sm max-w-none text-sm text-[var(--text-primary)]">
+            <p x-html="selectedSource?.chunk_content?.replace(/\n/g, '<br>') || ''"></p>
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-6 py-3 border-t border-[var(--border-primary)] flex justify-between items-center bg-[var(--bg-tertiary)] flex-shrink-0">
+          <div class="text-xs text-[var(--text-tertiary)]">
+            <span x-text="'Document ID: ' + (selectedSource?.title?.split(' - ')[0] || 'Unknown')"></span>
+          </div>
+          <button @click="closeSourceModal()" class="btn btn-primary btn-sm">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   </main>

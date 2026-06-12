@@ -21,11 +21,11 @@ class ToolProgress:
     def __init__(self, tool_name: str):
         self.tool = tool_name
     
-    def start(self, status: str = "Starting..."):
+    async def start(self, status: str = "Starting..."):
         """Yield a start event."""
         yield {"type": "tool_progress", "tool": self.tool, "status": status, "progress": 0}
     
-    def update(self, status: str, progress: int, result=None, data=None):
+    async def update(self, status: str, progress: int, result=None, data=None):
         """Yield an update event."""
         event = {"type": "tool_progress", "tool": self.tool, "status": status, "progress": progress}
         if result is not None:
@@ -34,6 +34,6 @@ class ToolProgress:
             event["data"] = data
         yield event
     
-    def error(self, error: str):
+    async def error(self, error: str):
         """Yield an error event."""
         yield {"type": "tool_error", "tool": self.tool, "error": error}

@@ -23,6 +23,8 @@ DEFAULTS = {
     "llama_cpp_base_url": os.getenv("LLAMA_CPP_URL", "http://localhost:8001/v3"),
     "llama_cpp_model": os.getenv("LLAMA_CPP_MODEL", "qwen3-4b"),
     "query_model": os.getenv("QUERY_MODEL", "qwen3-4b"),
+    "embedding_model": os.getenv("EMBEDDING_MODEL", "Qwen3-4B-Embedding"),
+    "reranking_model": os.getenv("RERANKING_MODEL", "Qwen3-4B-Embedding"),
 
     # Application Settings
     "app_host": os.getenv("APP_HOST", "0.0.0.0"),
@@ -79,6 +81,8 @@ class Settings(BaseModel):
     llama_cpp_base_url: str = Field(default=DEFAULTS["llama_cpp_base_url"], description="Base URL for llama.cpp server")
     llama_cpp_model: str = Field(default=DEFAULTS["llama_cpp_model"], description="Default model for llama.cpp")
     query_model: str = Field(default=DEFAULTS["query_model"], description="Model used for query processing and title generation")
+    embedding_model: str = Field(default=DEFAULTS["embedding_model"], description="Model used for document embeddings in RAG")
+    reranking_model: str = Field(default=DEFAULTS["reranking_model"], description="Model used for reranking search results")
 
     # Application Settings
     app_host: str = Field(default=DEFAULTS["app_host"], description="Host address for the application")
@@ -124,6 +128,8 @@ DATABASE_URL = None
 LLAMA_CPP_BASE_URL = None
 LLAMA_CPP_MODEL = None
 QUERY_MODEL = None
+EMBEDDING_MODEL = None
+RERANKING_MODEL = None
 APP_HOST = None
 APP_PORT = None
 DEBUG = None
@@ -143,6 +149,7 @@ BACKUP_MAX_KEEP = None
 def _update_module_constants(settings_mgr):
     """Update module-level constants from settings manager"""
     global DATABASE_URL, LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
+    global EMBEDDING_MODEL, RERANKING_MODEL
     global APP_HOST, APP_PORT, DEBUG, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
     global MAX_UPLOAD_SIZE, UPLOAD_DIR, CORS_ORIGINS, SYSTEM_PROMPT, SQLALCHEMY_ECHO
     global BACKUP_ENABLED, BACKUP_PATH, BACKUP_INTERVAL_HOURS, BACKUP_MAX_KEEP
@@ -151,6 +158,8 @@ def _update_module_constants(settings_mgr):
     LLAMA_CPP_BASE_URL = settings_mgr.settings.llama_cpp_base_url
     LLAMA_CPP_MODEL = settings_mgr.settings.llama_cpp_model
     QUERY_MODEL = settings_mgr.settings.query_model
+    EMBEDDING_MODEL = settings_mgr.settings.embedding_model
+    RERANKING_MODEL = settings_mgr.settings.reranking_model
     APP_HOST = settings_mgr.settings.app_host
     APP_PORT = settings_mgr.settings.app_port
     DEBUG = settings_mgr.settings.debug
@@ -198,6 +207,10 @@ class SettingsManager:
             os.environ['LLAMA_CPP_MODEL'] = new_settings['llama_cpp_model']
         if 'query_model' in new_settings:
             os.environ['QUERY_MODEL'] = new_settings['query_model']
+        if 'embedding_model' in new_settings:
+            os.environ['EMBEDDING_MODEL'] = new_settings['embedding_model']
+        if 'reranking_model' in new_settings:
+            os.environ['RERANKING_MODEL'] = new_settings['reranking_model']
         if 'app_host' in new_settings:
             os.environ['APP_HOST'] = new_settings['app_host']
         if 'app_port' in new_settings:
@@ -272,6 +285,10 @@ class SettingsManager:
                     os.environ['LLAMA_CPP_MODEL'] = saved_settings['llama_cpp_model']
                 if 'query_model' in saved_settings:
                     os.environ['QUERY_MODEL'] = saved_settings['query_model']
+                if 'embedding_model' in saved_settings:
+                    os.environ['EMBEDDING_MODEL'] = saved_settings['embedding_model']
+                if 'reranking_model' in saved_settings:
+                    os.environ['RERANKING_MODEL'] = saved_settings['reranking_model']
                 if 'app_host' in saved_settings:
                     os.environ['APP_HOST'] = saved_settings['app_host']
                 if 'app_port' in saved_settings:

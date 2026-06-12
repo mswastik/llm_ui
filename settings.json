@@ -3,6 +3,8 @@
   "llama_cpp_base_url": "http://localhost:8080",
   "llama_cpp_model": "qwen36-35B",
   "query_model": "qwen36-35B",
+  "embedding_model": "Qwen3-4B-Embedding",
+  "reranking_model": "Qwen3-4B-Embedding",
   "app_host": "localhost",
   "app_port": 8002,
   "debug": false,

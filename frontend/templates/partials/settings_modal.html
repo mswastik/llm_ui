@@ -171,6 +171,28 @@
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Embedding Model</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.embedding_model"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Reranking Model</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.reranking_model"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Temperature</label
               >
               <input

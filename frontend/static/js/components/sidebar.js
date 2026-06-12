@@ -116,6 +116,9 @@ const sidebar = () => ({
       this.$store.chat.setAgent(convAgentId)
       this.$store.chat.applyAgentConfig()
       window.dispatchEvent(new CustomEvent('sync-agent', { detail: { agentId: convAgentId } }))
+
+      // Notify chat component to focus the input
+      window.dispatchEvent(new CustomEvent('conversation-loaded'))
     } catch (e) {
       this.$store.ui.showToast('Failed to load conversation', 'error')
     }
@@ -211,10 +214,31 @@ const sidebar = () => ({
 
   // ─── Helpers ──────────────────────────────────────────
   normalizeMessages(messages) {
-    return messages.map(msg => {
+    // Deduplicate by version_group — keep only the latest version of each group.
+    // This ensures consistent visual layout during live chat and after refresh.
+    const deduped = []
+    const seen = {}
+    for (const raw of messages) {
+      const vg = raw.version_group
+      if (!vg) {
+        deduped.push(raw)
+      } else if (vg in seen) {
+        const idx = seen[vg]
+        if ((raw.version || 1) > (deduped[idx].version || 1)) {
+          deduped[idx] = raw
+        }
+      } else {
+        seen[vg] = deduped.length
+        deduped.push(raw)
+      }
+    }
+
+    return deduped.map(msg => {
+      // Extract files from metadata if not already on the message
+      const files = msg.files || (msg.metadata?.files) || []
       const blocks = msg.blocks || (msg.metadata?.blocks)
       if (blocks?.length) {
-        return { ...msg, blocks, tool_calls: msg.tool_calls || [] }
+        return { ...msg, files, blocks, tool_calls: msg.tool_calls || [] }
       }
       const blocksArr = []
       if (msg.thinking) {
@@ -238,7 +262,7 @@ const sidebar = () => ({
       if (msg.content) {
         blocksArr.push({ type: 'content', content: msg.content })
       }
-      return { ...msg, blocks: blocksArr.length ? blocksArr : null, tool_calls: msg.tool_calls || [] }
+      return { ...msg, files, blocks: blocksArr.length ? blocksArr : null, tool_calls: msg.tool_calls || [] }
     })
   },
 

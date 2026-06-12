@@ -131,123 +131,61 @@
 
       <!-- Messages -->
       <template x-for="(message, msgIndex) in messages" :key="message.id">
-        <div
-          class="message-enter"
-          :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'"
-        >
+        <!-- Flex row: justify-end pushes user bubbles right, justify-start pushes assistant left -->
+        <div class="message-enter group flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
           <div
-            class="max-w-[85%] md:max-w-[75%] group relative"
+            class="min-w-[180px] max-w-[85%] md:max-w-[75%]"
             :class="message.role === 'user' ? 'message-user' : 'message-assistant'"
           >
-            <!-- Message Actions -->
-            <div
-              class="absolute -top-2 right-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-            >
-              <button
-                @click="copyMessage(message)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Copy"
-                :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'"
-              >
-                <i class="ph ph-copy text-sm"></i>
-              </button>
-              <template x-if="message.role === 'assistant'">
-                <button
-                  @click="regenerate(message.id)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Regenerate"
-                  :disabled="isLoading"
-                  :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)]'"
+            <!-- Content wrapper: keeps width/height stable by always having content in layout -->
+            <div style="position: relative;">
+              <!-- Message Content (always in DOM — opacity hides it during edit without losing layout space) -->
+              <div class="p-4 pb-2" :class="[
+                editingMessageId === message.id ? 'opacity-0 pointer-events-none' : '',
+                message.files?.length > 0 ? 'pt-2' : ''
+              ]">
+                <template
+                  x-if="message.role === 'user' && message.files?.length > 0"
                 >
-                  <i class="ph ph-arrow-clockwise text-sm"></i>
-                </button>
-              </template>
-              <template x-if="message.role === 'assistant'">
-                <button
-                  @click="speakMessage(message)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Read aloud"
-                  :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)]'"
-                >
-                  <i
-                    class="ph ph-speaker-high text-sm"
-                    x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
-                  ></i>
-                  <i
-                    class="ph ph-pause text-sm"
-                    x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-                  ></i>
-                </button>
-              </template>
-              <!-- Take Note Button -->
-              <template x-if="message.role === 'assistant' && message.content?.trim()">
-                <button
-                  @click="takeNote(message)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Take note"
-                  :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)]'"
-                >
-                  <i class="ph ph-notebook text-sm"></i>
-                </button>
-              </template>
-              <template
-                x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-              >
-                <button
-                  @click="stopAudio()"
-                  class="btn btn-icon btn-ghost text-xs text-[var(--error)] hover:text-[var(--error)]"
-                  title="Stop"
-                >
-                  <i class="ph ph-stop text-sm"></i>
-                </button>
-              </template>
-              <button
-                @click="startEdit(message.id, message.content)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Edit"
-                :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] hover:bg-[var(--bg-hover)]'"
-              >
-                <i class="ph ph-pencil-simple text-sm"></i>
-              </button>
-              <button
-                @click="deleteMessage(message.id, $event)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Delete"
-                :class="message.role === 'user' ? 'text-white/70 hover:text-white hover:bg-white/20' : 'text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--error-bg)]'"
-              >
-                <i class="ph ph-trash text-sm"></i>
-              </button>
-            </div>
+                  <div class="flex flex-wrap gap-2 -mt-2 pb-2">
+                    <template x-for="(f, fi) in message.files" :key="'uf-' + fi">
+                      <template x-if="f.type?.startsWith('image/')">
+                        <a :href="f.url" target="_blank" class="block rounded-lg overflow-hidden border border-[var(--border-primary)] hover:opacity-90 transition-opacity max-w-[200px]">
+                          <img :src="f.url" :alt="f.filename" class="w-full h-auto object-cover max-h-[200px]" loading="lazy" />
+                        </a>
+                      </template>
+                      <template x-if="!f.type?.startsWith('image/')">
+                        <a :href="f.url" target="_blank" class="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2 text-xs text-white/80 hover:text-white hover:bg-white/30 transition-colors">
+                          <i :class="'ph ' + getFileIcon(f.type) + ' text-base'"></i>
+                          <span class="truncate max-w-[120px]" x-text="f.filename"></span>
+                          <span class="opacity-60" x-text="formatFileSize(f.size)"></span>
+                        </a>
+                      </template>
+                    </template>
+                  </div>
+                </template>
 
-            <!-- Edit Mode -->
-            <template x-if="editingMessageId === message.id">
-              <div class="p-4">
-                <textarea
-                  x-model="editContent"
-                  rows="3"
-                  class="input w-full text-sm resize-none"
-                  placeholder="Edit your message..."
-                ></textarea>
-                <div class="flex gap-2 mt-2">
-                  <button
-                    @click="saveEdit(message.id)"
-                    class="btn btn-primary btn-sm"
-                  >
-                    Save
-                  </button>
-                  <button
-                    @click="cancelEdit()"
-                    class="btn btn-secondary btn-sm"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </template>
+                <!-- Version Pills -->
+                <!-- Version Pills -->
+                <template
+                  x-if="message.role === 'assistant' && message.version_group && (message.max_version || message.version) > 1"
+                >
+                  <div class="mb-2 flex items-center gap-1.5">
+                    <span class="text-xs text-[var(--text-tertiary)]">versions:</span>
+                    <template
+                      x-for="v in Array.from({length: message.max_version || message.version}, (_, i) => i + 1)"
+                      :key="'v-' + message.id + '-' + v"
+                    >
+                      <button
+                        @click="switchVersion(message.id, v)"
+                        class="badge text-xs cursor-pointer transition-all"
+                        :class="v === message.version ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
+                        x-text="'v' + v"
+                      ></button>
+                    </template>
+                  </div>
+                </template>
 
-            <!-- Message Content -->
-            <template x-if="editingMessageId !== message.id">
-              <div class="p-4">
                 <!-- Model Badge -->
                 <template
                   x-if="message.role === 'assistant' && message.metadata?.model"
@@ -589,7 +527,101 @@
                   ></div>
                 </template>
               </div>
-            </template>
+              <!-- Edit Mode (absolutely positioned overlay, sibling of content — not affected by content's opacity) -->
+              <div class="p-4 absolute inset-0 z-[1]" :class="{'invisible-keep-layout': editingMessageId !== message.id}">
+                <textarea
+                  x-model="editContent"
+                  rows="3"
+                  class="input w-full text-sm resize-none"
+                  placeholder="Edit your message..."
+                ></textarea>
+                <div class="flex gap-2 mt-2">
+                  <button
+                    @click="saveEdit(message.id)"
+                    class="btn btn-primary btn-sm"
+                  >
+                    Save
+                  </button>
+                  <button
+                    @click="cancelEdit()"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Message Actions at bottom of bubble -->
+            <div class="px-4 pb-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" :class="message.role === 'user' ? 'border-t border-white/20' : 'border-t border-[var(--border-primary)]/30'">
+              <button
+                @click="copyMessage(message)"
+                class="btn btn-icon btn-ghost text-xs"
+                title="Copy"
+              >
+                <i class="ph ph-copy text-sm"></i>
+              </button>
+              <template x-if="message.role === 'assistant'">
+                <button
+                  @click="regenerate(message.id)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Regenerate"
+                  :disabled="isLoading"
+                >
+                  <i class="ph ph-arrow-clockwise text-sm"></i>
+                </button>
+              </template>
+              <template x-if="message.role === 'assistant'">
+                <button
+                  @click="speakMessage(message)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Read aloud"
+                >
+                  <i
+                    class="ph ph-speaker-high text-sm"
+                    x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
+                  ></i>
+                  <i
+                    class="ph ph-pause text-sm"
+                    x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                  ></i>
+                </button>
+              </template>
+              <template x-if="message.role === 'assistant' && message.content?.trim()">
+                <button
+                  @click="takeNote(message)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Take note"
+                >
+                  <i class="ph ph-notebook text-sm"></i>
+                </button>
+              </template>
+              <template
+                x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+              >
+                <button
+                  @click="stopAudio()"
+                  class="btn btn-icon btn-ghost text-xs text-[var(--error)]"
+                  title="Stop"
+                >
+                  <i class="ph ph-stop text-sm"></i>
+                </button>
+              </template>
+              <button
+                @click="startEdit(message.id, message.content)"
+                class="btn btn-icon btn-ghost text-xs"
+                title="Edit"
+              >
+                <i class="ph ph-pencil-simple text-sm"></i>
+              </button>
+              <button
+                @click="deleteMessage(message.id, $event)"
+                class="btn btn-icon btn-ghost text-xs"
+                title="Delete"
+              >
+                <i class="ph ph-trash text-sm"></i>
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -657,27 +689,80 @@
     <div
       class="px-4 flex-shrink-0 pb-4"
     >
+      <!-- File Preview Bar -->
+      <template x-if="attachedFiles.length > 0">
+        <div class="flex flex-wrap gap-2 mb-2 px-0.5">
+          <template x-for="(file, idx) in attachedFiles" :key="'file-' + idx">
+            <div class="relative group flex items-center gap-1.5 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg px-2 py-1.5 text-xs max-w-[200px]">
+              <!-- Image thumbnail -->
+              <template x-if="file.preview">
+                <img :src="file.preview" class="w-8 h-8 rounded object-cover flex-shrink-0" />
+              </template>
+              <template x-if="!file.preview">
+                <i :class="'ph ' + getFileIcon(file.type) + ' text-base text-[var(--text-tertiary)]'"></i>
+              </template>
+              <div class="min-w-0 flex-1">
+                <div class="truncate font-medium" x-text="file.filename"></div>
+                <div class="text-[var(--text-tertiary)]" x-text="formatFileSize(file.size)"></div>
+              </div>
+              <!-- Uploading spinner -->
+              <template x-if="file.uploading">
+                <i class="ph ph-spinner animate-spin text-sm text-[var(--accent-primary)]"></i>
+              </template>
+              <!-- Remove button -->
+              <button @click="removeFile(idx)" class="btn btn-icon btn-ghost text-xs p-0.5 absolute -top-1.5 -right-1.5 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="Remove">
+                <i class="ph ph-x text-xs"></i>
+              </button>
+            </div>
+          </template>
+        </div>
+      </template>
+
       <!-- Input Box -->
       <form @submit.prevent="sendMessage()" class="flex gap-3 items-end">
+        <!-- Hidden file input -->
+        <input
+          type="file"
+          x-ref="fileInput"
+          @change="handleFileSelect($event)"
+          multiple
+          accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xls,.xlsx,.py,.js,.ts,.html,.css"
+          class="hidden"
+        />
+
         <textarea
           x-model="inputMessage"
+          x-ref="chatInput"
           @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
+          @focus="isFocused = true"
+          @blur="isFocused = false"
           placeholder="Type a message... (Shift+Enter for new line)"
-          rows="1"
-          class="input flex-1 resize-none min-h-[40px] focus:min-h-[104px] transition-[min-height] duration-150"
-          style="max-height: 200px"
+          class="input flex-1 resize-none transition-[min-height] duration-200"
+          :style="`min-height: ${isLoading || (!isFocused && messages.length > 0) ? '44px' : '120px'}; max-height: 200px`"
           :disabled="isLoading"
-          id="chat-input"
         ></textarea>
 
-        <button
-          type="submit"
-          :disabled="!inputMessage.trim() || isLoading"
-          class="btn btn-primary h-[44px] w-[44px] p-0 flex-shrink-0"
-          title="Send"
-        >
-          <i class="ph ph-paper-plane-right text-lg"></i>
-        </button>
+        <div class="flex gap-2 items-end flex-shrink-0">
+          <!-- Attach button -->
+          <button
+            type="button"
+            @click="triggerFileUpload()"
+            :disabled="isLoading || isUploading"
+            class="btn btn-icon btn-ghost h-[44px] w-[44px] p-0"
+            title="Attach files"
+          >
+            <i class="ph ph-paperclip text-lg"></i>
+          </button>
+
+          <button
+            type="submit"
+            :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isLoading || isUploading"
+            class="btn btn-primary h-[44px] w-[44px] p-0"
+            title="Send"
+          >
+            <i class="ph ph-paper-plane-right text-lg"></i>
+          </button>
+        </div>
       </form>
     </div>
   </main>

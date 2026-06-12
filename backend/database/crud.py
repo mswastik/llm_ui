@@ -99,13 +99,17 @@ async def add_message(
     role: str,
     content: str,
     blocks: Optional[List[Dict]] = None,
-    extra_metadata: Optional[Dict] = None
+    extra_metadata: Optional[Dict] = None,
+    version: int = 1,
+    version_group: Optional[str] = None
 ) -> Dict:
     """Add a message to a conversation.
     
     Args:
         blocks: List of message blocks (content, thinking, tool_call) in sequential order
         extra_metadata: Additional metadata (blocks will be stored here under 'blocks' key)
+        version: Message version number (for versioned regeneration)
+        version_group: UUID shared by all versions of the same response
     
     For backward compatibility, thinking and tool_calls are also extracted and stored
     in their respective columns.
@@ -155,7 +159,9 @@ async def add_message(
         content=content,
         tool_calls=tool_calls,
         thinking=thinking,
-        extra_metadata=metadata
+        extra_metadata=metadata,
+        version=version,
+        version_group=version_group
     )
     db.add(message)
 
@@ -178,15 +184,23 @@ async def add_message(
         "thinking": message.thinking,
         "metadata": message.extra_metadata,
         "blocks": message.extra_metadata.get('blocks') if message.extra_metadata else None,
+        "version": message.version,
+        "version_group": message.version_group,
         "created_at": message.created_at.isoformat(),
     }
 
 
 async def get_conversation_messages(
     db: AsyncSession,
-    conversation_id: str
+    conversation_id: str,
+    only_latest_versions: bool = True
 ) -> List[Dict]:
     """Get all messages for a conversation.
+    
+    Args:
+        only_latest_versions: If True, filters to show only the latest version
+                              of each version_group. Messages without a version_group
+                              are always included.
     
     Returns messages with blocks from metadata for sequential rendering.
     """
@@ -196,6 +210,26 @@ async def get_conversation_messages(
         .order_by(Message.created_at)
     )
     messages = result.scalars().all()
+    
+    # Filter to keep only the latest version of each version_group
+    if only_latest_versions:
+        filtered = []
+        seen_groups = {}  # version_group -> (index_in_filtered, version)
+        for msg in messages:
+            vg = msg.version_group
+            if vg is None:
+                # No version_group (legacy message or single-version) — always include
+                filtered.append(msg)
+            elif vg in seen_groups:
+                idx, existing_version = seen_groups[vg]
+                if msg.version > existing_version:
+                    # Replace with newer version
+                    filtered[idx] = msg
+                    seen_groups[vg] = (idx, msg.version)
+            else:
+                seen_groups[vg] = (len(filtered), msg.version)
+                filtered.append(msg)
+        messages = filtered
 
     return [
         {
@@ -206,9 +240,52 @@ async def get_conversation_messages(
             "thinking": msg.thinking,
             "metadata": msg.extra_metadata,
             "blocks": msg.extra_metadata.get('blocks') if msg.extra_metadata else None,
+            "version": msg.version,
+            "version_group": msg.version_group,
             "created_at": msg.created_at.isoformat(),
         }
         for msg in messages
+    ]
+
+
+async def get_message_versions(db: AsyncSession, message_id: str) -> List[Dict]:
+    """Get all versions of a message by finding its version_group.
+    Returns empty list if the message has no version_group.
+    """
+    # First get the message to find its version_group
+    result = await db.execute(
+        select(Message).where(Message.id == message_id)
+    )
+    msg = result.scalar_one_or_none()
+    
+    if not msg or not msg.version_group:
+        return []
+    
+    # Get all messages in the same version_group
+    result = await db.execute(
+        select(Message)
+        .where(
+            Message.version_group == msg.version_group,
+            Message.conversation_id == msg.conversation_id
+        )
+        .order_by(Message.version)
+    )
+    versions = result.scalars().all()
+    
+    return [
+        {
+            "id": v.id,
+            "role": v.role,
+            "content": v.content,
+            "tool_calls": v.tool_calls,
+            "thinking": v.thinking,
+            "metadata": v.extra_metadata,
+            "blocks": v.extra_metadata.get('blocks') if v.extra_metadata else None,
+            "version": v.version,
+            "version_group": v.version_group,
+            "created_at": v.created_at.isoformat(),
+        }
+        for v in versions
     ]
 
 
@@ -448,6 +525,8 @@ async def get_message(db: AsyncSession, message_id: str) -> Optional[Dict]:
         "tool_calls": message.tool_calls,
         "thinking": message.thinking,
         "metadata": message.extra_metadata,
+        "version": message.version,
+        "version_group": message.version_group,
         "created_at": message.created_at.isoformat(),
     }
 

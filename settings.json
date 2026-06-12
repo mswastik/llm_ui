@@ -14,7 +14,7 @@
   "default_max_tokens": 89603,
   "sqlalchemy_echo": false,
   "backup_enabled": true,
-  "backup_path": "C:\\Users\\smishra14\\OneDrive\\Apps\\llm_ui-backups",
+  "backup_path": "/home/swastik/OneDrive/Apps/llm_ui-backups",
   "backup_interval_hours": 2,
   "backup_max_keep": 24,
   "tts_engine": "pyttsx3",

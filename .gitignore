@@ -5,3 +5,4 @@ uploads/*
 .playwright/
 .playwright-cli/
 graphify-out/
+.vscode/

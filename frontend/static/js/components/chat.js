@@ -20,12 +20,38 @@ const chatComponent = () => ({
   documents: [],
   currentConversationTitle: 'New Chat',
 
+  // Input focus state for expanded input sizing
+  isFocused: false,
+
+  // Attached files before sending
+  attachedFiles: [],
+  isUploading: false,
+
   // Expanded state for collapsible blocks
   expandedBlocks: {},
 
   // ─── Getters (reactive to store) ──────────────────────
   get messages() {
-    return this.$store.chat.messages || []
+    // Deduplicate by version_group — keep only the latest version of each group.
+    // This ensures consistent visual layout during live chat and after refresh.
+    const raw = this.$store.chat.messages || []
+    const seen = {}
+    const result = []
+    for (const msg of raw) {
+      const vg = msg.version_group
+      if (!vg) {
+        result.push(msg)
+      } else if (vg in seen) {
+        const idx = seen[vg]
+        if (msg.version > result[idx].version) {
+          result[idx] = msg
+        }
+      } else {
+        seen[vg] = result.length
+        result.push(msg)
+      }
+    }
+    return result
   },
   set messages(val) {
     this.$store.chat.messages = val
@@ -49,6 +75,18 @@ const chatComponent = () => ({
 
     window.addEventListener('sync-agent', (e) => {
       this.selectedAgentId = e.detail.agentId
+    })
+
+    // Focus input when a conversation is loaded (new chat or switching conversations)
+    window.addEventListener('conversation-loaded', () => {
+      this.$nextTick(() => {
+        this.$refs?.chatInput?.focus()
+      })
+    })
+
+    // Auto-focus the chat input on init
+    this.$nextTick(() => {
+      this.$refs?.chatInput?.focus()
     })
   },
 
@@ -100,14 +138,98 @@ const chatComponent = () => ({
     }
   },
 
+  // ─── File Upload ──────────────────────────────────────
+  triggerFileUpload() {
+    this.$refs.fileInput?.click()
+  },
+
+  handleFileSelect(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    const remaining = 10 - this.attachedFiles.length
+    files.slice(0, remaining).forEach(f => {
+      this.attachedFiles.push({
+        file: f,
+        preview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null,
+        filename: f.name,
+        type: f.type,
+        size: f.size,
+        uploading: false,
+        uploaded: false,
+        url: null,
+        error: null
+      })
+    })
+    e.target.value = ''
+  },
+
+  removeFile(idx) {
+    const item = this.attachedFiles[idx]
+    if (item?.preview) URL.revokeObjectURL(item.preview)
+    this.attachedFiles.splice(idx, 1)
+  },
+
+  async uploadAttachedFiles() {
+    const toUpload = this.attachedFiles.filter(f => !f.uploaded && !f.uploading)
+    if (!toUpload.length) return []
+    this.isUploading = true
+    const results = []
+    for (const item of toUpload) {
+      item.uploading = true
+      try {
+        const formData = new FormData()
+        formData.append('file', item.file)
+        const res = await fetch('/api/upload/chat-file', { method: 'POST', body: formData })
+        if (!res.ok) throw new Error('Upload failed')
+        const data = await res.json()
+        item.uploaded = true
+        item.uploading = false
+        item.url = data.url
+        results.push({ url: data.url, filename: data.filename, type: data.type, size: data.size })
+        if (item.preview) URL.revokeObjectURL(item.preview)
+      } catch (e) {
+        item.error = e.message
+        item.uploading = false
+        this.$store.ui.showToast(`Upload failed: ${item.filename}`, 'error')
+      }
+    }
+    this.isUploading = false
+    return results
+  },
+
+  isImageType(type) {
+    return type?.startsWith('image/')
+  },
+
+  formatFileSize(bytes) {
+    return formatters.formatFileSize(bytes)
+  },
+
+  getFileIcon(type) {
+    if (type?.startsWith('image/')) return 'ph-file-image'
+    if (type?.includes('pdf')) return 'ph-file-pdf'
+    if (type?.includes('spreadsheet') || type?.includes('excel')) return 'ph-file-xls'
+    if (type?.includes('word') || type?.includes('document')) return 'ph-file-doc'
+    if (type?.includes('text') || type?.includes('json')) return 'ph-file-text'
+    return 'ph-file'
+  },
+
   // ─── Send Message ─────────────────────────────────────
   async sendMessage() {
     const text = this.inputMessage?.trim()
-    if (!text || this.isLoading) return
+    const hasFiles = this.attachedFiles.length > 0
+    if (!text && !hasFiles) return
+    if (this.isLoading || this.isUploading) return
 
     this.inputMessage = ''
     this.isLoading = true
     this.$store.chat.isLoading = true
+
+    // Upload attached files first
+    let uploadedFiles = []
+    if (hasFiles) {
+      uploadedFiles = await this.uploadAttachedFiles()
+    }
 
     // Auto-create conversation if none selected
     let conversationId = this.$store.chat.currentConversationId
@@ -128,19 +250,26 @@ const chatComponent = () => ({
       }
     }
 
-    // Add user message
+    // Add user message with file metadata
     const userMsg = {
       id: helpers.generateId(),
       role: 'user',
       content: text,
+      files: uploadedFiles,
       created_at: new Date().toISOString()
     }
     this.$store.chat.addMessage(userMsg)
+    this.attachedFiles = []  // Clear attachments
 
     try {
       const data = await api.post(
         `/api/conversations/${conversationId}/messages`,
-        { message: text, enable_rag: this.isRAGActive, document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds }
+        { 
+          message: text, 
+          enable_rag: this.isRAGActive, 
+          document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
+          files: uploadedFiles
+        }
       )
       await this.streamResponse(data.request_id)
     } catch (e) {
@@ -273,6 +402,10 @@ const chatComponent = () => ({
         this.isLoading = false
         this.$store.chat.isLoading = false
         this.$store.chat.toolStatus.active = false
+        // Re-focus input after streaming completes
+        this.$nextTick(() => {
+          this.$refs?.chatInput?.focus()
+        })
         break
     }
 
@@ -373,28 +506,38 @@ const chatComponent = () => ({
     this.isLoading = true
     this.$store.chat.isLoading = true
 
+    // Store the old message before removing it (for potential version switching)
+    const oldMsg = this.messages.find(m => m.id === id)
+
     try {
       const data = await api.post(
         `/api/conversations/${this.$store.chat.currentConversationId}/regenerate`,
         { message_id: id }
       )
 
-      // Remove assistant message being regenerated
+      // Remove the old assistant message from display (it stays in DB as a prior version)
       const idx = this.messages.findIndex(m => m.id === id)
       if (idx !== -1) {
-        this.$store.chat.messages = this.$store.chat.messages.slice(0, idx + 1)
+        this.$store.chat.messages = this.$store.chat.messages.slice(0, idx)
         this.messages = [...this.$store.chat.messages]
       }
 
       const newMsg = {
         id: helpers.generateId(), role: 'assistant', content: '',
-        blocks: [], created_at: new Date().toISOString()
+        blocks: [], created_at: new Date().toISOString(),
+        version: data.version || 1,
+        version_group: data.version_group || null,
+        max_version: data.version || 1  // Total version count (all pills shown up to this)
       }
       this.$store.chat.addMessage(newMsg)
       const newIdx = this.messages.length - 1
 
+      // Pass version info to SSE stream for backend to save correctly
       const handlers = sseService.stream(data.request_id, this.$store.chat.currentConversationId, {
-        model: this.selectedModel
+        model: this.selectedModel,
+        isRegenerate: true,
+        version: data.version,
+        versionGroup: data.version_group
       })
       handlers.onData((d) => this.processEvent(d, newIdx))
     } catch (e) {
@@ -402,6 +545,37 @@ const chatComponent = () => ({
       this.isLoading = false
       this.$store.chat.isLoading = false
       this.$store.ui.showToast('Failed to regenerate', 'error')
+    }
+  },
+
+  async switchVersion(messageId, version) {
+    // Find the message in the current list
+    const msg = this.messages.find(m => m.id === messageId)
+    if (!msg || !msg.version_group) return
+
+    try {
+      // Use version_group to fetch all versions (avoids frontend/backend ID mismatch)
+      const data = await api.get(`/api/versions/${encodeURIComponent(msg.version_group)}`)
+      const versions = data.versions || []
+      const targetVersion = versions.find(v => v.version === version)
+      if (!targetVersion) return
+
+      // Determine the highest version number (for max_version)
+      const maxVer = versions.reduce((max, v) => Math.max(max, v.version || 1), 1)
+
+      // Swap the message content with the target version
+      msg.content = targetVersion.content
+      msg.version = targetVersion.version
+      msg.max_version = maxVer
+      msg.blocks = targetVersion.blocks || []
+      msg.tool_calls = targetVersion.tool_calls
+      msg.thinking = targetVersion.thinking
+
+      // Force reactivity
+      this.messages = [...this.$store.chat.messages]
+    } catch (e) {
+      console.error('[chat] Switch version:', e)
+      this.$store.ui.showToast('Failed to switch version', 'error')
     }
   },
 
@@ -415,6 +589,10 @@ const chatComponent = () => ({
       last.content = '⚠️ Request cancelled.'
     }
     this.$store.ui.showToast('Request cancelled', 'info')
+    // Re-focus input after cancellation
+    this.$nextTick(() => {
+      this.$refs?.chatInput?.focus()
+    })
   },
 
   // ─── Take Note ────────────────────────────────────────

@@ -46,6 +46,10 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Versioning for regeneration
+    version = Column(Integer, default=1)
+    version_group = Column(String, nullable=True)  # UUID shared by all versions of the same response
+
     # Store thinking content from reasoning models (e.g., DeepSeek)
     thinking = Column(Text, nullable=True)
 
@@ -174,6 +178,29 @@ async def init_db():
         print("[DB] Migrated mcp_servers: added disabled_tools column")
     except OperationalError:
         # Column already exists — that's fine
+        pass
+
+    # ── Migration: add version/version_group columns to messages ────────
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE messages ADD COLUMN version INTEGER DEFAULT 1"
+                )
+            )
+        print("[DB] Migrated messages: added version column")
+    except OperationalError:
+        pass
+
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE messages ADD COLUMN version_group VARCHAR"
+                )
+            )
+        print("[DB] Migrated messages: added version_group column")
+    except OperationalError:
         pass
 
 

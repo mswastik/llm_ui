@@ -25,7 +25,8 @@ from database.crud import (
     add_mcp_server, get_all_mcp_servers, get_enabled_mcp_servers,
     toggle_mcp_server, remove_mcp_server, update_mcp_server_disabled_tools,
     update_conversation_tags, update_conversation_agent,
-    create_note, get_all_notes, delete_note, get_notes_for_conversation
+    create_note, get_all_notes, delete_note, get_notes_for_conversation,
+    get_message_versions
 )
 from mcp_client.client import MCPClientManager, MCPServerConfig
 from tools.tool_executor import ToolExecutor
@@ -51,6 +52,9 @@ app = FastAPI(title="LLM UI with MCP Support", lifespan=lifespan)
 
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+# Mount uploads directory so uploaded files are publicly accessible
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 templates = Jinja2Templates(directory="frontend/templates")
 
 # Initialize components
@@ -129,19 +133,24 @@ async def send_message(conversation_id: str, request: Request):
     user_message = data.get("message", "")
     enable_rag = data.get("enable_rag", False)
     document_ids = data.get("document_ids")
+    files = data.get("files", [])  # [{url, filename, type, size}]
 
-    if not user_message.strip():
+    if not user_message.strip() and not files:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    # Build message content with file references included
+    message_content = user_message
+    
     async with get_db() as db:
-        await add_message(db, conversation_id, "user", user_message)
+        await add_message(db, conversation_id, "user", message_content, extra_metadata={"files": files} if files else None)
         request_id = str(uuid.uuid4())
 
         return {
             "request_id": request_id,
             "status": "processing",
             "enable_rag": enable_rag,
-            "document_ids": document_ids
+            "document_ids": document_ids,
+            "files": files
         }
 
 
@@ -215,9 +224,16 @@ async def _core_stream_handler(
     conversation_id: str,
     enable_rag: bool = False,
     model: Optional[str] = None,
-    document_ids: Optional[list] = None
+    document_ids: Optional[list] = None,
+    version: int = 1,
+    version_group: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
-    """Universal SSE handler for streaming LLM responses and tool execution."""
+    """Universal SSE handler for streaming LLM responses and tool execution.
+    
+    Args:
+        version: Version number for regenerated responses
+        version_group: UUID shared by all versions of the same response
+    """
     current_document_ids.set(document_ids)
     try:
         async with get_db() as db:
@@ -259,7 +275,44 @@ async def _core_stream_handler(
                 system_prompt_content = f"You are a helpful AI assistant. Current date: {current_date}"
             
             messages = await get_conversation_messages(db, conversation_id)
-            llm_messages = [{"role": msg["role"], "content": msg["content"]} for msg in messages]
+            # Build LLM messages — convert user messages with file attachments to multimodal format
+            llm_messages = []
+            for msg in messages:
+                role = msg["role"]
+                content = msg["content"]
+                metadata = msg.get("metadata") or {}
+                files = metadata.get("files", [])
+                
+                if role == "user" and files:
+                    content_parts = []
+                    if content.strip():
+                        content_parts.append({"type": "text", "text": content})
+                    for f in files:
+                        f_type = f.get("type", "") or ""
+                        f_url = f.get("url", "")
+                        f_name = f.get("filename", "file")
+                        if f_type.startswith("image/") and f_url:
+                            # Convert image to base64 data URI for vision models
+                            f_path = os.path.join(UPLOAD_DIR, os.path.basename(f_url))
+                            if os.path.exists(f_path):
+                                try:
+                                    import base64
+                                    with open(f_path, "rb") as img_f:
+                                        b64_data = base64.b64encode(img_f.read()).decode()
+                                    content_parts.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:{f_type};base64,{b64_data}"}
+                                    })
+                                except Exception as e:
+                                    print(f"[MULTIMODAL] Error reading image {f_path}: {e}")
+                                    content_parts.append({"type": "text", "text": f"\n[Image: {f_name}]"})
+                            else:
+                                content_parts.append({"type": "text", "text": f"\n[Image file not found: {f_name}]"})
+                        else:
+                            content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
+                    llm_messages.append({"role": role, "content": content_parts})
+                else:
+                    llm_messages.append({"role": role, "content": content})
             
             # Prepend system prompt to messages
             if system_prompt_content:
@@ -510,13 +563,21 @@ async def _core_stream_handler(
                 for i, block in enumerate(consolidated_blocks):
                     content_preview = block.get('content', '')[:100].replace('\n', '\\n') if block.get('content') else ''
                     print(f"[DEBUG] Block {i}: type={block.get('type')}, content_preview='{content_preview}...'")
-                await add_message(db, conversation_id, "assistant", assistant_message, blocks=consolidated_blocks or None, extra_metadata=message_extra_metadata)
+                await add_message(
+                    db, conversation_id, "assistant", assistant_message,
+                    blocks=consolidated_blocks or None,
+                    extra_metadata=message_extra_metadata,
+                    version=version,
+                    version_group=version_group
+                )
                 # Commit immediately so the message is persisted even if client disconnects
                 await db.commit()
                 assistant_saved = True
 
             # Generate title using model (reuses KV cache via cache_prompt: true)
-            if assistant_saved:
+            # Skip if the conversation already has a meaningful title (not the default)
+            existing_title = conversation.title if conversation else None
+            if assistant_saved and (not existing_title or existing_title == 'New Chat'):
                 async with get_db() as title_db:
                     msgs = await get_conversation_messages(title_db, conversation_id)
                     user_count = len([m for m in msgs if m["role"] == "user"])
@@ -570,10 +631,22 @@ async def stream_response(
 
 
 @app.get("/api/stream/regenerate/{request_id}")
-async def stream_regenerate_response(request_id: str, conversation_id: str, model: str = None):
-    """Stream regenerated LLM response using unified handler."""
+async def stream_regenerate_response(
+    request_id: str,
+    conversation_id: str,
+    model: str = None,
+    version: int = 1,
+    version_group: str = None
+):
+    """Stream regenerated LLM response using unified handler.
+    Supports versioned regeneration through version/version_group params.
+    """
     return StreamingResponse(
-        _core_stream_handler(request_id, conversation_id, enable_rag=False, model=model),
+        _core_stream_handler(
+            request_id, conversation_id,
+            enable_rag=False, model=model,
+            version=version, version_group=version_group
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -875,6 +948,48 @@ async def edit_message(message_id: str, request: Request):
         return {"message": message}
 
 
+@app.get("/api/messages/{message_id}/versions")
+async def get_message_versions_endpoint(message_id: str):
+    """Get all versions of a message by message_id.
+    Returns empty list if the message has no version_group.
+    """
+    async with get_db() as db:
+        versions = await get_message_versions(db, message_id)
+        return {"versions": versions}
+
+
+@app.get("/api/versions/{version_group}")
+async def get_versions_by_group(version_group: str):
+    """Get all versions in a version_group.
+    Uses the version_group directly (no message_id lookup needed).
+    """
+    from sqlalchemy import select
+    from database.models import Message
+    async with get_db() as db:
+        result = await db.execute(
+            select(Message)
+            .where(Message.version_group == version_group)
+            .order_by(Message.version)
+        )
+        versions_obj = result.scalars().all()
+        versions = [
+            {
+                "id": v.id,
+                "role": v.role,
+                "content": v.content,
+                "tool_calls": v.tool_calls,
+                "thinking": v.thinking,
+                "metadata": v.extra_metadata,
+                "blocks": v.extra_metadata.get('blocks') if v.extra_metadata else None,
+                "version": v.version,
+                "version_group": v.version_group,
+                "created_at": v.created_at.isoformat(),
+            }
+            for v in versions_obj
+        ]
+        return {"versions": versions}
+
+
 @app.delete("/api/messages/{message_id}")
 async def delete_message_endpoint(message_id: str):
     """Delete a message"""
@@ -887,7 +1002,10 @@ async def delete_message_endpoint(message_id: str):
 
 @app.post("/api/conversations/{conversation_id}/regenerate")
 async def regenerate_last_response(conversation_id: str, request: Request):
-    """Regenerate the last assistant response by re-sending the previous user message"""
+    """Regenerate an assistant response with versioning.
+    Instead of deleting old messages, creates a new version of the response.
+    """
+    import uuid as uuid_lib
     data = await request.json()
     message_id = data.get("message_id")
     
@@ -901,7 +1019,7 @@ async def regenerate_last_response(conversation_id: str, request: Request):
                 raise HTTPException(status_code=400, detail="Can only regenerate assistant messages")
         else:
             # Get last assistant message if no message_id provided
-            messages = await get_conversation_messages(db, conversation_id)
+            messages = await get_conversation_messages(db, conversation_id, only_latest_versions=False)
             # Find last assistant message
             assistant_messages = [m for m in messages if m.get("role") == "assistant"]
             if not assistant_messages:
@@ -909,27 +1027,107 @@ async def regenerate_last_response(conversation_id: str, request: Request):
             message = assistant_messages[-1]
         
         # Find the user message that preceded this assistant message
-        messages = await get_conversation_messages(db, conversation_id)
-        msg_index = next((i for i, m in enumerate(messages) if m.get("id") == message.get("id") or m.get("id") == message_id), -1)
+        # Use all messages (not just latest versions) to find the right position
+        messages = await get_conversation_messages(db, conversation_id, only_latest_versions=False)
         
-        if msg_index > 0:
-            user_message = messages[msg_index - 1]
-            if user_message.get("role") == "user":
-                # Delete all messages from this point (the user message and all following messages)
-                # This ensures we regenerate from the correct point
-                messages_to_delete = messages[msg_index:]
-                for msg_to_delete in messages_to_delete:
-                    await db_delete_message(db, msg_to_delete.get("id"))
-                
-                # Re-add the user message (it was deleted but we need it in the conversation)
-                await add_message(db, conversation_id, "user", user_message["content"])
-                
-                # Create new request ID
-                request_id = str(uuid.uuid4())
-                
-                return {"request_id": request_id, "status": "processing", "conversation_id": conversation_id}
+        # Find the index of the current message (last version in its group if it has a group)
+        msg_target_id = message.get("id")
+        msg_index = -1
+        for i, m in enumerate(messages):
+            if m.get("id") == msg_target_id:
+                msg_index = i
+                break
         
-        raise HTTPException(status_code=400, detail="Could not find preceding user message")
+        if msg_index <= 0:
+            raise HTTPException(status_code=400, detail="Could not find preceding user message")
+        
+        # Walk backwards from msg_index to find the actual preceding user message,
+        # skipping any old versions of the same assistant response (same version_group)
+        target_version_group = message.get("version_group")
+        user_message = None
+        for i in range(msg_index - 1, -1, -1):
+            m = messages[i]
+            if m.get("role") == "user":
+                user_message = m
+                break
+            # If this is an old version of the same response, skip it
+            if m.get("version_group") == target_version_group:
+                continue
+        
+        if not user_message:
+            raise HTTPException(status_code=400, detail="Could not find preceding user message")
+        
+        # Determine version_group and next version number
+        current_version_group = message.get("version_group")
+        current_version = message.get("version", 1)
+        
+        if current_version_group:
+            # This message already has versions — increment
+            new_version = current_version + 1
+            version_group = current_version_group
+        else:
+            # First regenerate — create a version_group
+            version_group = str(uuid_lib.uuid4())
+            new_version = current_version + 1
+            
+            # Update the original message with the version_group
+            from sqlalchemy import select
+            from database.models import Message as MsgModel
+            result = await db.execute(
+                select(MsgModel).where(MsgModel.id == msg_target_id)
+            )
+            original_msg = result.scalar_one_or_none()
+            if original_msg:
+                original_msg.version = current_version
+                original_msg.version_group = version_group
+        
+        # Create new request ID
+        request_id = str(uuid.uuid4())
+        
+        return {
+            "request_id": request_id,
+            "status": "processing",
+            "conversation_id": conversation_id,
+            "version": new_version,
+            "version_group": version_group,
+            "superseded_message_id": msg_target_id
+        }
+
+
+# Chat File Upload
+@app.post("/api/upload/chat-file")
+async def upload_chat_file(file: UploadFile = File(...)):
+    """Upload a file for use in a chat message (images, documents, etc.)"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    # Read file content
+    content = await file.read()
+    file_size = len(content)
+    
+    if file_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Max size: {MAX_UPLOAD_SIZE} bytes")
+    
+    # Detect content type from file or use provided
+    import mimetypes
+    content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    
+    # Generate unique filename preserving extension
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    unique_name = f"{uuid.uuid4()}{file_ext}"
+    file_path = os.path.join(UPLOAD_DIR, unique_name)
+    
+    # Save file
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    return {
+        "url": f"/uploads/{unique_name}",
+        "filename": file.filename,
+        "type": content_type,
+        "size": file_size
+    }
 
 
 # Document Management

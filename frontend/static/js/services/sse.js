@@ -12,10 +12,15 @@ export class SSEService {
     this.controller = new AbortController()
     // Clear old handlers so stale closures don't process new stream data
     this.handlers = { data: [], error: [], complete: [] }
-    const url = `/api/stream/${requestId}?conversation_id=${conversationId}` +
+    
+    // Determine stream endpoint path based on whether this is a regenerate
+    const endpoint = options.isRegenerate ? 'regenerate/' : ''
+    const url = `/api/stream/${endpoint}${requestId}?conversation_id=${conversationId}` +
       (options.enableRag ? '&enable_rag=1' : '') +
       (options.model ? `&model=${encodeURIComponent(options.model)}` : '') +
-      (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '')
+      (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '') +
+      (options.version ? `&version=${options.version}` : '') +
+      (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '')
 
     fetch(url, { signal: this.controller.signal })
       .then(response => {

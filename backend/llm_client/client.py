@@ -133,6 +133,9 @@ class LLMClient:
                         # Track thinking buffer for tags that span multiple chunks
                         thinking_buffer = None
 
+                        # Track whether native thinking field has been seen (persistent across chunks)
+                        _skip_think_yield = False
+
                         async for chunk in response.content.iter_any():
                             # Decode chunk and add to buffer
                             text = chunk.decode('utf-8')
@@ -146,7 +149,19 @@ class LLMClient:
                                 line, buffer = buffer.split('\n', 1)
                                 line = line.strip()
 
-                                if not line or line == "data: [DONE]":
+                                if not line:
+                                    continue
+                                if line == "data: [DONE]":
+                                    request_completed = True
+                                    if streaming_tool_call and streaming_tool_call.get("name"):
+                                        partial = streaming_tool_call["arguments_str"]
+                                        print(f"[DEBUG] Incomplete tool call at [DONE]: {streaming_tool_call['name']}")
+                                        yield {
+                                            "type": "tool_error",
+                                            "tool": streaming_tool_call["name"],
+                                            "error": f"Tool call arguments incomplete (premature EOS). Partial: {partial[:200]}"
+                                        }
+                                        streaming_tool_call = None
                                     continue
 
                                 if line.startswith("data: "):
@@ -155,20 +170,55 @@ class LLMClient:
                                     try:
                                         chunk_data = json.loads(data)
                                         delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                                        finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
 
                                         # Handle thinking content (for thinking models like DeepSeek)
                                         # Check multiple field names that llama.cpp might use
                                         thinking_content = delta.get("thinking") or delta.get("reasoning_content")
                                         if thinking_content:
-                                            # This chunk has native thinking field - set flag so we skip
-                                            # redundant <think> tag yields from content
                                             _skip_think_yield = True
-                                            yield {
-                                                "type": "thinking",
-                                                "content": thinking_content
-                                            }
-                                            await asyncio.sleep(0)
-                                        else:
+
+                                            # Detect tool calls mis-placed in reasoning_content.
+                                            # llama.cpp can misidentify Qwen3 (especially with MTP) as a
+                                            # thinking model, routing tool calls to reasoning_content
+                                            # instead of delta.tool_calls. Check if the content looks
+                                            # like a JSON tool call.
+                                            stripped_tc = thinking_content.strip()
+                                            if stripped_tc.startswith('{') and '"name"' in stripped_tc and '"arguments"' in stripped_tc:
+                                                try:
+                                                    tc_parsed = json.loads(stripped_tc)
+                                                    if isinstance(tc_parsed, dict) and "name" in tc_parsed and "arguments" in tc_parsed:
+                                                        tc_args = tc_parsed["arguments"] if isinstance(tc_parsed["arguments"], dict) else {}
+                                                        yield {
+                                                            "type": "tool_call",
+                                                            "tool_call": {
+                                                                "name": tc_parsed["name"],
+                                                                "arguments": tc_args
+                                                            }
+                                                        }
+                                                        await asyncio.sleep(0)
+                                                        # Skip normal thinking yield for this chunk
+                                                        # (continue to content processing below)
+                                                except json.JSONDecodeError:
+                                                    # Partial JSON spanning multiple chunks — treat as thinking for now
+                                                    yield {
+                                                        "type": "thinking",
+                                                        "content": thinking_content
+                                                    }
+                                                    await asyncio.sleep(0)
+                                            else:
+                                                yield {
+                                                    "type": "thinking",
+                                                    "content": thinking_content
+                                                }
+                                                await asyncio.sleep(0)
+                                        elif _skip_think_yield and thinking_buffer is None and finish_reason is None:
+                                            # Native thinking field has stopped and we're not inside <think>.
+                                            # Only clear flag when content has no thinking tags at all.
+                                            content_check = delta.get("content", "")
+                                            if content_check and '<think>' not in content_check and '</think>' not in content_check:
+                                                _skip_think_yield = False
+                                        elif not _skip_think_yield:
                                             _skip_think_yield = False
 
                                         # Handle content - parse for <think> tags with streaming
@@ -236,8 +286,8 @@ class LLMClient:
                                                         yield {
                                                             "type": "content",
                                                             "content": content
-                                                    }
-                                                    content = ''
+                                                        }
+                                                        content = ''
 
                                                 await asyncio.sleep(0)
 
@@ -266,7 +316,6 @@ class LLMClient:
                                                     # If we already have a streaming tool call, accumulate arguments
                                                     elif streaming_tool_call and arguments_str:
                                                         streaming_tool_call["arguments_str"] += arguments_str
-                                                        #print(f"[DEBUG] Accumulated arguments: {streaming_tool_call['arguments_str'][:100]}...")
 
                                                     # Try to parse accumulated arguments if we have a tool name
                                                     if streaming_tool_call and streaming_tool_call.get("name"):
@@ -297,6 +346,22 @@ class LLMClient:
                                                     traceback.print_exc()
                                                     # Continue processing other tool calls
 
+                                        # Handle finish_reason — stream end signal from the model
+                                        if finish_reason:
+                                            print(f"[DEBUG] Stream finish_reason: {finish_reason}")
+                                            # MTP models can emit premature EOS mid-tool-call.
+                                            # Instead of silently discarding, yield a tool_error
+                                            # so the backend can report it and continue.
+                                            if streaming_tool_call and streaming_tool_call.get("name"):
+                                                partial = streaming_tool_call["arguments_str"]
+                                                print(f"[DEBUG] Incomplete tool call at finish_reason: {streaming_tool_call['name']}")
+                                                yield {
+                                                    "type": "tool_error",
+                                                    "tool": streaming_tool_call["name"],
+                                                    "error": f"Tool call arguments incomplete (finish_reason: {finish_reason}). Partial: {partial[:200]}"
+                                                }
+                                                streaming_tool_call = None
+
                                     except json.JSONDecodeError:
                                         continue
 
@@ -326,9 +391,8 @@ class LLMClient:
                                                 "type": "error",
                                                 "error": str(e)
                                             }
-                                    # Successfully completed streaming - mark as completed and exit retry loop
+                                    # Successfully completed streaming - mark as completed
                                     request_completed = True
-                                    break  # Exit retry loop
             except Exception as e:
                 # Handle exceptions that occur before/during request setup
                 # Only retry if request didn't complete successfully

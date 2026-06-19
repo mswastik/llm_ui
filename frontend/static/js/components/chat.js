@@ -34,6 +34,10 @@ const chatComponent = () => ({
   selectedSource: null,
   showSourceModal: false,
 
+  // Tracks whether stream completed normally (received 'done' event)
+  // If false on connection close, response may be incomplete (MTP stall / timeout)
+  streamEndedNormally: false,
+
   // ─── Getters (reactive to store) ──────────────────────
   get messages() {
     // Deduplicate by version_group — keep only the latest version of each group.
@@ -321,7 +325,11 @@ const chatComponent = () => ({
     })
 
     handlers.onComplete(() => {
-      console.log('[chat] Stream complete')
+      if (!this.streamEndedNormally) {
+        console.warn('[chat] Stream ended without done event — response may be incomplete')
+        this.$store.ui.showToast('Response may be incomplete (stream interrupted)', 'warning')
+      }
+      this.streamEndedNormally = false
       this.$store.chat.stopStreaming()
     })
   },
@@ -387,6 +395,18 @@ const chatComponent = () => ({
         }
         break
 
+      case 'tool_error':
+        this.$store.chat.toolStatus = {
+          active: false, tool: data.tool, status: 'Error', progress: null
+        }
+        msg.blocks.push({
+          type: 'tool_call', name: data.tool, arguments: {},
+          status: 'error', progress: 0, result: {error: data.error},
+          sources: [], progress_history: []
+        })
+        this.$store.ui.showToast(`Tool call incomplete: ${data.tool}`, 'warning')
+        break
+
       case 'error':
         this.$store.chat.toolStatus.active = false
         this.isLoading = false
@@ -402,6 +422,7 @@ const chatComponent = () => ({
         break
 
       case 'done':
+        this.streamEndedNormally = true
         this.pendingTitleTimeout = setTimeout(() => sseService.close(), 5000)
         this.isLoading = false
         this.$store.chat.isLoading = false

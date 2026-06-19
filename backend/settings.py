@@ -6,8 +6,8 @@ Settings are loaded from settings.json on startup, with environment variables as
 """
 import os
 import json
-from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
+from typing import Dict, Any
+from pydantic import BaseModel
 
 # To fix Kokoro Cuda memory allocation
 os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
@@ -74,106 +74,92 @@ os.makedirs(DEFAULTS["upload_dir"], exist_ok=True)
 
 class Settings(BaseModel):
     """Application settings model"""
-    # Database Configuration
-    database_url: str = Field(default=DEFAULTS["database_url"], description="Database URL")
-
-    # Llama.cpp Configuration
-    llama_cpp_base_url: str = Field(default=DEFAULTS["llama_cpp_base_url"], description="Base URL for llama.cpp server")
-    llama_cpp_model: str = Field(default=DEFAULTS["llama_cpp_model"], description="Default model for llama.cpp")
-    query_model: str = Field(default=DEFAULTS["query_model"], description="Model used for query processing and title generation")
-    embedding_model: str = Field(default=DEFAULTS["embedding_model"], description="Model used for document embeddings in RAG")
-    reranking_model: str = Field(default=DEFAULTS["reranking_model"], description="Model used for reranking search results")
-
-    # Application Settings
-    app_host: str = Field(default=DEFAULTS["app_host"], description="Host address for the application")
-    app_port: int = Field(default=DEFAULTS["app_port"], description="Port for the application")
-    debug: bool = Field(default=DEFAULTS["debug"], description="Debug mode")
-
-    # File Upload Settings
-    max_upload_size: int = Field(default=DEFAULTS["max_upload_size"], description="Maximum upload size in bytes")
-    upload_dir: str = Field(default=DEFAULTS["upload_dir"], description="Directory for uploads")
-
-    # CORS Settings
-    cors_origins: str = Field(default=DEFAULTS["cors_origins"], description="Comma-separated list of CORS origins")
-
-    # System Prompt
-    system_prompt: str = Field(default=DEFAULTS["system_prompt"], description="Default system prompt")
-
-    # LLM Generation Defaults
-    default_temperature: float = Field(default=DEFAULTS["default_temperature"], description="Default temperature for LLM generation")
-    default_max_tokens: int = Field(default=DEFAULTS["default_max_tokens"], description="Default max tokens for LLM generation")
-
-    # SQLAlchemy Logging
-    sqlalchemy_echo: bool = Field(default=DEFAULTS["sqlalchemy_echo"], description="Enable verbose SQLAlchemy logging")
-
-    # Database Backup Settings
-    backup_enabled: bool = Field(default=DEFAULTS["backup_enabled"], description="Enable automatic database backups")
-    backup_path: str = Field(default=DEFAULTS["backup_path"], description="Directory to store database backups")
-    backup_interval_hours: int = Field(default=DEFAULTS["backup_interval_hours"], description="Interval between automatic backups in hours")
-    backup_max_keep: int = Field(default=DEFAULTS["backup_max_keep"], description="Maximum number of backup files to keep")
-
-    # TTS Settings
-    tts_engine: str = Field(default=DEFAULTS["tts_engine"], description="TTS engine to use (edge-tts, pyttsx3, kokoro)")
-    tts_voice: str = Field(default=DEFAULTS["tts_voice"], description="Voice to use for TTS")
-    tts_rate: str = Field(default=DEFAULTS["tts_rate"], description="Speech rate adjustment")
-    tts_volume: float = Field(default=DEFAULTS["tts_volume"], description="Volume level (0.0 to 1.0)")
-    kokoro_lang: str = Field(default=DEFAULTS["kokoro_lang"], description="Kokoro language code (a=American English, b=British English)")
-    kokoro_device: str = Field(default=DEFAULTS["kokoro_device"], description="Kokoro device (cpu or cuda)")
-    kokoro_volume: float = Field(default=DEFAULTS["kokoro_volume"], description="Kokoro TTS volume level (0.0 to 1.0)")
-    kokoro_speed: float = Field(default=DEFAULTS["kokoro_speed"], description="Kokoro TTS speed multiplier (0.5 to 2.0)")
+    database_url: str = DEFAULTS["database_url"]
+    llama_cpp_base_url: str = DEFAULTS["llama_cpp_base_url"]
+    llama_cpp_model: str = DEFAULTS["llama_cpp_model"]
+    query_model: str = DEFAULTS["query_model"]
+    embedding_model: str = DEFAULTS["embedding_model"]
+    reranking_model: str = DEFAULTS["reranking_model"]
+    app_host: str = DEFAULTS["app_host"]
+    app_port: int = DEFAULTS["app_port"]
+    debug: bool = DEFAULTS["debug"]
+    max_upload_size: int = DEFAULTS["max_upload_size"]
+    upload_dir: str = DEFAULTS["upload_dir"]
+    cors_origins: str = DEFAULTS["cors_origins"]
+    system_prompt: str = DEFAULTS["system_prompt"]
+    default_temperature: float = DEFAULTS["default_temperature"]
+    default_max_tokens: int = DEFAULTS["default_max_tokens"]
+    sqlalchemy_echo: bool = DEFAULTS["sqlalchemy_echo"]
+    backup_enabled: bool = DEFAULTS["backup_enabled"]
+    backup_path: str = DEFAULTS["backup_path"]
+    backup_interval_hours: int = DEFAULTS["backup_interval_hours"]
+    backup_max_keep: int = DEFAULTS["backup_max_keep"]
+    tts_engine: str = DEFAULTS["tts_engine"]
+    tts_voice: str = DEFAULTS["tts_voice"]
+    tts_rate: str = DEFAULTS["tts_rate"]
+    tts_volume: float = DEFAULTS["tts_volume"]
+    kokoro_lang: str = DEFAULTS["kokoro_lang"]
+    kokoro_device: str = DEFAULTS["kokoro_device"]
+    kokoro_volume: float = DEFAULTS["kokoro_volume"]
+    kokoro_speed: float = DEFAULTS["kokoro_speed"]
 
 
-# Module-level variables (will be updated after settings_manager is initialized)
-DATABASE_URL = None
-LLAMA_CPP_BASE_URL = None
-LLAMA_CPP_MODEL = None
-QUERY_MODEL = None
-EMBEDDING_MODEL = None
-RERANKING_MODEL = None
-APP_HOST = None
-APP_PORT = None
-DEBUG = None
-DEFAULT_TEMPERATURE = None
-DEFAULT_MAX_TOKENS = None
-MAX_UPLOAD_SIZE = None
-UPLOAD_DIR = None
-CORS_ORIGINS = None
-SYSTEM_PROMPT = None
-SQLALCHEMY_ECHO = None
-BACKUP_ENABLED = None
-BACKUP_PATH = None
-BACKUP_INTERVAL_HOURS = None
-BACKUP_MAX_KEEP = None
+# Module-level constants set once from DEFAULTS (used by importers)
+DATABASE_URL = DEFAULTS["database_url"]
+LLAMA_CPP_BASE_URL = DEFAULTS["llama_cpp_base_url"]
+LLAMA_CPP_MODEL = DEFAULTS["llama_cpp_model"]
+QUERY_MODEL = DEFAULTS["query_model"]
+EMBEDDING_MODEL = DEFAULTS["embedding_model"]
+RERANKING_MODEL = DEFAULTS["reranking_model"]
+APP_HOST = DEFAULTS["app_host"]
+APP_PORT = DEFAULTS["app_port"]
+DEBUG = DEFAULTS["debug"]
+DEFAULT_TEMPERATURE = DEFAULTS["default_temperature"]
+DEFAULT_MAX_TOKENS = DEFAULTS["default_max_tokens"]
+MAX_UPLOAD_SIZE = DEFAULTS["max_upload_size"]
+UPLOAD_DIR = DEFAULTS["upload_dir"]
+CORS_ORIGINS = DEFAULTS["cors_origins"].split(',')
+SYSTEM_PROMPT = DEFAULTS["system_prompt"]
+SQLALCHEMY_ECHO = DEFAULTS["sqlalchemy_echo"]
+BACKUP_ENABLED = DEFAULTS["backup_enabled"]
+BACKUP_PATH = DEFAULTS["backup_path"]
+BACKUP_INTERVAL_HOURS = DEFAULTS["backup_interval_hours"]
+BACKUP_MAX_KEEP = DEFAULTS["backup_max_keep"]
 
 
-def _update_module_constants(settings_mgr):
-    """Update module-level constants from settings manager"""
-    global DATABASE_URL, LLAMA_CPP_BASE_URL, LLAMA_CPP_MODEL, QUERY_MODEL
-    global EMBEDDING_MODEL, RERANKING_MODEL
-    global APP_HOST, APP_PORT, DEBUG, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
-    global MAX_UPLOAD_SIZE, UPLOAD_DIR, CORS_ORIGINS, SYSTEM_PROMPT, SQLALCHEMY_ECHO
-    global BACKUP_ENABLED, BACKUP_PATH, BACKUP_INTERVAL_HOURS, BACKUP_MAX_KEEP
+# ponytail: env keys that map 1:1 with settings keys
+_ENV_MAP = {
+    "llama_cpp_base_url": "LLAMA_CPP_URL",
+    "llama_cpp_model": "LLAMA_CPP_MODEL",
+    "query_model": "QUERY_MODEL",
+    "embedding_model": "EMBEDDING_MODEL",
+    "reranking_model": "RERANKING_MODEL",
+    "app_host": "APP_HOST",
+    "app_port": "APP_PORT",
+    "debug": "DEBUG",
+    "default_temperature": "DEFAULT_TEMPERATURE",
+    "default_max_tokens": "DEFAULT_MAX_TOKENS",
+    "max_upload_size": "MAX_UPLOAD_SIZE",
+    "upload_dir": "UPLOAD_DIR",
+    "system_prompt": "SYSTEM_PROMPT",
+    "cors_origins": "CORS_ORIGINS",
+    "tts_engine": "TTS_ENGINE",
+    "tts_voice": "TTS_VOICE",
+    "tts_rate": "TTS_RATE",
+    "tts_volume": "TTS_VOLUME",
+    "kokoro_lang": "KOKORO_LANG",
+    "kokoro_device": "KOKORO_DEVICE",
+    "kokoro_volume": "KOKORO_VOLUME",
+    "kokoro_speed": "KOKORO_SPEED",
+}
 
-    DATABASE_URL = settings_mgr.settings.database_url
-    LLAMA_CPP_BASE_URL = settings_mgr.settings.llama_cpp_base_url
-    LLAMA_CPP_MODEL = settings_mgr.settings.llama_cpp_model
-    QUERY_MODEL = settings_mgr.settings.query_model
-    EMBEDDING_MODEL = settings_mgr.settings.embedding_model
-    RERANKING_MODEL = settings_mgr.settings.reranking_model
-    APP_HOST = settings_mgr.settings.app_host
-    APP_PORT = settings_mgr.settings.app_port
-    DEBUG = settings_mgr.settings.debug
-    DEFAULT_TEMPERATURE = settings_mgr.settings.default_temperature
-    DEFAULT_MAX_TOKENS = settings_mgr.settings.default_max_tokens
-    MAX_UPLOAD_SIZE = settings_mgr.settings.max_upload_size
-    UPLOAD_DIR = settings_mgr.settings.upload_dir
-    CORS_ORIGINS = settings_mgr.settings.cors_origins.split(',')
-    SYSTEM_PROMPT = settings_mgr.settings.system_prompt
-    SQLALCHEMY_ECHO = settings_mgr.settings.sqlalchemy_echo
-    BACKUP_ENABLED = settings_mgr.settings.backup_enabled
-    BACKUP_PATH = settings_mgr.settings.backup_path
-    BACKUP_INTERVAL_HOURS = settings_mgr.settings.backup_interval_hours
-    BACKUP_MAX_KEEP = settings_mgr.settings.backup_max_keep
+
+def _sync_env(settings_dict: dict):
+    """Sync settings dict to environment variables."""
+    for key, env_var in _ENV_MAP.items():
+        if key in settings_dict:
+            val = settings_dict[key]
+            os.environ[env_var] = str(val) if not isinstance(val, str) else val
 
 
 class SettingsManager:
@@ -200,69 +186,19 @@ class SettingsManager:
             if hasattr(self.settings, key):
                 setattr(self.settings, key, value)
 
-        # Update environment variables for runtime changes where applicable
-        if 'llama_cpp_base_url' in new_settings:
-            os.environ['LLAMA_CPP_URL'] = new_settings['llama_cpp_base_url']
-        if 'llama_cpp_model' in new_settings:
-            os.environ['LLAMA_CPP_MODEL'] = new_settings['llama_cpp_model']
-        if 'query_model' in new_settings:
-            os.environ['QUERY_MODEL'] = new_settings['query_model']
-        if 'embedding_model' in new_settings:
-            os.environ['EMBEDDING_MODEL'] = new_settings['embedding_model']
-        if 'reranking_model' in new_settings:
-            os.environ['RERANKING_MODEL'] = new_settings['reranking_model']
-        if 'app_host' in new_settings:
-            os.environ['APP_HOST'] = new_settings['app_host']
-        if 'app_port' in new_settings:
-            os.environ['APP_PORT'] = str(new_settings['app_port'])
-        if 'debug' in new_settings:
-            os.environ['DEBUG'] = str(new_settings['debug']).lower()
-        if 'default_temperature' in new_settings:
-            os.environ['DEFAULT_TEMPERATURE'] = str(new_settings['default_temperature'])
-        if 'default_max_tokens' in new_settings:
-            os.environ['DEFAULT_MAX_TOKENS'] = str(new_settings['default_max_tokens'])
-        if 'max_upload_size' in new_settings:
-            os.environ['MAX_UPLOAD_SIZE'] = str(new_settings['max_upload_size'])
-        if 'upload_dir' in new_settings:
-            os.environ['UPLOAD_DIR'] = new_settings['upload_dir']
-        if 'system_prompt' in new_settings:
-            os.environ['SYSTEM_PROMPT'] = new_settings['system_prompt']
-
-        # Update CORS origins if changed
-        if 'cors_origins' in new_settings:
-            os.environ['CORS_ORIGINS'] = new_settings['cors_origins']
+        # Sync changed env vars
+        _sync_env(new_settings)
 
         # Update TTS settings if changed and TTS service is available
-        if ('tts_engine' in new_settings or 'tts_voice' in new_settings or
-            'tts_rate' in new_settings or 'tts_volume' in new_settings or
-            'kokoro_lang' in new_settings or 'kokoro_device' in new_settings or
-            'kokoro_volume' in new_settings or 'kokoro_speed' in new_settings) and self.tts_service:
+        tts_keys = {'tts_engine', 'tts_voice', 'tts_rate', 'tts_volume',
+                    'kokoro_lang', 'kokoro_device', 'kokoro_volume', 'kokoro_speed'}
+        if tts_keys & set(new_settings.keys()) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)
             self.tts_service.update_config(tts_config)
 
-        if 'tts_engine' in new_settings:
-            os.environ['TTS_ENGINE'] = new_settings['tts_engine']
-        if 'tts_voice' in new_settings:
-            os.environ['TTS_VOICE'] = new_settings['tts_voice']
-        if 'tts_rate' in new_settings:
-            os.environ['TTS_RATE'] = new_settings['tts_rate']
-        if 'tts_volume' in new_settings:
-            os.environ['TTS_VOLUME'] = str(new_settings['tts_volume'])
-        if 'kokoro_lang' in new_settings:
-            os.environ['KOKORO_LANG'] = new_settings['kokoro_lang']
-        if 'kokoro_device' in new_settings:
-            os.environ['KOKORO_DEVICE'] = new_settings['kokoro_device']
-        if 'kokoro_volume' in new_settings:
-            os.environ['KOKORO_VOLUME'] = str(new_settings['kokoro_volume'])
-        if 'kokoro_speed' in new_settings:
-            os.environ['KOKORO_SPEED'] = str(new_settings['kokoro_speed'])
-
         # Save settings to file
         self.save_settings_to_file()
-
-        # Refresh module-level constants to ensure all imports get updated values
-        _update_module_constants(self)
 
         return self.get_settings()
 
@@ -278,38 +214,8 @@ class SettingsManager:
                     if hasattr(self.settings, key):
                         setattr(self.settings, key, value)
 
-                # Set environment variables from saved settings for runtime use
-                if 'llama_cpp_base_url' in saved_settings:
-                    os.environ['LLAMA_CPP_URL'] = saved_settings['llama_cpp_base_url']
-                if 'llama_cpp_model' in saved_settings:
-                    os.environ['LLAMA_CPP_MODEL'] = saved_settings['llama_cpp_model']
-                if 'query_model' in saved_settings:
-                    os.environ['QUERY_MODEL'] = saved_settings['query_model']
-                if 'embedding_model' in saved_settings:
-                    os.environ['EMBEDDING_MODEL'] = saved_settings['embedding_model']
-                if 'reranking_model' in saved_settings:
-                    os.environ['RERANKING_MODEL'] = saved_settings['reranking_model']
-                if 'app_host' in saved_settings:
-                    os.environ['APP_HOST'] = saved_settings['app_host']
-                if 'app_port' in saved_settings:
-                    os.environ['APP_PORT'] = str(saved_settings['app_port'])
-                if 'debug' in saved_settings:
-                    os.environ['DEBUG'] = str(saved_settings['debug']).lower()
-                if 'default_temperature' in saved_settings:
-                    os.environ['DEFAULT_TEMPERATURE'] = str(saved_settings['default_temperature'])
-                if 'default_max_tokens' in saved_settings:
-                    os.environ['DEFAULT_MAX_TOKENS'] = str(saved_settings['default_max_tokens'])
-                if 'max_upload_size' in saved_settings:
-                    os.environ['MAX_UPLOAD_SIZE'] = str(saved_settings['max_upload_size'])
-                if 'upload_dir' in saved_settings:
-                    os.environ['UPLOAD_DIR'] = saved_settings['upload_dir']
-                if 'system_prompt' in saved_settings:
-                    os.environ['SYSTEM_PROMPT'] = saved_settings['system_prompt']
-                if 'cors_origins' in saved_settings:
-                    os.environ['CORS_ORIGINS'] = saved_settings['cors_origins']
-
-                # Refresh module-level constants after loading from file
-                _update_module_constants(self)
+                # Sync env vars from saved settings
+                _sync_env(saved_settings)
             except Exception as e:
                 print(f"Error loading settings from file: {e}")
 
@@ -324,9 +230,3 @@ class SettingsManager:
 
 # Global settings manager instance
 settings_manager = SettingsManager()
-
-# Initialize module-level constants after settings_manager is created
-_update_module_constants(settings_manager)
-
-
-

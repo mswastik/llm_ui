@@ -23,11 +23,7 @@ class LLMClient:
         settings = self._settings_manager.get_settings()
         self.base_url = base_url or settings.get('llama_cpp_base_url', 'http://localhost:8080')
         self.model = model or settings.get('llama_cpp_model', 'glm4.7-30ba3b')
-        self._tools: Optional[List[Dict]] = None
 
-    def set_tools(self, tools: List[Dict]):
-        """Set the tools available for function calling"""
-        self._tools = tools
     def _get_current_base_url(self) -> str:
         """Get the current base URL from settings (allows dynamic updates)"""
         settings = self._settings_manager.get_settings()
@@ -85,7 +81,7 @@ class LLMClient:
             payload["chat_template_kwargs"] = chat_template_kwargs
 
         # Add tool definitions if available
-        active_tools = tools or self._tools
+        active_tools = tools
         if active_tools:
             payload["tools"] = active_tools
             if tool_choice:
@@ -409,29 +405,6 @@ class LLMClient:
                         }
                     break
     
-    async def _get_available_tools(self) -> List[Dict]:
-        """
-        Get tool definitions to send to the LLM.
-        
-        Returns the tools that were set via set_tools().
-        """
-        return self._tools or []
-
-    async def complete(
-        self,
-        messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: int = 10048
-    ) -> str:
-        """
-        Non-streaming completion (collects full response).
-        """
-        response = ""
-        async for chunk in self.stream_chat(messages, temperature, max_tokens):
-            if chunk.get("type") == "content":
-                response += chunk.get("content", "")
-        
-        return response
 
     async def list_models(self) -> List[Dict]:
         """List all available models from the LLM server."""

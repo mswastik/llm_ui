@@ -1,8 +1,6 @@
 # LLM UI with MCP Support
 
-A modern, real-time chat interface for Large Language Models with Model Context Protocol (MCP) support. Built with FastAPI, HTMX, Alpine.js, and designed to work with llama.cpp. Enhanced with advanced features including RAG, document processing, and text-to-speech.
-
-*This is a completely vibe coded project*
+A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and TTS support. Built with FastAPI, Alpine.js, and Jinja2 templates.
 
 ## Features
 
@@ -32,52 +30,46 @@ A modern, real-time chat interface for Large Language Models with Model Context 
 ## Architecture
 
 ```
-llm-ui-app/
 ├── backend/
-│   ├── app/
-│   │   └── main.py              # FastAPI application with SSE streaming
+│   ├── app/main.py              # FastAPI app, all endpoints, SSE streaming
+│   ├── settings.py              # SettingsManager singleton
 │   ├── database/
 │   │   ├── models.py            # SQLAlchemy models
-│   │   ├── crud.py              # Database operations
-│   │   └── agent_crud.py        # Agent-specific CRUD
-│   ├── mcp_client/
-│   │   └── client.py            # MCP client manager
-│   ├── llm_client/
-│   │   └── client.py            # llama.cpp client
+│   │   ├── crud.py              # Async CRUD helpers
+│   │   └── backup.py            # Database backup scheduler
+│   ├── llm_client/client.py     # llama.cpp OpenAI-compatible streaming client
+│   ├── mcp_client/client.py     # MCPClientManager — FastMCP-based
 │   └── tools/
-│       ├── tool_executor.py     # Tool execution with progress tracking
-│       ├── rag_service.py       # RAG (Retrieval-Augmented Generation)
-│       ├── tts_service.py       # Text-to-Speech service
-│       ├── base.py              # Shared utilities (embeddings, reranking)
-│       └── progress.py          # Tool progress event helpers
-└── frontend/
-    ├── static/
-    │   ├── css/
-    │   │   └── styles.css       # Custom styles
-    │   └── js/
-    │       ├── app.js           # Main entry point (Alpine.js application)
-    │       ├── store.js         # Alpine stores: chat, settings, documents, tts
-    │       ├── utils.js         # API client, markdown, formatters, helpers
-    │       ├── services/
-    │       │   ├── sse.js       # SSEService — fetch-based SSE streaming
-    │       │   └── tts.js       # TTSService — audio playback control
-    │       └── components/
-    │           ├── chat.js      # Chat: send, stream, tool calls, regeneration, TTS
-    │           ├── sidebar.js   # Sidebar: conversations, resize, load/delete
-    │           ├── settings.js  # Settings: app config, MCP server management
-    │           └── documents.js # Documents: upload, list, delete
-    └── templates/
-        ├── index.html           # Main layout (sidebar + chat + MCP panel)
-        ├── settings.html        # Settings page (standalone)
-        ├── knowledge.html       # Knowledge base page (standalone)
-        ├── agents.html          # Agents management page (standalone)
-        ├── base.html            # Tailwind + Alpine + marked.js CDN
-        └── partials/
-            ├── sidebar.html     # Conversation list
-            ├── chat.html        # Messages, input, tool call display
-            ├── settings.html    # Settings modal
-            ├── documents.html   # Documents modal
-            └── mcp_panel.html   # MCP server panel
+│       ├── tool_executor.py     # Tool dispatch + progress events
+│       ├── rag_service.py       # RAG pipeline (chunk → embed → search)
+│       ├── tts_service.py       # Edge TTS / pyttsx3 / Kokoro
+│       └── base.py              # Embedding + reranking helpers
+├── frontend/
+│   ├── static/
+│   │   ├── css/theme.css        # Custom theme + modal styles
+│   │   └── js/
+│   │       ├── main.js          # ES module entry point
+│   │       ├── utils.js         # API client, markdown, formatters
+│   │       ├── services/
+│   │       │   ├── sse.js       # SSEService
+│   │       │   └── tts.js       # TTSService
+│   │       └── components/
+│   │           ├── chat.js      # Message send, SSE, tool calls
+│   │           ├── sidebar.js   # Conversations, resize, filters
+│   │           └── settings.js  # Settings + MCP management
+│   └── templates/
+│       ├── base.html            # Tailwind + Alpine CDN, store data
+│       ├── index.html           # Main layout + all modals
+│       └── partials/
+│           ├── sidebar.html
+│           ├── main_chat.html
+│           ├── settings_modal.html
+│           ├── agents_modal.html
+│           ├── mcp_modal.html
+│           ├── documents_modal.html
+│           └── notes_modal.html
+├── run.py                       # Launches uvicorn
+└── settings.json                # Runtime settings
 ```
 
 ## Prerequisites
@@ -232,198 +224,4 @@ The application supports reasoning models that separate thinking from responses:
 - Thinking content is displayed in a collapsible section
 - Helps understand the model's reasoning process
 
-## Real-time Progress Updates
 
-The app implements a hybrid approach for tool execution:
-
-### Standard MCP Tools
-- Execute via MCP protocol
-- Show start/complete status
-- No intermediate progress (MCP limitation)
-
-### Custom Tools with Progress
-Custom tools (like `query_documents` and `generate_speech`) provide granular progress updates:
-
-```python
-async for progress in tool_executor.execute_tool(tool_name, args, request_id):
-    # Progress updates streamed to UI via SSE
-    # {
-    #   "type": "tool_progress",
-    #   "tool": "query_documents",
-    #   "status": "Searching documents 3/10...",
-    #   "progress": 45,
-    #   "data": {"searched": 3, "total": 10}
-    # }
-```
-
-## Customizing Tools
-
-### Adding a Custom Tool with Progress
-
-Edit `backend/tools/tool_executor.py`:
-
-```python
-self.custom_tools = {
-    "query_documents": self._query_documents_with_progress,
-    "generate_speech": self._generate_speech_with_progress,
-    "your_tool": self._your_tool_with_progress,  # Add your tool
-}
-
-async def _your_tool_with_progress(
-    self,
-    arguments: Dict[str, Any],
-    request_id: str
-) -> AsyncGenerator[Dict, None]:
-    """Your custom tool implementation"""
-
-    # Yield progress updates
-    yield {
-        "type": "tool_progress",
-        "tool": "your_tool",
-        "status": "Starting...",
-        "progress": 0
-    }
-
-    # ... your logic ...
-
-    yield {
-        "type": "tool_progress",
-        "tool": "your_tool",
-        "status": "Complete",
-        "progress": 100,
-        "result": {"data": "your result"}
-    }
-```
-
-## Web Search via MCP
-
-Web search is now provided by MCP servers instead of a built-in adapter. To add web search:
-
-1. Connect an MCP server that provides a search tool (e.g., a custom MCP server with web search capabilities)
-2. The tool will be auto-discovered and available for the LLM to call
-3. No UI toggle is needed — the LLM decides whether to use the search tool based on the user's query
-
-## Database Schema
-
-The app uses SQLite with the following tables:
-
-- **conversations**: Chat conversations
-- **messages**: Individual messages
-- **mcp_servers**: MCP server configurations
-- **documents**: Uploaded document metadata
-- **agents**: Pre-configured AI personalities
-- **document_chunks**: Indexed document chunks for RAG
-- **document_embeddings**: Embeddings for document chunks
-
-Database file: `llm_ui.db` (created automatically on first run)
-
-## API Endpoints
-
-### Conversations
-- `GET /api/conversations` - List all conversations
-- `POST /api/conversations` - Create new conversation
-- `GET /api/conversations/{id}` - Get conversation details
-- `PUT /api/conversations/{id}` - Update conversation title
-- `DELETE /api/conversations/{id}` - Delete conversation
-- `POST /api/conversations/{id}/messages` - Send message (returns `request_id`)
-- `POST /api/conversations/{id}/regenerate` - Regenerate last assistant response
-- `GET /api/stream/{request_id}` - Stream LLM response (SSE) — query params: `conversation_id`, `enable_rag`, `model`
-- `GET /api/stream/regenerate/{request_id}` - SSE stream for regeneration
-
-### Messages
-- `PUT /api/messages/{message_id}` - Edit message content
-- `DELETE /api/messages/{message_id}` - Delete message
-
-### MCP Servers
-- `GET /api/mcp/servers` - List MCP servers
-- `POST /api/mcp/servers` - Add MCP server
-- `DELETE /api/mcp/servers/{name}` - Remove MCP server
-- `PUT /api/mcp/servers/{name}` - Update MCP server
-- `POST /api/mcp/servers/{name}/refresh` - Refresh tool list
-- `POST /api/mcp/servers/{name}/reconnect` - Reconnect server
-- `POST /api/mcp/servers/{name}/toggle` - Enable/disable server
-- `GET /api/mcp/tools` - List all available tools
-
-### Agents
-- `GET /api/agents` - List all agents
-- `GET /api/agents/{id}` - Get agent details
-- `POST /api/agents` - Create agent
-- `PUT /api/agents/{id}` - Update agent
-- `DELETE /api/agents/{id}` - Soft-delete agent
-
-### Documents & RAG
-- `POST /api/documents/upload` - Upload document for RAG
-- `GET /api/documents` - List all documents
-- `GET /api/documents/{id}` - Get document details
-- `DELETE /api/documents/{id}` - Delete document
-- `POST /api/rag/query` - Direct RAG query endpoint
-
-### Text-to-Speech
-- `POST /api/tts/generate` - Generate speech from text
-- `GET /api/tts/voices` - List available TTS voices
-- `GET /api/tts/status` - Check TTS availability
-- `GET /api/audio/{filename}` - Serve generated audio files
-
-### Settings
-- `GET /api/settings` - Get application settings
-- `PUT /api/settings` - Update application settings
-
-### Models
-- `GET /api/models` - List available models from LLM server
-
-## Pages
-- `GET /` - Main chat interface
-- `GET /settings` - Settings page
-- `GET /knowledge` - Knowledge base page
-- `GET /agents` - Agents management page
-
-## Troubleshooting
-
-**Issue:** llama.cpp connection refused
-- **Solution:** Ensure llama.cpp server is running on port 8080
-
-**Issue:** MCP server fails to start
-- **Solution:** Check that Node.js is installed and the MCP package exists
-
-**Issue:** Database errors
-- **Solution:** Delete `llm_ui.db` and restart (will recreate schema)
-
-**Issue:** SSE connection drops
-- **Solution:** Check firewall settings and proxy configurations
-
-**Issue:** TTS not working
-- **Solution:** Install edge-tts (`pip install edge-tts`) or pyttsx3 (`pip install pyttsx3`)
-
-**Issue:** Document processing fails
-- **Solution:** Check if PyPDF2 and python-docx are installed (they're in requirements.txt)
-
-**Issue:** Web search not available
-- **Solution:** Connect an MCP server that provides a search tool. Web search is no longer built-in.
-
-## Future Enhancements
-
-- [ ] Multi-modal support (images)
-- [ ] Export conversations
-- [ ] User authentication
-- [ ] Tool usage analytics
-- [ ] Custom system prompts
-- [ ] Conversation branching
-- [ ] Advanced RAG with vector databases
-- [ ] Plugin system for custom tools
-
-## License
-
-MIT License - feel free to modify and use for your projects!
-
-## Contributing
-
-Contributions welcome! Please open an issue or submit a pull request.
-
-## Acknowledgments
-
-- Built with [FastAPI](https://fastapi.tiangolo.com/)
-- UI powered by [HTMX](https://htmx.org/) and [Alpine.js](https://alpinejs.dev/)
-- Styled with [Tailwind CSS](https://tailwindcss.com/)
-- LLM backend: [llama.cpp](https://github.com/ggerganov/llama.cpp)
-- Protocol: [Model Context Protocol](https://modelcontextprotocol.io/)
-- TTS: [Edge TTS](https://github.com/rany2/edge-tts)

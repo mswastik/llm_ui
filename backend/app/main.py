@@ -154,12 +154,6 @@ async def send_message(conversation_id: str, request: Request):
         }
 
 
-def _strip_thinking(text: str) -> str:
-    """Remove thinking tags and HTML tags from text."""
-    import re
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<[^>]+>', '', text).strip()
-    return text
 
 
 async def _generate_title_with_model(
@@ -209,7 +203,9 @@ async def _generate_title_with_model(
     if not title.strip() and thinking.strip():
         title = thinking
 
-    title = _strip_thinking(title)
+    import re
+    title = re.sub(r'<think>.*?</think>', '', title, flags=re.DOTALL)
+    title = re.sub(r'<[^>]+>', '', title).strip()
     words = title.split()
     if not words:
         return ""
@@ -217,6 +213,42 @@ async def _generate_title_with_model(
     return title[:60]
 
 
+async def _stream_with_stall_timeout(generator, initial_timeout=600, stall_timeout=60):
+    """Wrap an async generator with two-phase stall detection.
+
+    Replaces a total-time watchdog so the LLM can generate for arbitrarily long
+    responses as long as it keeps producing chunks. Compatible with both MTP
+    and non-MTP models.
+
+    Two phases:
+      1. Initial: generous timeout (default 600s) to allow for long prompt
+         processing / prefill before the first chunk arrives.
+      2. Stall: shorter timeout (default 60s) for subsequent chunks — catches
+         genuine stalls where the model stops generating.
+
+    Args:
+        generator: An async generator (e.g. llm_client.stream_chat(...)).
+        initial_timeout: Max seconds to wait for the FIRST chunk (prompt processing).
+        stall_timeout: Max seconds to wait for the NEXT chunk after the first one.
+
+    Yields:
+        Each chunk from the wrapped generator.
+    """
+    first_chunk = True
+    try:
+        while True:
+            timeout = initial_timeout if first_chunk else stall_timeout
+            chunk = await asyncio.wait_for(
+                generator.__anext__(),
+                timeout=timeout
+            )
+            first_chunk = False
+            yield chunk
+    except StopAsyncIteration:
+        pass
+    except asyncio.TimeoutError:
+        which = "initial (prompt processing)" if first_chunk else "inter-chunk"
+        print(f"[WATCHDOG] Stream stalled for {timeout}s ({which}) — no chunks received")
 
 
 async def _core_stream_handler(
@@ -392,81 +424,86 @@ async def _core_stream_handler(
                 assistant_message, thinking_content = "", ""
                 pending_tool_calls = []
 
-                # Watchdog: if the stream stalls (no chunks for 30s) or exceeds total 120s,
-                # break out to save partial response and yield done instead of hanging forever.
-                # This is critical for MTP models that can stop sending chunks mid-stream.
+                # Two-phase stall watchdog: generous initial timeout for prompt
+                # processing (long contexts can take 80s+), shorter timeout for
+                # inter-chunk stalls. Continues indefinitely while chunks arrive.
                 try:
-                    async with asyncio.timeout(120):
-                        async for chunk in llm_client.stream_chat(llm_messages, model=model, tools=all_tools):
-                            try:
-                                chunk_type = chunk.get("type")
+                    async for chunk in _stream_with_stall_timeout(
+                        llm_client.stream_chat(llm_messages, model=model, tools=all_tools),
+                        initial_timeout=600,
+                        stall_timeout=60
+                    ):
+                        try:
+                            chunk_type = chunk.get("type")
 
-                                if chunk_type == "content":
-                                    content = chunk.get("content", "")
-                                    assistant_message += content
-                                    if content:
-                                        message_blocks.append({
-                                            "type": "content",
-                                            "content": content
-                                        })
-                                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-                                elif chunk_type == "thinking":
-                                    thinking = chunk.get("content", "")
-                                    thinking_content += thinking
-                                    if thinking:
-                                        if message_blocks and message_blocks[-1].get('type') == 'thinking':
-                                            message_blocks[-1]['content'] += thinking
-                                        else:
-                                            message_blocks.append({
-                                                "type": "thinking",
-                                                "content": thinking
-                                            })
-                                    yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
-                                elif chunk_type == "tool_call":
-                                    print(f"[DEBUG] Tool call chunk received")
-                                    tc_data = chunk.get("tool_call")
-                                    print(f"[DEBUG] tc_data: {tc_data}")
-
-                                    if tc_data:
-                                        tool_name = tc_data.get('name')
-                                        tool_args = tc_data.get('arguments')
-
-                                        if tool_name:
-                                            call_key = f"{tool_name}_{len(pending_tool_calls)}"
-                                            pending_tool_calls.append({
-                                                "name": tool_name,
-                                                "arguments": tool_args if isinstance(tool_args, dict) else {},
-                                                "status": "pending",
-                                                "result": None,
-                                                "progress_history": [],
-                                                "key": call_key
-                                            })
-                                            print(f"[DEBUG] Pending tool call #{len(pending_tool_calls)-1}: {tool_name}, args: {pending_tool_calls[-1]['arguments']}")
-
-                                elif chunk_type == "tool_error":
-                                    # Premature EOS from MTP — tool call was started but never completed
-                                    tool_name = chunk.get("tool", "unknown")
-                                    error_msg = chunk.get("error", "Incomplete tool call")
-                                    print(f"[DEBUG] Incomplete tool call from stream: {tool_name}: {error_msg}")
-                                    # Add an error block so the user sees what happened
+                            if chunk_type == "content":
+                                content = chunk.get("content", "")
+                                assistant_message += content
+                                if content:
                                     message_blocks.append({
-                                        "type": "tool_call",
-                                        "name": tool_name,
-                                        "arguments": {},
-                                        "status": "error",
-                                        "result": {"error": error_msg},
-                                        "progress_history": []
+                                        "type": "content",
+                                        "content": content
                                     })
-                                    yield f"data: {json.dumps({'type': 'tool_error', 'tool': tool_name, 'error': error_msg})}\n\n"
+                                yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                            elif chunk_type == "thinking":
+                                thinking = chunk.get("content", "")
+                                thinking_content += thinking
+                                if thinking:
+                                    if message_blocks and message_blocks[-1].get('type') == 'thinking':
+                                        message_blocks[-1]['content'] += thinking
+                                    else:
+                                        message_blocks.append({
+                                            "type": "thinking",
+                                            "content": thinking
+                                        })
+                                yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
+                            elif chunk_type == "tool_call":
+                                print(f"[DEBUG] Tool call chunk received")
+                                tc_data = chunk.get("tool_call")
+                                print(f"[DEBUG] tc_data: {tc_data}")
 
-                            except Exception as e:
-                                print(f"[DEBUG] Error processing chunk: {e}")
-                                print(f"[DEBUG] Chunk data: {chunk}")
-                                import traceback
-                                traceback.print_exc()
-                            await asyncio.sleep(0)
+                                if tc_data:
+                                    tool_name = tc_data.get('name')
+                                    tool_args = tc_data.get('arguments')
+
+                                    if tool_name:
+                                        call_key = f"{tool_name}_{len(pending_tool_calls)}"
+                                        pending_tool_calls.append({
+                                            "name": tool_name,
+                                            "arguments": tool_args if isinstance(tool_args, dict) else {},
+                                            "status": "pending",
+                                            "result": None,
+                                            "progress_history": [],
+                                            "key": call_key
+                                        })
+                                        print(f"[DEBUG] Pending tool call #{len(pending_tool_calls)-1}: {tool_name}, args: {pending_tool_calls[-1]['arguments']}")
+
+                            elif chunk_type == "tool_error":
+                                # Premature EOS from MTP — tool call was started but never completed
+                                tool_name = chunk.get("tool", "unknown")
+                                error_msg = chunk.get("error", "Incomplete tool call")
+                                print(f"[DEBUG] Incomplete tool call from stream: {tool_name}: {error_msg}")
+                                # Add an error block so the user sees what happened
+                                message_blocks.append({
+                                    "type": "tool_call",
+                                    "name": tool_name,
+                                    "arguments": {},
+                                    "status": "error",
+                                    "result": {"error": error_msg},
+                                    "progress_history": []
+                                })
+                                yield f"data: {json.dumps({'type': 'tool_error', 'tool': tool_name, 'error': error_msg})}\n\n"
+
+                        except Exception as e:
+                            print(f"[DEBUG] Error processing chunk: {e}")
+                            print(f"[DEBUG] Chunk data: {chunk}")
+                            import traceback
+                            traceback.print_exc()
+                        await asyncio.sleep(0)
                 except asyncio.TimeoutError:
-                    print(f"[WATCHDOG] Stream timeout after 120s for request {request_id} — saving partial response")
+                    # Safety net — _stream_with_stall_timeout already catches this,
+                    # but handle it here to prevent unhandled exception propagation.
+                    print(f"[WATCHDOG] Unhandled timeout in stream processing for request {request_id}")
                     # Fall through to save partial response and yield done
 
                 # If we have pending tool calls, execute them and continue the loop

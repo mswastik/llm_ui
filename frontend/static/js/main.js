@@ -57,7 +57,31 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 import { sidebar } from './components/sidebar.js'
 import { chatComponent } from './components/chat.js'
 import { settings } from './components/settings.js'
-import { createModal } from './store.js'
+// ─── Modal factory (extracted from store.js which is now removed) ────
+function createModal(storeKey, openMethod, closeMethod) {
+  return function () {
+    return {
+      open: false,
+      openModal() {
+        this.open = true
+        if (typeof openMethod === 'function') {
+          try { openMethod() } catch(e) { console.error('[modal] openMethod error:', e) }
+        }
+      },
+      closeModal() {
+        if (closeMethod) {
+          try {
+            if (typeof closeMethod === 'function') closeMethod()
+            else if (typeof $store !== 'undefined' && typeof $store.ui[closeMethod] === 'function') {
+              $store.ui[closeMethod]()
+            }
+          } catch(e) { console.error('[modal] closeMethod error:', e) }
+        }
+        this.open = false
+      }
+    }
+  }
+}
 
 Alpine.data('sidebar', sidebar)
 Alpine.data('chat', chatComponent)

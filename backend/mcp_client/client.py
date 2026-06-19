@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
-from contextlib import asynccontextmanager
+
 
 from fastmcp import Client as FastMCPClient
 from mcp.types import CallToolResult
@@ -334,346 +334,98 @@ class MCPClientManager:
             raise
 
     def _parse_tool_result(self, result: CallToolResult) -> Dict[str, Any]:
-        """
-        Parse FastMCP CallToolResult to dictionary.
-        
-        Args:
-            result: CallToolResult from FastMCP
-            
-        Returns:
-            Dictionary with tool result data, including extracted sources
-        """
-        # CallToolResult has:
-        # - content: list of content items (text, image, resource, etc.)
-        # - isError: bool indicating if this is an error
-        # - structuredContent: optional structured content dict
-        
-        parsed = {
-            "content": [],
-            "is_error": result.isError if hasattr(result, 'isError') else False,
-            "structured_content": None,
-            "sources": []
-        }
-        
-        # Handle structured content if available
-        if hasattr(result, 'structuredContent') and result.structuredContent:
-            parsed["structured_content"] = result.structuredContent
-            # Extract sources from structured content (common pattern for search MCP servers)
-            if isinstance(result.structuredContent, dict):
-                structured = result.structuredContent
-                # Check for sources in various common key names
-                for key in ('sources', 'documents', 'results', 'hits', 'items'):
-                    if key in structured and isinstance(structured[key], list):
-                        parsed["sources"].extend(self._normalize_sources(structured[key]))
-                        break
-                # Also check structuredContent itself is a list
-                if not parsed["sources"] and isinstance(structured, list):
-                    parsed["sources"].extend(self._normalize_sources(structured))
-            
-        # Handle content list and extract sources from text items
+        """Parse FastMCP CallToolResult to dict with text content and sources."""
+        parsed = {"content": [], "is_error": getattr(result, 'isError', False), "sources": []}
+
         if result.content:
             for item in result.content:
-                if hasattr(item, 'type'):
-                    if item.type == "text":
-                        text = item.text if hasattr(item, 'text') else str(item)
-                        parsed["content"].append({
-                            "type": "text",
-                            "text": text
-                        })
-                        # Try to extract sources from text content (JSON array)
-                        text_sources = self._extract_sources_from_text(text)
-                        if text_sources:
-                            parsed["sources"].extend(text_sources)
-                        # Check if item has a source URL (MCP spec citation)
-                        if hasattr(item, 'source') and item.source:
-                            parsed["sources"].append({
-                                "title": str(item.source),
-                                "url": str(item.source)
-                            })
-                    elif item.type == "image":
-                        parsed["content"].append({
-                            "type": "image",
-                            "data": item.data if hasattr(item, 'data') else None,
-                            "mime_type": item.mimeType if hasattr(item, 'mimeType') else None
-                        })
-                    elif item.type == "resource":
-                        parsed["content"].append({
-                            "type": "resource",
-                            "resource": item.resource if hasattr(item, 'resource') else str(item)
-                        })
-                    else:
-                        parsed["content"].append({
-                            "type": item.type,
-                            "data": str(item)
-                        })
+                if hasattr(item, 'type') and item.type == "text":
+                    text = item.text if hasattr(item, 'text') else str(item)
+                    parsed["content"].append({"type": "text", "text": text})
+                    text_sources = self._extract_sources_from_text(text)
+                    if text_sources:
+                        parsed["sources"].extend(text_sources)
+                    if hasattr(item, 'source') and item.source:
+                        parsed["sources"].append({"title": str(item.source), "url": str(item.source)})
                 else:
-                    parsed["content"].append({"type": "unknown", "data": str(item)})
-        
+                    parsed["content"].append({"type": getattr(item, 'type', 'unknown'), "data": str(item)})
+
         # Deduplicate sources by URL
-        if parsed["sources"]:
-            seen_urls = set()
-            unique_sources = []
-            for s in parsed["sources"]:
-                url = s.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    unique_sources.append(s)
-                elif not url and s not in unique_sources:
-                    unique_sources.append(s)
-            parsed["sources"] = unique_sources
-                    
+        seen = set()
+        parsed["sources"] = [s for s in parsed.get("sources", []) if not (s.get("url") and s["url"] in seen or seen.add(s["url"]))]
         return parsed
 
+    @staticmethod
+    def _safe_url(url_str: str) -> str:
+        """Return a safe absolute URL or extract one from text. Returns empty string if unsafe."""
+        if not url_str:
+            return ""
+        s = str(url_str)
+        if s.startswith(('http://', 'https://', '#', '/', 'data:', 'ftp://', 'file://', 'mailto:')):
+            return s
+        import re
+        m = re.search(r'https?://\S+', s)
+        return m.group(0) if m else ""
+
+    @staticmethod
+    def _extract_url_from_text(text: str) -> str:
+        import re
+        match = re.search(r'https?://\S+', text)
+        return match.group(0) if match else ""
+
     def _normalize_sources(self, sources_list: list) -> list:
-        """
-        Normalize sources from various MCP server formats to a standard format.
-        
-        Standard format: {title, url, snippet, document_id}
-        
-        Handles formats like:
-        - [{title, url, snippet}]
-        - [{name, uri, description}]
-        - [{text, source, ...}]
-        - [{url, title, ...}]
-        """
+        """Normalize sources from various MCP formats to {title, url, snippet, document_id}."""
         normalized = []
         for source in sources_list:
             if not isinstance(source, dict):
                 continue
-            
-            # Extract title
-            title = (
-                source.get("title") or
-                source.get("name") or
-                source.get("label") or
-                source.get("filename") or
-                source.get("source") or
-                str(source)
-            )
-            
-            # Extract URL
-            url = (
-                source.get("url") or
-                source.get("uri") or
-                source.get("link") or
-                source.get("href") or
-                source.get("source") or
-                ""
-            )
-            
-            # Extract snippet/description
-            snippet = (
-                source.get("snippet") or
-                source.get("description") or
-                source.get("summary") or
-                source.get("text") or
-                ""
-            )
-            
-            # Extract document_id
-            doc_id = (
-                source.get("document_id") or
-                source.get("id") or
-                source.get("doc_id") or
-                ""
-            )
-            
-            # Validate URL — if it's not a valid absolute/safe-relative URL,
-            # try to extract an http/https URL from the string (some MCP servers
-            # embed the URL in text like "Title — https://...").
-            # This prevents malformed relative URLs like "GitHub — https://..."
-            # from being resolved against localhost:8002 by the browser.
-            url_str = str(url)
-            if url_str and not self._is_valid_source_url(url_str):
-                extracted = self._extract_url_from_text(url_str)
-                if extracted:
-                    url_str = extracted
-                else:
-                    continue
-
-            normalized.append({
-                "title": str(title),
-                "url": url_str,
-                "snippet": str(snippet),
-                "document_id": str(doc_id)
-            })
-        
+            title = source.get("title") or source.get("name") or str(source)
+            url = self._safe_url(source.get("url") or source.get("uri") or source.get("link") or source.get("href") or "")
+            if not url:
+                continue
+            snippet = source.get("snippet") or source.get("description") or source.get("text") or ""
+            doc_id = source.get("document_id") or source.get("id") or ""
+            normalized.append({"title": str(title), "url": url, "snippet": str(snippet), "document_id": str(doc_id)})
         return normalized
 
-    def _is_valid_source_url(self, url: str) -> bool:
-        """Check if a source URL is safe to use as-is (absolute or known safe relative)."""
-        if not url:
-            return False
-        # Absolute URLs with schemes
-        if url.startswith(('http://', 'https://', 'ftp://', 'file://', 'mailto:')):
-            return True
-        # Fragment/anchor links (used by RAG service)
-        if url.startswith('#'):
-            return True
-        # Absolute path references
-        if url.startswith('/'):
-            return True
-        # Data URIs
-        if url.startswith('data:'):
-            return True
-        # Anything else (text, relative path without leading /, etc.) would be
-        # resolved against the app origin by the browser — not safe to use as-is
-        return False
-
-    def _extract_url_from_text(self, text: str) -> str:
-        """
-        Extract the first http/https URL from a text string.
-
-        Some MCP servers embed the URL inside text like:
-          "GitHub \u2014 https://github.com/..."
-          "check out https://example.com for details"
-
-        Returns the extracted URL, or empty string if none found.
-        """
-        import re
-        match = re.search(r'https?://\S+', text)
-        if match:
-            return match.group(0)
-        return ""
-
     def _extract_sources_from_text(self, text: str) -> list:
-        """
-        Try to extract sources from text content.
-        
-        Handles multiple formats:
-        1. Plain text SOURCES section: "SOURCES:\n[1] Title — URL\n[2] Title — URL"
-        2. JSON array: [{title, url}, ...]
-        3. JSON array embedded in text
-        """
-        import json
-        
-        # Try plain text SOURCES format first (most common for search MCP servers)
-        # Format: SOURCES:\n[1] Title — URL\n[2] Title — URL
-        text_sources = self._extract_sources_from_text_format(text)
-        if text_sources:
-            return text_sources
-        
-        # Try JSON array
-        return self._extract_sources_from_json(text)
+        """Extract sources from text: SOURCES section or JSON array."""
+        import json, re
 
-    def _extract_sources_from_text_format(self, text: str) -> list:
-        """
-        Extract sources from plain text SOURCES section.
-        
-        Handles formats like:
-        SOURCES:
-        [1] Title — URL
-        [2] Title — URL
-        
-        Also handles variations:
-        SOURCES:\n[1] Title - URL\n[2] Title @ URL
-        """
-        text = text.strip()
-        
-        # Find SOURCES section
-        sources_marker = None
+        # Try plain text SOURCES format first
+        text_stripped = text.strip()
         for marker in ['SOURCES:', 'SOURCES', 'REFERENCES:', 'REFERENCES', 'LINKS:', 'LINKS']:
-            idx = text.find(marker)
-            if idx != -1:
-                sources_marker = idx
-                break
-        
-        if sources_marker is None:
-            return []
-        
-        sources_text = text[sources_marker + len(marker):].strip()
-        if not sources_text:
-            return []
-        
-        sources = []
-        # Match lines like: [1] Title — URL or [1] Title - URL or [1] Title @ URL
-        # Also handle: [1] URL (just URL, no title)
-        import re
-        for line in sources_text.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Pattern 1: [N] Title — URL (em dash separator — most distinctive)
-            match = re.match(r'\[\s*(\d+)\s*\]\s*(.+?)\s*—\s*(.+)', line)
-            if match:
-                url = self._extract_url_from_text(match.group(3).strip())
-                if url:
-                    sources.append({
-                        "title": match.group(2).strip(),
-                        "url": url,
-                        "snippet": ""
-                    })
-                    continue
+            idx = text_stripped.find(marker)
+            if idx >= 0:
+                rest = text_stripped[idx + len(marker):].strip()
+                sources = []
+                for line in rest.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # [N] Title — URL  or  [N] URL
+                    m = re.match(r'\[\s*\d+\s*\]\s*(?:([^—\[\]]+?)\s*[—\-@:]\s+)?(https?://\S+)', line)
+                    if m:
+                        t = (m.group(1) or m.group(2)).strip()
+                        url = m.group(2)
+                        sources.append({"title": t, "url": url, "snippet": ""})
+                if sources:
+                    return sources
 
-            # Pattern 2: [N] URL (just URL, no title)
-            match = re.match(r'\[\s*(\d+)\s*\]\s*(https?://\S+)', line)
-            if match:
-                url = match.group(2).strip()
-                sources.append({
-                    "title": url,
-                    "url": url,
-                    "snippet": ""
-                })
-                continue
-
-            # Pattern 3: [N] Title —/ - /@/: URL (require http/https in URL portion)
-            # This is a fallback for lines without em dash. The non-greedy match
-            # naturally handles hyphens/colons within titles.
-            match = re.match(r'\[\s*(\d+)\s*\]\s*(.*?)\s*[—\-@:]\s+(https?://\S+)', line)
-            if match:
-                title = match.group(2).strip()
-                url = match.group(3).strip()
-                if url.startswith(('http://', 'https://')):
-                    sources.append({
-                        "title": title if title else url,
-                        "url": url,
-                        "snippet": ""
-                    })
-                    continue
-        
-        return sources if sources else []
-
-    def _extract_sources_from_json(self, text: str) -> list:
-        """
-        Try to extract a JSON array of sources from text content.
-        
-        Looks for patterns like:
-        - [\n  { ... sources ... }\n]\n at the end of text
-        - JSON array anywhere in text
-        """
-        import json
-        
-        # Try to find a JSON array at the end of the text
-        text = text.strip()
-        if not text.startswith('['):
-            # Try to find JSON array embedded in text
-            bracket_start = text.find('[\n')
-            if bracket_start == -1:
-                bracket_start = text.find('[ ')
-            if bracket_start == -1:
-                bracket_start = text.find('[')
-            
-            if bracket_start == -1:
-                return []
-            
-            # Find the matching closing bracket
+        # Try JSON array
+        bracket_start = text.find('[')
+        if bracket_start >= 0:
             bracket_end = text.rfind(']')
-            if bracket_end == -1:
-                return []
-            
-            json_str = text[bracket_start:bracket_end + 1]
-        else:
-            json_str = text
-        
-        try:
-            sources = json.loads(json_str)
-            if isinstance(sources, list):
-                return self._normalize_sources(sources)
-        except (json.JSONDecodeError, ValueError):
-            pass
-        
+            if bracket_end > bracket_start:
+                try:
+                    parsed = json.loads(text[bracket_start:bracket_end + 1])
+                    if isinstance(parsed, list):
+                        return self._normalize_sources(parsed)
+                except (json.JSONDecodeError, ValueError):
+                    pass
         return []
+
+
 
     async def list_all_tools(self, include_disabled: bool = True) -> List[Dict]:
         """
@@ -873,41 +625,6 @@ class MCPClientManager:
         self.servers.clear()
         self._connection_locks.clear()
 
-    @asynccontextmanager
-    async def get_server_client(self, server_name: str):
-        """
-        Context manager to get a server's client for direct access.
-        
-        Usage:
-            async with manager.get_server_client("my_server") as client:
-                tools = await client.list_tools()
-                
-        Args:
-            server_name: Server name
-            
-        Yields:
-            FastMCP Client instance
-        """
-        if server_name not in self.servers:
-            raise ValueError(f"MCP server '{server_name}' not found")
-            
-        instance = self.servers[server_name]
-        
-        if not instance.client:
-            raise ValueError(f"No client available for '{server_name}'")
-            
-        # The client manages its own context
-        async with instance.client:
-            yield instance.client
 
 
-# Global instance for convenience
-_mcp_manager: Optional[MCPClientManager] = None
 
-
-def get_mcp_manager() -> MCPClientManager:
-    """Get or create the global MCP manager instance."""
-    global _mcp_manager
-    if _mcp_manager is None:
-        _mcp_manager = MCPClientManager()
-    return _mcp_manager

@@ -16,7 +16,6 @@ from typing import Optional, Dict, Any, List
 from pathlib import Path
 from dataclasses import dataclass
 from settings import UPLOAD_DIR
-from tools.errors import handle_tool_errors
 
 # Try to import TTS backends
 try:
@@ -172,7 +171,7 @@ class TTSService:
             self._kokoro_pipeline = None
             print(f"Kokoro pipeline reset due to device/lang change")
     
-    @handle_tool_errors
+
     async def generate_speech(
         self,
         text: str,
@@ -391,13 +390,15 @@ class TTSService:
         voices = []
         
         if self.config.engine == "edge-tts" and HAS_EDGE_TTS:
-            # Edge TTS voices are fetched asynchronously
-            # This is a simplified list of common voices
+            # ponytail: hardcoded subset; edge_tts.list_voices() is async and
+            # this method is sync. Upgrade to async if full voice list is needed.
             voices = [
                 {"id": "en-US-ChristopherNeural", "name": "Christopher (Male, US)", "gender": "male", "locale": "en-US"},
                 {"id": "en-US-JennyNeural", "name": "Jenny (Female, US)", "gender": "female", "locale": "en-US"},
                 {"id": "en-GB-SoniaNeural", "name": "Sonia (Female, UK)", "gender": "female", "locale": "en-GB"},
                 {"id": "en-AU-NatashaNeural", "name": "Natasha (Female, AU)", "gender": "female", "locale": "en-AU"},
+                {"id": "en-IN-NeerjaNeural", "name": "Neerja (Female, IN)", "gender": "female", "locale": "en-IN"},
+                {"id": "en-IN-PrabhatNeural", "name": "Prabhat (Male, IN)", "gender": "male", "locale": "en-IN"},
             ]
         elif self.config.engine == "pyttsx3" and HAS_PYTTSX3:
             for voice in self.engine.getProperty('voices'):

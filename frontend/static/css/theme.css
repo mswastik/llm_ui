@@ -605,8 +605,9 @@ h4 { font-size: 0.95rem; font-weight: 600; }
 .sidebar-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0px;
   padding: 3px 4px;
+  margin:0 !important;
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--transition-fast);

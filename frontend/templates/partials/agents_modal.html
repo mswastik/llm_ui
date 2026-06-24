@@ -11,7 +11,7 @@
   <div class="modal-content" style="max-width: 800px; width: 100%">
     <!-- Header -->
     <div
-      class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0"
+      class="px-4 py-2 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0"
     >
       <h2 class="text-lg font-semibold flex items-center gap-2">
         <i class="ph ph-users text-[var(--accent-primary)]"></i>
@@ -110,9 +110,9 @@
         @click.self="showCreate = false"
         class="modal-backdrop modal-backdrop-form"
       >
-        <div class="modal-content" style="max-width: 550px; width: 100%">
+        <div class="modal-content" style="max-width: 850px; height:100%; width: 100%">
           <div
-            class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between"
+            class="px-4 py-2 border-b border-[var(--border-primary)] flex items-center justify-between"
           >
             <h2
               class="text-lg font-semibold"
@@ -123,10 +123,11 @@
             </button>
           </div>
           <div
-            class="p-6 space-y-4 overflow-y-auto"
-            style="max-height: calc(90vh - 140px)"
+            class="flex flex-col px-4 py-2 space-y-4 overflow-y-auto"
+            style="height: 100%"
           >
-            <div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Name *</label
@@ -137,32 +138,7 @@
                 class="input text-sm"
                 placeholder="My Assistant"
               />
-            </div>
-            <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Description</label
-              >
-              <input
-                type="text"
-                x-model="formData.description"
-                class="input text-sm"
-                placeholder="What does this agent do?"
-              />
-            </div>
-            <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >System Prompt</label
-              >
-              <textarea
-                x-model="formData.system_prompt"
-                rows="4"
-                class="input text-sm resize-none"
-                placeholder="You are a helpful assistant..."
-              ></textarea>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
+              </div>
               <div>
                 <label
                   class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
@@ -178,6 +154,20 @@
                   </template>
                 </select>
               </div>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Description</label
+              >
+              <input
+                type="text"
+                x-model="formData.description"
+                class="input text-sm"
+                placeholder="What does this agent do?"
+              />
+            </div>
+            <div class="grid grid-cols-4 gap-4">
               <div>
                 <label
                   class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
@@ -192,8 +182,6 @@
                   class="input text-sm"
                 />
               </div>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
               <div>
                 <label
                   class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
@@ -216,8 +204,7 @@
                   class="input text-sm"
                 />
               </div>
-            </div>
-            <label class="flex items-center gap-2 cursor-pointer">
+              <label class="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 x-model="formData.enable_rag"
@@ -227,9 +214,23 @@
                 >Enable RAG</span
               >
             </label>
+            </div>
+            
+            <div class="flex flex-col flex-grow">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >System Prompt</label
+              >
+              <textarea
+                x-model="formData.system_prompt"
+                rows="4"
+                class="flex flex-grow input text-sm resize-none"
+                placeholder="You are a helpful assistant..."
+              ></textarea>
+            </div>
           </div>
           <div
-            class="px-6 py-4 border-t border-[var(--border-primary)] flex justify-end gap-2"
+            class="px-4 py-2 border-t border-[var(--border-primary)] flex justify-end gap-2"
           >
             <button @click="showCreate = false" class="btn btn-secondary">
               Cancel

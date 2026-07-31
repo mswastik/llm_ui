@@ -234,7 +234,8 @@
               >
                 <option value="edge-tts">Edge TTS</option>
                 <option value="pyttsx3">Pyttsx3</option>
-                <option value="kokoro">Kokoro TTS</option>
+                <option value="kokoro">Kokoro TTS (82M params)</option>
+                <option value="inflect-nano">Inflect-Nano v1 (4.6M params)</option>
               </select>
             </div>
             <div>
@@ -292,6 +293,32 @@
                 <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
+            </div>
+            <div x-show="$store.ui.settingsData.tts_engine === 'inflect-nano'" class="md:col-span-2">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Model Path</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.inflect_nano_model_path"
+                class="input text-sm"
+                placeholder="models/Inflect-Nano-v1"
+              />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Path to cloned repo from
+                <a href="https://huggingface.co/owensong/Inflect-Nano-v1" target="_blank" class="text-[var(--text-link)] hover:underline">hf.co/owensong/Inflect-Nano-v1</a>
+              </p>
+            </div>
+            <div class="md:col-span-2">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  x-model="$store.ui.settingsData.tts_auto_read"
+                  class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                />
+                <span class="text-sm text-[var(--text-secondary)]">Automatically read assistant responses aloud</span>
+              </label>
             </div>
           </div>
         </div>

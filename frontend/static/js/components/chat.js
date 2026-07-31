@@ -2,7 +2,8 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js'
+import { ttsService } from '../services/tts.js?v=32'
+import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
 const chatComponent = () => ({
@@ -18,6 +19,11 @@ const chatComponent = () => ({
   availableModels: [],
   availableAgents: [],
   documents: [],
+
+  // MCP server management (composer dropdown)
+  mcpServers: [],
+  mcpView: 'list', // 'list' | 'form'
+  mcpForm: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60, originalName: null },
   currentConversationTitle: 'New Chat',
 
   // Input focus state for expanded input sizing
@@ -30,6 +36,10 @@ const chatComponent = () => ({
   // Expanded state for collapsible blocks
   expandedBlocks: {},
 
+  // Recording state
+  isRecording: false,
+  sttSupported: false,
+
   // Source content modal state
   selectedSource: null,
   showSourceModal: false,
@@ -37,6 +47,24 @@ const chatComponent = () => ({
   // Tracks whether stream completed normally (received 'done' event)
   // If false on connection close, response may be incomplete (MTP stall / timeout)
   streamEndedNormally: false,
+
+  // ─── Composer getters ────────────────────────────────
+  get selectedModelName() {
+    const m = this.availableModels.find(x => x.id === this.selectedModel)
+    return m ? (m.name || m.id) : 'Model'
+  },
+
+  get selectedAgentName() {
+    const a = this.availableAgents.find(x => x.id === this.selectedAgentId)
+    return a ? a.name : 'Agent'
+  },
+
+  get mcpSummary() {
+    const n = this.mcpServers.length
+    if (!n) return 'MCP'
+    const on = this.mcpServers.filter(s => s.enabled).length
+    return on + '/' + n
+  },
 
   // ─── Getters (reactive to store) ──────────────────────
   get messages() {
@@ -72,13 +100,14 @@ const chatComponent = () => ({
   // ─── Init ─────────────────────────────────────────────
   async init() {
     this.syncFromStore()
-    await Promise.all([this.loadModels(), this.loadAgents(), this.loadDocuments()])
+    await Promise.all([this.loadModels(), this.loadAgents(), this.loadDocuments(), this.loadMCPServers()])
     this.$store.chat.loadSavedModel()
     this.selectedModel = this.$store.chat.selectedModel
     this.$store.chat.loadSavedAgent()
     this.selectedAgentId = this.$store.chat.selectedAgentId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     await ttsService.checkAvailability()
+    this.sttSupported = sttService.isSupported()
     this.checkActiveStream()
 
     window.addEventListener('sync-agent', (e) => {
@@ -133,6 +162,110 @@ const chatComponent = () => ({
       this.documents = data.documents || []
       this.$store.ui.documents = this.documents
     } catch (e) { console.error('[chat] Documents:', e) }
+  },
+
+  // ─── MCP Servers (composer dropdown) ──────────────────
+  async loadMCPServers() {
+    try {
+      const [serversData, toolsData] = await Promise.all([
+        api.get('/api/mcp/servers'),
+        api.get('/api/mcp/tools')
+      ])
+      this.mcpServers = (serversData.servers || []).map(s => ({
+        ...s,
+        tools: (toolsData.tools || []).filter(t => t.server === s.name),
+        disabled_tools: s.disabled_tools || [],
+        toolsExpanded: false,
+        enabled: s.enabled !== false,
+        error: s.error || null
+      }))
+    } catch (e) { console.error('[chat] MCP servers:', e) }
+  },
+
+  async toggleServerEnabled(server, enabled) {
+    try {
+      await api.post(`/api/mcp/servers/${encodeURIComponent(server.name)}/toggle`, { enabled })
+      server.enabled = enabled
+    } catch (e) { this.$store.ui.showToast('Toggle failed: ' + e.message, 'error') }
+  },
+
+  async toggleToolEnabled(server, toolName, disabled) {
+    try {
+      await api.put(`/api/mcp/servers/${encodeURIComponent(server.name)}/tools/toggle`, { tool_name: toolName, disabled })
+      const idx = server.disabled_tools.indexOf(toolName)
+      if (disabled && idx === -1) server.disabled_tools.push(toolName)
+      if (!disabled && idx !== -1) server.disabled_tools.splice(idx, 1)
+    } catch (e) { this.$store.ui.showToast('Tool toggle failed', 'error') }
+  },
+
+  async reconnectServer(name) {
+    try {
+      await api.post(`/api/mcp/servers/${encodeURIComponent(name)}/reconnect`)
+      await this.loadMCPServers()
+      this.$store.ui.showToast('Reconnected', 'success')
+    } catch (e) { this.$store.ui.showToast('Reconnect failed: ' + e.message, 'error') }
+  },
+
+  async refreshServerTools(name) {
+    try {
+      await api.post(`/api/mcp/servers/${encodeURIComponent(name)}/refresh`)
+      await this.loadMCPServers()
+      this.$store.ui.showToast('Tools refreshed', 'success')
+    } catch (e) { this.$store.ui.showToast('Refresh failed: ' + e.message, 'error') }
+  },
+
+  async removeServer(name) {
+    if (!confirm(`Remove MCP server "${name}"?`)) return
+    try {
+      await api.delete(`/api/mcp/servers/${encodeURIComponent(name)}`)
+      await this.loadMCPServers()
+      this.$store.ui.showToast('Server removed', 'success')
+    } catch (e) { this.$store.ui.showToast('Remove failed: ' + e.message, 'error') }
+  },
+
+  openAddServer() {
+    this.mcpForm = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60, originalName: null }
+    this.mcpView = 'form'
+  },
+
+  openEditServer(server) {
+    this.mcpForm = {
+      name: server.name, transport_type: server.transport_type,
+      command: server.command || '', args: JSON.stringify(server.args || []),
+      url: server.url || '', env: server.env ? JSON.stringify(server.env) : '{}',
+      timeout: server.timeout || 60, originalName: server.name
+    }
+    this.mcpView = 'form'
+  },
+
+  cancelMCPForm() { this.mcpView = 'list' },
+
+  async saveMCPServer() {
+    const f = this.mcpForm
+    const name = (f.name || '').trim()
+    if (!name) { this.$store.ui.showToast('Name is required', 'error'); return }
+    if (f.transport_type !== 'stdio' && !f.url) { this.$store.ui.showToast('URL required for SSE/HTTP', 'error'); return }
+    if (f.transport_type === 'stdio' && !f.command) { this.$store.ui.showToast('Command required for stdio', 'error'); return }
+
+    let args = [], env = {}
+    try { args = JSON.parse(f.args || '[]'); if (!Array.isArray(args)) args = [] }
+    catch (e) { this.$store.ui.showToast('Invalid JSON in Args', 'error'); return }
+    try { env = JSON.parse(f.env || '{}'); if (typeof env !== 'object' || Array.isArray(env)) env = {} }
+    catch (e) { this.$store.ui.showToast('Invalid JSON in Env', 'error'); return }
+
+    const payload = { name, transport_type: f.transport_type, command: f.command, args, env, url: f.url || null, timeout: f.timeout || 60 }
+    try {
+      const res = f.originalName
+        ? await api.put(`/api/mcp/servers/${encodeURIComponent(f.originalName)}`, payload)
+        : await api.post('/api/mcp/servers', payload)
+      await this.loadMCPServers()
+      this.mcpView = 'list'
+      if (res && res.connected === false) {
+        this.$store.ui.showToast(res.error || res.message || 'Saved but connection failed', 'warning')
+      } else {
+        this.$store.ui.showToast(f.originalName ? 'Server updated!' : 'Server added!', 'success')
+      }
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
   },
 
   // ─── Active Stream Check ──────────────────────────────
@@ -218,7 +351,9 @@ const chatComponent = () => ({
     if (type?.includes('pdf')) return 'ph-file-pdf'
     if (type?.includes('spreadsheet') || type?.includes('excel')) return 'ph-file-xls'
     if (type?.includes('word') || type?.includes('document')) return 'ph-file-doc'
-    if (type?.includes('text') || type?.includes('json')) return 'ph-file-text'
+    if (type?.includes('text') || type?.includes('json') || type?.includes('markdown')) return 'ph-file-text'
+    if (type?.includes('script') || type?.includes('python') || type?.includes('javascript')) return 'ph-file-code'
+    if (type?.includes('zip') || type?.includes('tar') || type?.includes('gz')) return 'ph-file-archive'
     return 'ph-file'
   },
 
@@ -258,11 +393,25 @@ const chatComponent = () => ({
       }
     }
 
+    // Build display content with file references embedded as markdown
+    // (belt-and-suspenders: files are also stored separately for icon rendering)
+    let displayContent = text
+    if (uploadedFiles.length > 0) {
+      const fileRefs = uploadedFiles.map(f => {
+        const fname = f.filename || 'file'
+        if (f.type?.startsWith('image/')) {
+          return `![${fname}](${f.url})`
+        }
+        return `📎 [${fname}](${f.url})`
+      }).join('  \n')
+      displayContent = fileRefs + (text ? '\n\n' + text : '')
+    }
+
     // Add user message with file metadata
     const userMsg = {
       id: helpers.generateId(),
       role: 'user',
-      content: text,
+      content: displayContent,
       files: uploadedFiles,
       created_at: new Date().toISOString()
     }
@@ -431,6 +580,19 @@ const chatComponent = () => ({
         this.$nextTick(() => {
           this.$refs?.chatInput?.focus()
         })
+        // Auto-read aloud if enabled
+        if (this.$store.ui.settingsData?.tts_auto_read) {
+          const lastMsg = this.messages[this.messages.length - 1]
+          if (lastMsg?.role === 'assistant' && lastMsg.content?.trim()) {
+            const plainText = formatters.stripMarkdown(lastMsg.content)
+            const plainMsg = { ...lastMsg, content: plainText }
+            ttsService.speak(plainMsg, null, () => {
+              this.$store.ui.currentAudio = null
+              this.$store.ui.currentAudioMessageId = null
+              this.$store.ui.isPlaying = false
+            })
+          }
+        }
         break
     }
 
@@ -604,6 +766,34 @@ const chatComponent = () => ({
     }
   },
 
+  // ─── Voice Recording ──────────────────────────────────
+  async toggleRecording() {
+    if (this.isRecording) {
+      // Stop recording and transcribe
+      try {
+        const text = await sttService.stopRecording()
+        this.isRecording = false
+        if (text) {
+          this.inputMessage = text
+          // Auto-focus input after transcription
+          this.$nextTick(() => this.$refs?.chatInput?.focus())
+        }
+      } catch (e) {
+        this.isRecording = false
+        this.$store.ui.showToast(e.message || 'Recording failed', 'error')
+      }
+    } else {
+      // Start recording
+      try {
+        await sttService.startRecording()
+        this.isRecording = true
+      } catch (e) {
+        this.isRecording = false
+        this.$store.ui.showToast(e.message || 'Could not start recording', 'error')
+      }
+    }
+  },
+
   cancelRequest() {
     sseService.close()
     this.isLoading = false
@@ -655,16 +845,30 @@ const chatComponent = () => ({
   // ─── TTS ──────────────────────────────────────────────
   async speakMessage(msg) {
     const loading = this.$store.ui
-    loading.toast = { show: true, message: 'Generating speech...', type: 'info' }
-    setTimeout(() => { loading.toast = { show: false, message: '', type: 'success' } }, 1500)
+    // Set playing state immediately BEFORE the async request so the pause icon shows right away
+    this.$store.ui.currentAudioMessageId = msg.id
+    this.$store.ui.isPlaying = true
 
-    const success = await ttsService.speak(msg,
-      (err) => this.$store.ui.showToast(err, 'error')
+    // Send plain text (no markdown) to TTS so it doesn't read out asterisks, hyphens, etc.
+    const plainText = formatters.stripMarkdown(msg.content || '')
+    const plainMsg = { ...msg, content: plainText }
+
+    const success = await ttsService.speak(plainMsg,
+      (err) => this.$store.ui.showToast(err, 'error'),
+      () => {
+        // Audio finished or failed — reset UI state
+        this.$store.ui.currentAudio = null
+        this.$store.ui.currentAudioMessageId = null
+        this.$store.ui.isPlaying = false
+      }
     )
     if (success) {
       this.$store.ui.currentAudio = ttsService.currentAudio
-      this.$store.ui.currentAudioMessageId = ttsService.currentAudioMessageId
-      this.$store.ui.isPlaying = ttsService.isPlaying
+    } else {
+      // TTS request failed — revert the optimistic UI state
+      this.$store.ui.currentAudio = null
+      this.$store.ui.currentAudioMessageId = null
+      this.$store.ui.isPlaying = false
     }
   },
 
@@ -720,6 +924,16 @@ const chatComponent = () => ({
   // ─── UI Handlers ──────────────────────────────────────
   updateSelectedModel() {
     this.$store.chat.setModel(this.selectedModel)
+  },
+
+  selectModel(id) {
+    this.selectedModel = id
+    this.updateSelectedModel()
+  },
+
+  selectAgent(id) {
+    this.selectedAgentId = id || null
+    this.updateSelectedAgent()
   },
 
   async updateSelectedAgent() {

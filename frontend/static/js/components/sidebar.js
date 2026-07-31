@@ -236,6 +236,23 @@ const sidebar = () => ({
     return deduped.map(msg => {
       // Extract files from metadata if not already on the message
       const files = msg.files || (msg.metadata?.files) || []
+
+      // Embed file references in content for display (files separate property too)
+      if (files.length > 0) {
+        const fileRefs = files.map(f => {
+          const fname = f.filename || 'file'
+          if (f.type?.startsWith('image/')) {
+            return `![${fname}](${f.url})`
+          }
+          return `📎 [${fname}](${f.url})`
+        }).join('  \n')
+        // Only prepend if content doesn't already have file refs (idempotent)
+        const existing = msg.content || ''
+        if (!existing.includes('📎') && !existing.includes('![' + (files[0]?.filename || ''))) {
+          msg.content = fileRefs + (existing ? '\n\n' + existing : '')
+        }
+      }
+
       const blocks = msg.blocks || (msg.metadata?.blocks)
       if (blocks?.length) {
         return { ...msg, files, blocks, tool_calls: msg.tool_calls || [] }

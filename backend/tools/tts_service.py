@@ -30,6 +30,21 @@ try:
 except ImportError:
     HAS_PYTTSX3 = False
 
+def _check_inflect_nano_available(model_path: Optional[str] = None):
+    """Check if Inflect-Nano-v1 model files exist at the configured path.
+
+    Always re-checks the filesystem — no global cache, because the user
+    may change the path in settings or clone the repo after startup.
+    """
+    path = model_path or "models/Inflect-Nano-v1"
+    acoustic = os.path.join(path, "weights", "inflect_nano_v1_acoustic.pt")
+    vocoder = os.path.join(path, "weights", "inflect_nano_v1_vocoder.pt")
+    available = os.path.exists(acoustic) and os.path.exists(vocoder)
+    if available:
+        print(f"[TTS] Inflect-Nano-v1 found at {path}")
+    return available
+
+
 # Kokoro is imported lazily to avoid import-time errors with spacy/pydantic on Python 3.14
 # We check availability when actually needed
 HAS_KOKORO = None  # None means "not checked yet"
@@ -73,6 +88,7 @@ class TTSConfig:
     rate: str = "+0%"  # Speech rate adjustment
     volume: float = 1.0  # Volume (0.0 to 1.0)
     output_dir: str = UPLOAD_DIR
+    inflect_nano_model_path: str = "models/Inflect-Nano-v1"  # Path to cloned HF repo
     kokoro_lang: str = "a"  # Kokoro language code: 'a' for American English, 'b' for British English
     kokoro_device: str = "cpu"  # Kokoro device: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
     kokoro_volume: float = 1.0  # Kokoro volume (0.0 to 1.0)
@@ -87,6 +103,7 @@ class TTSConfig:
             rate=settings_dict.get('tts_rate', '+0%'),
             volume=float(settings_dict.get('tts_volume', 1.0)),
             output_dir=settings_dict.get('upload_dir', UPLOAD_DIR),
+            inflect_nano_model_path=settings_dict.get('inflect_nano_model_path', 'models/Inflect-Nano-v1'),
             kokoro_lang=settings_dict.get('kokoro_lang', 'a'),
             kokoro_device=settings_dict.get('kokoro_device', 'cpu'),
             kokoro_volume=float(settings_dict.get('kokoro_volume', 1.0)),
@@ -111,6 +128,12 @@ class TTSService:
         
         # Initialize Kokoro pipeline if needed (lazy loading)
         self._kokoro_pipeline = None
+
+        # Inflect-Nano model cache (loaded once, reused across calls)
+        self._inflect_nano_acoustic = None
+        self._inflect_nano_vocoder = None
+        self._inflect_nano_speakers = None
+        self._inflect_nano_device = None
     
     def _ensure_output_dir(self):
         """Ensure TTS output directory exists"""
@@ -125,8 +148,8 @@ class TTSService:
         else:
             text_hash = hashlib.md5(f"{text}_{voice}_{rate}".encode()).hexdigest()
 
-        # Kokoro outputs WAV format, so we use wav for kokoro
-        actual_format = "wav" if self.config.engine == "kokoro" else output_format
+        # Kokoro and Inflect-Nano output WAV format
+        actual_format = "wav" if self.config.engine in ("kokoro", "inflect-nano") else output_format
 
         return f"tts_{text_hash}.{actual_format}"
 
@@ -145,9 +168,10 @@ class TTSService:
             try:
                 self._kokoro_pipeline = KPipeline(lang_code=lang_code, device=device)
             except RuntimeError as e:
-                if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
-                    print(f"Warning: CUDA OOM error occurred: {e}. Falling back to CPU.")
-                    # Fall back to CPU
+                msg = str(e).lower()
+                # Fall back to CPU when CUDA is unusable (OOM, or torch built without CUDA)
+                if "cuda" in msg and ("not available" in msg or "not compiled" in msg or "out of memory" in msg):
+                    print(f"Warning: Kokoro CUDA unavailable ({e}). Falling back to CPU.")
                     self._kokoro_pipeline = KPipeline(lang_code=lang_code, device='cpu')
                 else:
                     raise e
@@ -200,18 +224,30 @@ class TTSService:
                 "cached": True
             }
 
-        if self.config.engine == "edge-tts" and HAS_EDGE_TTS:
+        engine = self.config.engine
+
+        if engine == "edge-tts" and HAS_EDGE_TTS:
             return await self._generate_with_edge_tts(text, voice, rate, filepath)
-        elif self.config.engine == "pyttsx3" and HAS_PYTTSX3:
+        elif engine == "pyttsx3" and HAS_PYTTSX3:
             return await self._generate_with_pyttsx3(text, filepath)
-        elif self.config.engine == "kokoro" and _check_kokoro_available():
+        elif engine == "kokoro" and _check_kokoro_available():
             return await self._generate_with_kokoro(text, voice, filepath)
-        elif HAS_EDGE_TTS:
+        elif engine == "inflect-nano" and _check_inflect_nano_available(self.config.inflect_nano_model_path):
+            return await self._generate_with_inflect_nano(text, filepath)
+
+        # User explicitly chose an engine but it's not available → tell them, don't silently fall back
+        if engine in ("edge-tts", "pyttsx3", "kokoro", "inflect-nano"):
+            return {"success": False, "error": f"TTS engine '{engine}' is selected but not available. Check Settings → TTS."}
+
+        # Auto-fallback when no engine is explicitly selected (shouldn't happen, but safe)
+        if HAS_EDGE_TTS:
             return await self._generate_with_edge_tts(text, voice, rate, filepath)
         elif _check_kokoro_available():
             return await self._generate_with_kokoro(text, voice, filepath)
+        elif _check_inflect_nano_available(self.config.inflect_nano_model_path):
+            return await self._generate_with_inflect_nano(text, filepath)
         else:
-            return {"success": False, "error": "No TTS engine available. Install edge-tts, pyttsx3, or kokoro."}
+            return {"success": False, "error": "No TTS engine available. Install edge-tts, pyttsx3, inflect-nano, or kokoro."}
     
     async def _generate_with_edge_tts(
         self,
@@ -384,7 +420,118 @@ class TTSService:
             return {"success": False, "error": f"Missing dependency for Kokoro: {missing_pkg}. Install with: pip install {missing_pkg}"}
         except Exception as e:
             return {"success": False, "error": f"Kokoro TTS error: {str(e)}"}
-    
+
+    async def _generate_with_inflect_nano(self, text: str, filepath: str) -> Dict[str, Any]:
+        """Generate speech using Inflect-Nano-v1 (ultra-small local TTS, ~4.6M params).
+
+        Models are cached in the service instance so they are only loaded once.
+        """
+        import sys
+        import soundfile as sf
+        import numpy as np
+        import torch
+        from pathlib import Path
+
+        model_path = Path(self.config.inflect_nano_model_path).resolve()
+        weights_dir = model_path / "weights"
+        acoustic_path = weights_dir / "inflect_nano_v1_acoustic.pt"
+        vocoder_path = weights_dir / "inflect_nano_v1_vocoder.pt"
+
+        if not acoustic_path.exists() or not vocoder_path.exists():
+            return {"success": False, "error": f"Inflect-Nano model not found at {model_path}. Clone: git clone https://huggingface.co/owensong/Inflect-Nano-v1 {model_path}"}
+
+        # Add repo dirs to sys.path for vendored imports (idempotent: duplicates are harmless)
+        for p in [str(model_path), str(model_path / "third_party" / "tiny_tts_frontend")]:
+            if p not in sys.path:
+                sys.path.insert(0, p)
+
+        try:
+            from inflect_nano.text_cleaning import clean_tinytts_text
+            from inflect_nano.vocoder import HifiGanGenerator, make_config
+            from inflect_nano.acoustic import MicroFastSpeech, MicroFastSpeechConfig
+            from tiny_tts.text import phonemes_to_ids
+            from tiny_tts.text.english import grapheme_to_phoneme, normalize_text
+            from tiny_tts.nn import commons
+            from tiny_tts.utils import ADD_BLANK
+        except ImportError as e:
+            return {"success": False, "error": f"Inflect-Nano import error: {e}. Make sure the repo is cloned."}
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _generate():
+                # Load models into cache if not already loaded for this device
+                cache_key = (str(acoustic_path), str(vocoder_path), str(device))
+                if (self._inflect_nano_acoustic is None
+                        or self._inflect_nano_cache_key != cache_key):
+                    acoustic_ckpt = torch.load(str(acoustic_path), map_location=device, weights_only=False)
+                    acoustic_cfg = MicroFastSpeechConfig(**acoustic_ckpt["config"])
+                    self._inflect_nano_acoustic = MicroFastSpeech(acoustic_cfg).to(device)
+                    self._inflect_nano_acoustic.load_state_dict(acoustic_ckpt["model"])
+                    self._inflect_nano_acoustic.eval()
+
+                    vocoder_ckpt = torch.load(str(vocoder_path), map_location=device, weights_only=False)
+                    vocoder_cfg = make_config((vocoder_ckpt.get("config") or {}).get("variant", "snake_v2mid"))
+                    self._inflect_nano_vocoder = HifiGanGenerator(vocoder_cfg).to(device)
+                    self._inflect_nano_vocoder.load_state_dict(vocoder_ckpt["generator"])
+                    self._inflect_nano_vocoder.remove_weight_norm()
+                    self._inflect_nano_vocoder.eval()
+
+                    self._inflect_nano_speakers = acoustic_ckpt.get("speakers") or {"mark": 0}
+                    self._inflect_nano_device = str(device)
+                    self._inflect_nano_cache_key = cache_key
+                    print("[TTS] Inflect-Nano models loaded and cached")
+
+                acoustic = self._inflect_nano_acoustic
+                vocoder = self._inflect_nano_vocoder
+                speakers = self._inflect_nano_speakers
+
+                # Text processing
+                cleaned = clean_tinytts_text(text)
+                normalized = normalize_text(cleaned)
+                phones, tones, _ = grapheme_to_phoneme(normalized)
+                phone_ids, tone_ids, lang_ids = phonemes_to_ids(phones, tones, "EN")
+
+                if ADD_BLANK:
+                    phone_ids = commons.insert_blanks(phone_ids, 0)
+                    tone_ids = commons.insert_blanks(tone_ids, 0)
+                    lang_ids = commons.insert_blanks(lang_ids, 0)
+
+                phone_t = torch.LongTensor(phone_ids).unsqueeze(0).to(device)
+                tone_t = torch.LongTensor(tone_ids).unsqueeze(0).to(device)
+                lang_t = torch.LongTensor(lang_ids).unsqueeze(0).to(device)
+                speaker_t = torch.LongTensor([int(next(iter(speakers.values())))]).to(device)
+
+                # Synthesize mel -> waveform
+                with torch.inference_mode():
+                    mel = acoustic.infer(phone_t, tone_t, lang_t, speaker_t,
+                                         length_scale=1.0, pitch_scale=1.0, energy_scale=1.0)
+                    wav = vocoder(mel).squeeze().detach().cpu().numpy()
+
+                # Normalize
+                wav = wav - wav.mean()
+                peak = float(np.max(np.abs(wav)) + 1e-9)
+                if peak > 0.95:
+                    wav *= 0.95 / peak
+                wav = np.clip(wav, -1.0, 1.0)
+
+                sf.write(str(filepath), wav, 24000, subtype="PCM_16")
+
+            await loop.run_in_executor(None, _generate)
+
+            return {
+                "success": True,
+                "filepath": filepath,
+                "audio_url": f"/api/audio/{os.path.basename(filepath)}",
+                "engine": "inflect-nano",
+                "voice": "default (male)"
+            }
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return {"success": False, "error": f"Inflect-Nano error: {str(e)}"}
+
     def list_available_voices(self) -> Dict[str, Any]:
         """List available voices for the configured engine"""
         voices = []
@@ -417,6 +564,13 @@ class TTSService:
                     "gender": voice_info["gender"],
                     "locale": voice_info["locale"]
                 })
+        elif self.config.engine == "inflect-nano" and _check_inflect_nano_available(self.config.inflect_nano_model_path):
+            voices.append({
+                "id": "default",
+                "name": "Default (Male, US)",
+                "gender": "male",
+                "locale": "en-US"
+            })
         
         return {
             "engine": self.config.engine,
@@ -473,6 +627,13 @@ class TTSService:
                 "description": "High-quality local TTS - requires model download from HuggingFace (not installed)",
                 "available": False
             })
+
+        engines.append({
+            "id": "inflect-nano",
+            "name": "Inflect-Nano v1",
+            "description": "Ultra-small local TTS (~4.6M params) - clone HF repo to models/Inflect-Nano-v1",
+            "available": _check_inflect_nano_available()
+        })
         
         return {
             "engines": engines,

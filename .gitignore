@@ -6,3 +6,4 @@ uploads/*
 .playwright-cli/
 graphify-out/
 .vscode/
+models/

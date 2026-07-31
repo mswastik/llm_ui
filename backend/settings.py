@@ -6,7 +6,7 @@ Settings are loaded from settings.json on startup, with environment variables as
 """
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 # To fix Kokoro Cuda memory allocation
@@ -57,6 +57,12 @@ DEFAULTS = {
     "backup_interval_hours": 4,
     "backup_max_keep": 24,
 
+    # STT Settings
+    "stt_engine": "faster-whisper",
+    "stt_model": "base",
+    "stt_language": None,
+    "stt_openai_api_key": None,
+
     # TTS Settings
     "tts_engine": "edge-tts",
     "tts_voice": "en-IN-NeerjaNeural",
@@ -66,6 +72,8 @@ DEFAULTS = {
     "kokoro_device": "cpu",
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
+    "tts_auto_read": False,
+    "inflect_nano_model_path": "models/Inflect-Nano-v1",
 }
 
 # Create upload directory if it doesn't exist
@@ -94,6 +102,10 @@ class Settings(BaseModel):
     backup_path: str = DEFAULTS["backup_path"]
     backup_interval_hours: int = DEFAULTS["backup_interval_hours"]
     backup_max_keep: int = DEFAULTS["backup_max_keep"]
+    stt_engine: str = DEFAULTS["stt_engine"]
+    stt_model: str = DEFAULTS["stt_model"]
+    stt_language: Optional[str] = None
+    stt_openai_api_key: Optional[str] = None
     tts_engine: str = DEFAULTS["tts_engine"]
     tts_voice: str = DEFAULTS["tts_voice"]
     tts_rate: str = DEFAULTS["tts_rate"]
@@ -102,6 +114,8 @@ class Settings(BaseModel):
     kokoro_device: str = DEFAULTS["kokoro_device"]
     kokoro_volume: float = DEFAULTS["kokoro_volume"]
     kokoro_speed: float = DEFAULTS["kokoro_speed"]
+    tts_auto_read: bool = DEFAULTS["tts_auto_read"]
+    inflect_nano_model_path: str = DEFAULTS["inflect_nano_model_path"]
 
 
 # Module-level constants set once from DEFAULTS (used by importers)
@@ -151,6 +165,10 @@ _ENV_MAP = {
     "kokoro_device": "KOKORO_DEVICE",
     "kokoro_volume": "KOKORO_VOLUME",
     "kokoro_speed": "KOKORO_SPEED",
+    "tts_auto_read": "TTS_AUTO_READ",
+    "stt_engine": "STT_ENGINE",
+    "stt_model": "STT_MODEL",
+    "inflect_nano_model_path": "INFLECT_NANO_MODEL_PATH",
 }
 
 
@@ -191,7 +209,8 @@ class SettingsManager:
 
         # Update TTS settings if changed and TTS service is available
         tts_keys = {'tts_engine', 'tts_voice', 'tts_rate', 'tts_volume',
-                    'kokoro_lang', 'kokoro_device', 'kokoro_volume', 'kokoro_speed'}
+                    'kokoro_lang', 'kokoro_device', 'kokoro_volume', 'kokoro_speed',
+                    'tts_auto_read', 'inflect_nano_model_path'}
         if tts_keys & set(new_settings.keys()) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)

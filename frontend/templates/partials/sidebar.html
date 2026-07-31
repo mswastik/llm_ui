@@ -44,6 +44,12 @@
           >New Chat</span
         >
       </button>
+            <button
+        @click="$store.ui.toggleDarkMode()"
+        class="btn btn-icon btn-ghost"
+      >
+        <i class="ph text-lg" :class="$store.ui.darkMode ? 'ph-sun' : 'ph-moon'"></i>
+      </button>
       <button
         @click="$store.ui.toggleSidebar()"
         class="btn btn-icon btn-ghost"
@@ -131,7 +137,7 @@
         <template x-for="tag in [...new Set($store.chat.conversations.flatMap(c => c.tags || []))]" :key="tag">
           <button
             @click="$store.ui.activeTagFilter = ($store.ui.activeTagFilter === tag ? null : tag)"
-            class="whitespace-nowrap px-2 py-0.5 text-[10px] rounded-full font-medium transition-all flex-shrink-0"
+            class="whitespace-nowrap px-2 py-0.5 text-xs rounded-full font-medium transition-all flex-shrink-0"
             :class="$store.ui.activeTagFilter === tag ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] border border-[var(--accent-primary)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] border border-transparent hover:border-[var(--border-primary)]'"
           >
             <i class="ph ph-tag text-[10px] mr-0.5"></i>
@@ -154,10 +160,10 @@
           :class="{'sidebar-item-active': currentConversationId === conv.id}"
         >
           <div class="flex-1 min-w-0">
-            <!-- Row 1: Title + action buttons -->
-            <div class="flex items-center gap-0">
-              <span class="truncate font-medium text-sm flex-1 min-w-0" x-text="conv.title"></span>
-              <div class="flex items-center gap-0.5 flex-shrink-0 -mr-1">
+            <!-- Row 1: Title + action buttons (buttons overlay on hover, no reserved space) -->
+            <div class="flex items-center gap-0 relative">
+              <span class="truncate font-medium text-sm flex-1 min-w-0 transition-[padding] duration-150 group-hover:pr-[3rem]" x-text="conv.title"></span>
+              <div class="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   @click.stop="$store.ui.startEditTags(conv.id)"
                   class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--bg-hover)] text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] transition-all"
@@ -176,11 +182,11 @@
             </div>
             <!-- Row 2: Date + Agent badge + Tags -->
             <div class="flex items-center gap-1.5 mt-0.5 min-w-0">
-              <span class="text-[11px] text-[var(--text-tertiary)] whitespace-nowrap flex-shrink-0" x-text="formatDate(conv.updated_at)"></span>
+              <span class="text-xs text-[var(--text-tertiary)] whitespace-nowrap flex-shrink-0" x-text="formatDate(conv.updated_at)"></span>
               <template x-if="getAgentName(conv.agent_id)">
                 <span
                   @click.stop="$store.ui.toggleAgentFilter(conv.agent_id)"
-                  class="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded-full cursor-pointer transition-all font-medium leading-tight flex items-center gap-0.5"
+                  class="flex-shrink-0 text-xs px-1.5 py-0.5 rounded-full cursor-pointer transition-all font-medium leading-tight flex items-center gap-0.5"
                   :class="$store.ui.activeAgentFilters.includes(conv.agent_id) ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] hover:bg-[var(--accent-primary)] hover:text-white'"
                 >
                   <i class="ph ph-robot text-[9px]"></i>
@@ -192,12 +198,12 @@
                   <template x-for="tag in conv.tags.slice(0, 3)" :key="tag">
                     <span
                       @click.stop="$store.ui.activeTagFilter = ($store.ui.activeTagFilter === tag ? null : tag)"
-                      class="text-[10px] px-1.5 py-0.5 rounded-full cursor-pointer transition-all whitespace-nowrap flex-shrink-0 leading-tight"
+                      class="text-xs px-1.5 py-0.5 rounded-full cursor-pointer transition-all whitespace-nowrap flex-shrink-0 leading-tight"
                       :class="$store.ui.activeTagFilter === tag ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)]'"
                       x-text="tag"
                     ></span>
                   </template>
-                  <span x-show="conv.tags.length > 3" class="text-[10px] text-[var(--text-tertiary)] flex-shrink-0 leading-tight">+<span x-text="conv.tags.length - 3"></span></span>
+                  <span x-show="conv.tags.length > 3" class="text-xs text-[var(--text-tertiary)] flex-shrink-0 leading-tight">+<span x-text="conv.tags.length - 3"></span></span>
                 </span>
               </template>
             </div>
@@ -221,7 +227,7 @@
               </div>
               <div x-show="conv.tags?.length > 0" class="flex flex-wrap gap-1 mt-1">
                 <template x-for="tag in conv.tags" :key="tag">
-                  <span class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]">
+                  <span class="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--bg-tertiary)] text-[var(--text-tertiary)]">
                     <span x-text="tag"></span>
                     <button @click="removeTag(conv.id, tag)" class="hover:text-[var(--error)]">
                       <i class="ph ph-x text-[10px]"></i>
@@ -296,13 +302,6 @@
         <i class="ph ph-users text-base"></i>
         <span>AI Agents</span>
       </button>
-      <button
-        @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()"
-        class="sidebar-item"
-      >
-        <i class="ph ph-plugs-connected text-base"></i>
-        <span>MCP Servers</span>
-      </button>
     </div>
 
     <!-- Footer (Collapsed) -->
@@ -310,6 +309,13 @@
       class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1 flex flex-col items-center"
       x-show="$store.ui.sidebarCollapsed"
     >
+      <button
+        @click="$store.ui.toggleDarkMode()"
+        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
+        title="Toggle theme"
+      >
+        <i class="ph text-lg" :class="$store.ui.darkMode ? 'ph-sun' : 'ph-moon'"></i>
+      </button>
       <button
         @click="$dispatch('open-documents'); $store.ui.openDocuments()"
         class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
@@ -330,13 +336,6 @@
         title="AI Agents"
       >
         <i class="ph ph-users text-lg"></i>
-      </button>
-      <button
-        @click="$dispatch('open-mcp'); $store.ui.openMcpPanel()"
-        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        title="MCP Servers"
-      >
-        <i class="ph ph-plugs-connected text-lg"></i>
       </button>
     </div>
   </aside>

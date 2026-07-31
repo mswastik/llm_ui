@@ -28,7 +28,7 @@ console.log('[main] Alpine ESM module loaded')
 // 2. Import SSE + TTS services (no Alpine dependency)
 // ═══════════════════════════════════════════════════════════
 import { SSEService, sseService } from './services/sse.js'
-import { TTSService, ttsService } from './services/tts.js'
+import { TTSService, ttsService } from './services/tts.js?v=32'
 window.sseService = sseService
 window.ttsService = ttsService
 
@@ -88,10 +88,9 @@ Alpine.data('chat', chatComponent)
 Alpine.data('settings', settings)
 Alpine.data('modalDocuments', createModal('documents', 'openDocuments', 'closeDocuments'))
 Alpine.data('modalSettings', createModal('settings', 'openSettings', 'closeSettings'))
-Alpine.data('modalMcp', createModal('mcp', 'openMcpPanel', 'closeMcpPanel'))
 Alpine.data('modalAgents', createModal('agents', 'openAgents', 'closeAgents'))
 Alpine.data('modalNotes', createModal('notes', 'openNotes', 'closeNotes'))
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalMcp, modalAgents, modalNotes')
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalAgents, modalNotes')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

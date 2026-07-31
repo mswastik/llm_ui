@@ -1,807 +1,1015 @@
 <!-- ═══════════ MAIN CHAT AREA ═══════════ -->
-  <main
-    class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)]"
-    x-data="chat"
-    x-init="init()"
-  >
-    <!-- Chat Header -->
-    <header
-      class="h-[var(--header-height)] border-b border-[var(--border-primary)] px-4 flex items-center justify-between flex-shrink-0 bg-[var(--bg-glass)] backdrop-blur-sm"
-    >
-      <div class="flex items-center gap-2 flex-1 min-w-0">
-        <!-- Agent Selector -->
-        <select
-          x-model="selectedAgentId"
-          @change="updateSelectedAgent()"
-          class="select text-xs max-w-[150px]"
-        >
-          <option value="">Default Agent</option>
-          <template x-for="agent in availableAgents" :key="agent.id">
-            <option :value="agent.id" x-text="agent.name"></option>
-          </template>
-        </select>
-
-        <!-- Model Selector -->
-        <select
-          x-model="selectedModel"
-          @change="updateSelectedModel()"
-          class="select text-xs max-w-[180px]"
-        >
-          <option value="" disabled>Model</option>
-          <template x-for="model in availableModels" :key="model.id">
-            <option :value="model.id" x-text="model.name || model.id"></option>
-          </template>
-        </select>
-
-        <!-- Document Selector -->
-        <div class="relative" x-data="{ docDropdownOpen: false }" @click.outside="docDropdownOpen = false">
-          <button
-            @click="docDropdownOpen = !docDropdownOpen"
-            class="pill text-xs"
-            :class="selectedDocumentIds.length > 0 ? 'pill-active' : 'pill-default'"
-          >
-            <i class="ph ph-books text-xs"></i>
-            <span x-text="selectedDocumentIds.length > 0 ? (selectedDocumentIds.includes('all') ? 'All Docs' : selectedDocumentIds.length + ' docs') : 'Docs'"></span>
-          </button>
-          <div
-            x-show="docDropdownOpen"
-            x-cloak
-            class="absolute top-full left-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg shadow-xl z-50 min-w-[200px] max-h-[260px] overflow-y-auto py-1"
-          >
-            <label class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-tertiary)] cursor-pointer text-sm border-b border-[var(--border-primary)]">
-              <input type="checkbox" :checked="isDocumentSelected('all')" @change="toggleDocument('all')" class="rounded" style="accent-color: var(--accent-primary)" />
-              <span class="font-medium">All documents</span>
-            </label>
-            <template x-for="doc in documents" :key="doc.id">
-              <label class="flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-tertiary)] cursor-pointer text-sm">
-                <input type="checkbox" :checked="isDocumentSelected(doc.id)" @change="toggleDocument(doc.id)" class="rounded" style="accent-color: var(--accent-primary)" />
-                <span class="truncate" x-text="doc.filename"></span>
-              </label>
-            </template>
-            <div x-show="documents.length === 0" class="px-3 py-3 text-xs text-[var(--text-tertiary)] text-center">
-              No documents uploaded
-            </div>
-          </div>
-        </div>
-
-        <!-- Title -->
+<main
+  class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)]"
+  x-data="chat"
+  x-init="init()"
+>
+  <!-- Messages Container -->
+  <div id="messages-container" class="flex-1 overflow-y-auto">
+    <div class="mx-auto w-full px-4">
+      <!-- Conversation Title (inline, subtle) -->
+      <div class="pt-4 pb-1">
         <input
           :value="currentConversationTitle"
           @change="updateTitle($event)"
-          class="text-sm font-semibold bg-transparent border-none outline-none text-[var(--text-primary)] placeholder-[var(--text-tertiary)] flex-1 min-w-0"
-          placeholder="Conversation title"
+          class="w-full text-center text-[0.8rem] font-medium text-[var(--text-tertiary)] bg-transparent border-none outline-none hover:text-[var(--text-secondary)] focus:text-[var(--text-primary)] transition-colors"
+          placeholder="Untitled conversation"
         />
       </div>
 
-      <div class="flex items-center gap-2 flex-shrink-0">
-        <!-- Message count -->
-        <span
-          class="text-xs text-[var(--text-tertiary)]"
-          x-text="messages.length + ' messages'"
-        ></span>
-        <!-- Dark mode toggle -->
-        <button
-          @click="$store.ui.toggleDarkMode()"
-          class="btn btn-icon btn-ghost"
-          title="Toggle theme"
-        >
-          <i class="ph ph-moon text-lg" x-show="!$store.ui.darkMode"></i>
-          <i class="ph ph-sun text-lg" x-show="$store.ui.darkMode"></i>
-        </button>
-      </div>
-    </header>
-
-    <!-- Messages Container -->
-    <div
-      id="messages-container"
-      class="flex-1 overflow-y-auto px-4 py-6 space-y-4"
-    >
-      <!-- Empty State -->
-      <div x-show="messages.length === 0" class="empty-state">
-        <div class="empty-state-icon">
-          <i class="ph ph-robot text-3xl text-[var(--accent-primary)]"></i>
-        </div>
-        <h2 class="text-xl font-semibold mb-1">Welcome to LLM UI</h2>
-        <p class="text-sm max-w-md mb-6">
-          Start a conversation by typing a message below. You can use agents,
-          search your knowledge base, and connect MCP servers for extended
-          capabilities.
-        </p>
-        <div class="flex flex-wrap gap-2 justify-center">
-          <button
-            @click="inputMessage = 'What can you help me with?'"
-            class="pill pill-default"
-          >
-            💡 What can you help me with?
-          </button>
-          <button
-            @click="inputMessage = 'Explain how LLMs work'"
-            class="pill pill-default"
-          >
-            🧠 Explain how LLMs work
-          </button>
-          <button
-            @click="inputMessage = 'Help me write code'"
-            class="pill pill-default"
-          >
-            💻 Help me write code
-          </button>
-        </div>
-      </div>
-
       <!-- Messages -->
-      <template x-for="(message, msgIndex) in messages" :key="message.id">
-        <!-- Flex row: justify-end pushes user bubbles right, justify-start pushes assistant left -->
-        <div class="message-enter group flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+      <div class="py-3 space-y-5">
+        <!-- Empty State -->
+        <div x-show="messages.length === 0" class="empty-state">
+          <div class="empty-state-icon">
+            <i class="ph ph-robot text-3xl"></i>
+          </div>
+          <h2 class="text-xl font-semibold mb-2 text-[var(--text-primary)]">
+            How can I help you today?
+          </h2>
+          <p class="text-sm max-w-md mb-8 text-[var(--text-secondary)]">
+            Pick a model and agent in the composer below, attach documents from
+            your knowledge base, and manage MCP servers and their tools right
+            from the chat box.
+          </p>
+          <div class="flex flex-wrap gap-2 justify-center">
+            <button
+              @click="inputMessage = 'What can you help me with?'"
+              class="pill pill-default"
+            >
+              💡 What can you help me with?
+            </button>
+            <button
+              @click="inputMessage = 'Explain how LLMs work'"
+              class="pill pill-default"
+            >
+              🧠 Explain how LLMs work
+            </button>
+            <button
+              @click="inputMessage = 'Help me write code'"
+              class="pill pill-default"
+            >
+              💻 Help me write code
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <template x-for="(message, msgIndex) in messages" :key="message.id">
+          <!-- Flex row: justify-end pushes user bubbles right, justify-start pushes assistant left -->
           <div
-            class="min-w-[180px] max-w-[95%] md:max-w-[90%]"
-            :class="message.role === 'user' ? 'message-user' : 'message-assistant'"
+            class="message-enter group flex items-start gap-2.5"
+            :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
           >
-            <!-- Content wrapper: keeps width/height stable by always having content in layout -->
-            <div style="position: relative;">
-              <!-- Message Content (always in DOM — opacity hides it during edit without losing layout space) -->
-              <div class="p-4 pb-2" :class="[
-                editingMessageId === message.id ? 'opacity-0 pointer-events-none' : '',
-                message.files?.length > 0 ? 'pt-2' : ''
-              ]">
-                <template
-                  x-if="message.role === 'user' && message.files?.length > 0"
-                >
-                  <div class="flex flex-wrap gap-2 -mt-2 pb-2">
-                    <template x-for="(f, fi) in message.files" :key="'uf-' + fi">
-                      <template x-if="f.type?.startsWith('image/')">
-                        <a :href="f.url" target="_blank" class="block rounded-lg overflow-hidden border border-[var(--border-primary)] hover:opacity-90 transition-opacity max-w-[200px]">
-                          <img :src="f.url" :alt="f.filename" class="w-full h-auto object-cover max-h-[200px]" loading="lazy" />
-                        </a>
+            <!-- Assistant avatar -->
+            <template x-if="message.role === 'assistant'">
+              <div class="msg-avatar">
+                <i class="ph ph-robot"></i>
+              </div>
+            </template>
+
+            <div
+              class="max-w-[85%] min-w-0"
+              :class="message.role === 'user' ? 'message-user' : 'message-assistant'"
+            >
+              <!-- Content wrapper: keeps width/height stable by always having content in layout -->
+              <div style="position: relative;">
+                <!-- Message Content (always in DOM — opacity hides it during edit without losing layout space) -->
+                <div class="p-4 pb-2" :class="[
+                  editingMessageId === message.id ? 'opacity-0 pointer-events-none' : '',
+                  message.files?.length > 0 ? 'pt-2' : ''
+                ]">
+                  <template
+                    x-if="message.role === 'user' && message.files?.length > 0"
+                  >
+                    <div class="flex flex-wrap gap-2 -mt-2 pb-2">
+                      <template x-for="(f, fi) in message.files" :key="'uf-' + fi">
+                        <template x-if="f.type?.startsWith('image/')">
+                          <a :href="f.url" target="_blank" class="block rounded-lg overflow-hidden border border-white/20 hover:opacity-90 transition-opacity max-w-[200px]">
+                            <img :src="f.url" :alt="f.filename" class="w-full h-auto object-cover max-h-[200px]" loading="lazy" />
+                          </a>
+                        </template>
+                        <template x-if="!f.type?.startsWith('image/')">
+                          <a :href="f.url" target="_blank" class="flex items-center gap-1.5 bg-white/15 rounded-md px-2 py-1.5 text-xs text-white/80 hover:text-white hover:bg-white/25 transition-colors">
+                            <i :class="'ph ' + getFileIcon(f.type) + ' text-sm'"></i>
+                            <span class="truncate max-w-[100px]" x-text="f.filename"></span>
+                            <span class="opacity-60 flex-shrink-0" x-text="formatFileSize(f.size)"></span>
+                          </a>
+                        </template>
                       </template>
-                      <template x-if="!f.type?.startsWith('image/')">
-                        <a :href="f.url" target="_blank" class="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2 text-xs text-white/80 hover:text-white hover:bg-white/30 transition-colors">
-                          <i :class="'ph ' + getFileIcon(f.type) + ' text-base'"></i>
-                          <span class="truncate max-w-[120px]" x-text="f.filename"></span>
-                          <span class="opacity-60" x-text="formatFileSize(f.size)"></span>
-                        </a>
+                    </div>
+                  </template>
+
+                  <!-- Version Pills -->
+                  <template
+                    x-if="message.role === 'assistant' && message.version_group && (message.max_version || message.version) > 1"
+                  >
+                    <div class="mb-2 flex items-center gap-1.5">
+                      <span class="text-xs text-[var(--text-tertiary)]">versions:</span>
+                      <template
+                        x-for="v in Array.from({length: message.max_version || message.version}, (_, i) => i + 1)"
+                        :key="'v-' + message.id + '-' + v"
+                      >
+                        <button
+                          @click="switchVersion(message.id, v)"
+                          class="badge text-xs cursor-pointer transition-all"
+                          :class="v === message.version ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
+                          x-text="'v' + v"
+                        ></button>
                       </template>
-                    </template>
-                  </div>
-                </template>
+                    </div>
+                  </template>
 
-                <!-- Version Pills -->
-                <!-- Version Pills -->
-                <template
-                  x-if="message.role === 'assistant' && message.version_group && (message.max_version || message.version) > 1"
-                >
-                  <div class="mb-2 flex items-center gap-1.5">
-                    <span class="text-xs text-[var(--text-tertiary)]">versions:</span>
-                    <template
-                      x-for="v in Array.from({length: message.max_version || message.version}, (_, i) => i + 1)"
-                      :key="'v-' + message.id + '-' + v"
-                    >
-                      <button
-                        @click="switchVersion(message.id, v)"
-                        class="badge text-xs cursor-pointer transition-all"
-                        :class="v === message.version ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
-                        x-text="'v' + v"
-                      ></button>
-                    </template>
-                  </div>
-                </template>
+                  <!-- Model Badge -->
+                  <template
+                    x-if="message.role === 'assistant' && message.metadata?.model"
+                  >
+                    <div class="mb-2">
+                      <span
+                        class="badge badge-primary"
+                        x-text="message.metadata.model"
+                      ></span>
+                    </div>
+                  </template>
 
-                <!-- Model Badge -->
-                <template
-                  x-if="message.role === 'assistant' && message.metadata?.model"
-                >
-                  <div class="mb-2">
-                    <span
-                      class="badge badge-primary"
-                      x-text="message.metadata.model"
-                    ></span>
-                  </div>
-                </template>
-
-                <!-- Sequential Blocks -->
-                <template x-if="message.blocks?.length > 0">
-                  <div class="space-y-2">
-                    <template
-                      x-for="(block, blockIdx) in message.blocks"
-                      :key="'b-' + blockIdx"
-                    >
-                      <div>
-                        <!-- Content Block -->
-                        <div x-show="block.type === 'content'" class="prose">
-                          <div
-                            x-html="renderWithCitations(block.content, extractSources(message.blocks))"
-                          ></div>
-                        </div>
-
-                        <!-- Thinking Block -->
-                        <div
-                          x-show="block.type === 'thinking'"
-                          class="thinking-block rounded-lg overflow-hidden"
-                        >
-                          <div
-                            @click="toggleBlock('thinking-' + message.id + '-' + blockIdx)"
-                            class="thinking-header flex items-center gap-2 px-3 py-1 text-sm"
-                          >
-                            <i
-                              class="ph ph-caret-right text-base transition-transform duration-200"
-                              :class="isExpanded('thinking-' + message.id + '-' + blockIdx) ? 'rotate-90' : ''"
-                            ></i>
-                            <i
-                              class="ph ph-brain text-base text-[var(--thinking-text)]"
-                            ></i>
-                            <span
-                              class="font-medium text-sm text-[var(--thinking-text)]"
-                              >Thinking</span
-                            >
-                            <span
-                              class="text-xs text-[var(--text-tertiary)]"
-                              x-text="(block.content?.length || 0) + ' chars'"
-                            ></span>
-                          </div>
-                          <div
-                            x-show="isExpanded('thinking-' + message.id + '-' + blockIdx)"
-                            x-collapse
-                          >
+                  <!-- Sequential Blocks -->
+                  <template x-if="message.blocks?.length > 0">
+                    <div class="space-y-2">
+                      <template
+                        x-for="(block, blockIdx) in message.blocks"
+                        :key="'b-' + blockIdx"
+                      >
+                        <div>
+                          <!-- Content Block -->
+                          <div x-show="block.type === 'content'" class="prose">
                             <div
-                              class="px-3 pb-3 text-sm prose"
-                              x-html="renderMarkdown(block.content || '')"
+                              x-html="renderWithCitations(block.content, extractSources(message.blocks))"
                             ></div>
                           </div>
-                        </div>
 
-                        <!-- Tool Call Block -->
-                        <div
-                          x-show="block.type === 'tool_call'"
-                          class="tool-block overflow-hidden"
-                        >
+                          <!-- Thinking Block -->
                           <div
-                            @click="toggleBlock('tool-' + message.id + '-' + blockIdx)"
-                            class="tool-header flex items-center gap-2 px-3 py-1 text-sm"
+                            x-show="block.type === 'thinking'"
+                            class="thinking-block overflow-hidden"
                           >
-                            <i
-                              class="ph ph-caret-right text-base transition-transform duration-200"
-                              :class="isExpanded('tool-' + message.id + '-' + blockIdx) ? 'rotate-90' : ''"
-                            ></i>
-                            <i
-                              class="ph ph-gear text-base text-[var(--tool-text)]"
-                            ></i>
-                            <span
-                              class="font-medium text-sm text-[var(--tool-text)]"
-                              x-text="block.name || 'Tool'"
-                            ></span>
-                            <template x-if="block.status === 'completed'">
-                              <span class="badge badge-success text-xs"
-                                >Done</span
-                              >
-                            </template>
-                            <template x-if="block.status === 'error'">
-                              <span class="badge badge-error text-xs"
-                                >Error</span
-                              >
-                            </template>
-                            <template
-                              x-if="block.status === 'starting' || block.status === 'running'"
+                            <div
+                              @click="toggleBlock('thinking-' + message.id + '-' + blockIdx)"
+                              class="thinking-header flex items-center gap-2 px-3 py-1.5 text-sm"
                             >
+                              <i
+                                class="ph ph-caret-right text-base transition-transform duration-200"
+                                :class="isExpanded('thinking-' + message.id + '-' + blockIdx) ? 'rotate-90' : ''"
+                              ></i>
+                              <i
+                                class="ph ph-brain text-base text-[var(--thinking-accent)]"
+                              ></i>
                               <span
-                                class="badge badge-warning text-xs animate-pulse"
-                                >Running</span
+                                class="font-medium text-sm text-[var(--thinking-text)]"
+                                >Thinking</span
                               >
-                            </template>
+                              <span
+                                class="text-xs text-[var(--text-tertiary)]"
+                                x-text="(block.content?.length || 0) + ' chars'"
+                              ></span>
+                            </div>
+                            <div
+                              x-show="isExpanded('thinking-' + message.id + '-' + blockIdx)"
+                              x-collapse
+                            >
+                              <div
+                                class="px-3 pb-3 text-sm prose"
+                                x-html="renderMarkdown(block.content || '')"
+                              ></div>
+                            </div>
                           </div>
+
+                          <!-- Tool Call Block -->
                           <div
-                            x-show="isExpanded('tool-' + message.id + '-' + blockIdx)"
-                            x-collapse
+                            x-show="block.type === 'tool_call'"
+                            class="tool-block overflow-hidden"
                           >
-                            <div class="px-3 pb-3 space-y-3">
-                              <!-- Args -->
-                              <template
-                                x-if="block.arguments && Object.keys(block.arguments).length > 0"
-                              >
-                                <div>
-                                  <div
-                                    class="text-xs text-[var(--text-tertiary)] mb-1"
-                                  >
-                                    Arguments
-                                  </div>
-                                  <pre
-                                    class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto"
-                                    x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"
-                                  ></pre>
-                                </div>
+                            <div
+                              @click="toggleBlock('tool-' + message.id + '-' + blockIdx)"
+                              class="tool-header flex items-center gap-2 px-3 py-1.5 text-sm"
+                            >
+                              <i
+                                class="ph ph-caret-right text-base transition-transform duration-200"
+                                :class="isExpanded('tool-' + message.id + '-' + blockIdx) ? 'rotate-90' : ''"
+                              ></i>
+                              <i
+                                class="ph ph-gear text-base text-[var(--tool-accent)]"
+                              ></i>
+                              <span
+                                class="font-medium text-sm text-[var(--tool-text)]"
+                                x-text="block.name || 'Tool'"
+                              ></span>
+                              <template x-if="block.status === 'completed'">
+                                <span class="badge badge-success text-xs"
+                                  >Done</span
+                                >
                               </template>
-
-                              <!-- Search Steps (search_web) -->
-                              <template
-                                x-if="block.name === 'search_web' && block.search_steps?.length > 0"
-                              >
-                                <div class="space-y-2">
-                                  <div
-                                    class="font-medium text-sm text-[var(--tool-text)]"
-                                  >
-                                    Search Steps
-                                  </div>
-                                  <template
-                                    x-for="(step, si) in block.search_steps"
-                                    :key="si"
-                                  >
-                                    <div
-                                      class="bg-white/5 border border-[var(--tool-border)]/30 rounded-md p-2.5 text-xs"
-                                    >
-                                      <div class="flex items-center gap-2 mb-1">
-                                        <span
-                                          class="badge badge-primary"
-                                          x-text="'Step ' + (si + 1)"
-                                        ></span>
-                                        <span
-                                          class="text-[var(--text-primary)]"
-                                          x-text="step.query"
-                                        ></span>
-                                      </div>
-                                      <div
-                                        class="flex gap-3 text-[var(--text-tertiary)]"
-                                      >
-                                        <span
-                                          x-text="'📄 ' + (step.sources_found || 0) + ' sources'"
-                                        ></span>
-                                        <span
-                                          x-text="'📝 ' + (step.chunks_created || 0) + ' chunks'"
-                                        ></span>
-                                      </div>
-                                      <template x-if="step.reasoning">
-                                        <div
-                                          class="mt-1.5 pt-1.5 border-t border-[var(--tool-border)]/20"
-                                        >
-                                          <span
-                                            class="text-[var(--thinking-text)] font-medium"
-                                            >Analysis:</span
-                                          >
-                                          <span
-                                            class="text-[var(--text-primary)] ml-1"
-                                            x-text="step.reasoning"
-                                          ></span>
-                                        </div>
-                                      </template>
-                                    </div>
-                                  </template>
-                                </div>
-                              </template>
-
-                              <!-- Result Preview -->
-                              <template x-if="block.result">
-                                <div>
-                                  <div
-                                    class="font-medium text-sm text-[var(--success)] mb-2 flex items-center gap-1.5"
-                                  >
-                                    <i class="ph ph-check-circle"></i> Result
-                                  </div>
-
-                                  <!-- Search Web Result -->
-                                  <template x-if="block.name === 'search_web'">
-                                    <div class="space-y-2">
-                                      <template x-if="block.result.content">
-                                        <div
-                                          class="bg-white/5 border border-[var(--tool-border)]/30 rounded-md p-2.5"
-                                        >
-                                          <div
-                                            class="text-xs text-[var(--text-tertiary)] mb-1"
-                                          >
-                                            Summary
-                                          </div>
-                                          <div
-                                            class="text-[var(--text-primary)] text-xs whitespace-pre-wrap"
-                                            x-text="parseEscapes(block.result.content?.substring(0, 500) + (block.result.content?.length > 500 ? '...' : ''))"
-                                          ></div>
-                                        </div>
-                                      </template>
-                                      <template x-if="block.result.sources">
-                                        <div
-                                          class="text-xs text-[var(--text-tertiary)]"
-                                        >
-                                          <span
-                                            x-text="block.result.sources.length + ' sources found'"
-                                          ></span>
-                                        </div>
-                                      </template>
-                                    </div>
-                                  </template>
-
-                                  <!-- Query Documents Result -->
-                                  <template
-                                    x-if="block.name === 'query_documents'"
-                                  >
-                                    <div class="space-y-2">
-                                      <template
-                                        x-if="block.result.result_count !== undefined"
-                                      >
-                                        <div
-                                          class="text-xs text-[var(--text-tertiary)]"
-                                          x-text="block.result.result_count + ' relevant passages found'"
-                                        ></div>
-                                      </template>
-                                      <template x-if="block.result.context">
-                                        <div
-                                          class="bg-white/5 border border-[var(--tool-border)]/30 rounded-md p-2.5"
-                                        >
-                                          <div
-                                            class="text-xs text-[var(--text-tertiary)] mb-1"
-                                          >
-                                            Context Preview
-                                          </div>
-                                          <div
-                                            class="text-[var(--text-primary)] text-xs whitespace-pre-wrap"
-                                            x-text="parseEscapes(block.result.context?.substring(0, 300) + (block.result.context?.length > 300 ? '...' : ''))"
-                                          ></div>
-                                        </div>
-                                      </template>
-                                    </div>
-                                  </template>
-
-                                  <!-- Generic Result -->
-                                  <template
-                                    x-if="!['search_web', 'query_documents'].includes(block.name)"
-                                  >
-                                    <div
-                                      class="bg-white/5 border border-[var(--tool-border)]/30 rounded-md p-2.5"
-                                    >
-                                      <div
-                                        class="text-[var(--text-primary)] text-xs whitespace-pre-wrap font-mono"
-                                        x-text="formatToolResult(block.result)"
-                                      ></div>
-                                    </div>
-                                  </template>
-                                </div>
-                              </template>
-
-                              <!-- Error -->
                               <template x-if="block.status === 'error'">
-                                <div
-                                  class="text-[var(--error)] text-xs whitespace-pre-wrap"
-                                  x-text="block.result?.error || 'Unknown error'"
-                                ></div>
+                                <span class="badge badge-error text-xs"
+                                  >Error</span
+                                >
                               </template>
+                              <template
+                                x-if="block.status === 'starting' || block.status === 'running'"
+                              >
+                                <span
+                                  class="badge badge-warning text-xs animate-pulse"
+                                  >Running</span
+                                >
+                              </template>
+                            </div>
+                            <div
+                              x-show="isExpanded('tool-' + message.id + '-' + blockIdx)"
+                              x-collapse
+                            >
+                              <div class="px-3 pb-3 space-y-3">
+                                <!-- Args -->
+                                <template
+                                  x-if="block.arguments && Object.keys(block.arguments).length > 0"
+                                >
+                                  <div>
+                                    <div
+                                      class="text-xs text-[var(--text-tertiary)] mb-1"
+                                    >
+                                      Arguments
+                                    </div>
+                                    <pre
+                                      class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto"
+                                      x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"
+                                    ></pre>
+                                  </div>
+                                </template>
+
+                                <!-- Search Steps (search_web) -->
+                                <template
+                                  x-if="block.name === 'search_web' && block.search_steps?.length > 0"
+                                >
+                                  <div class="space-y-2">
+                                    <div
+                                      class="font-medium text-sm text-[var(--tool-text)]"
+                                    >
+                                      Search Steps
+                                    </div>
+                                    <template
+                                      x-for="(step, si) in block.search_steps"
+                                      :key="si"
+                                    >
+                                      <div
+                                        class="bg-[var(--bg-tertiary)] border border-[var(--tool-border)] rounded-md p-2.5 text-xs"
+                                      >
+                                        <div class="flex items-center gap-2 mb-1">
+                                          <span
+                                            class="badge badge-primary"
+                                            x-text="'Step ' + (si + 1)"
+                                          ></span>
+                                          <span
+                                            class="text-[var(--text-primary)]"
+                                            x-text="step.query"
+                                          ></span>
+                                        </div>
+                                        <div
+                                          class="flex gap-3 text-[var(--text-tertiary)]"
+                                        >
+                                          <span
+                                            x-text="'📄 ' + (step.sources_found || 0) + ' sources'"
+                                          ></span>
+                                          <span
+                                            x-text="'📝 ' + (step.chunks_created || 0) + ' chunks'"
+                                          ></span>
+                                        </div>
+                                        <template x-if="step.reasoning">
+                                          <div
+                                            class="mt-1.5 pt-1.5 border-t border-[var(--tool-border)]"
+                                          >
+                                            <span
+                                              class="text-[var(--thinking-accent)] font-medium"
+                                              >Analysis:</span
+                                            >
+                                            <span
+                                              class="text-[var(--text-primary)] ml-1"
+                                              x-text="step.reasoning"
+                                            ></span>
+                                          </div>
+                                        </template>
+                                      </div>
+                                    </template>
+                                  </div>
+                                </template>
+
+                                <!-- Result Preview -->
+                                <template x-if="block.result">
+                                  <div>
+                                    <div
+                                      class="font-medium text-sm text-[var(--success)] mb-2 flex items-center gap-1.5"
+                                    >
+                                      <i class="ph ph-check-circle"></i> Result
+                                    </div>
+
+                                    <!-- Search Web Result -->
+                                    <template x-if="block.name === 'search_web'">
+                                      <div class="space-y-2">
+                                        <template x-if="block.result.content">
+                                          <div
+                                            class="bg-[var(--bg-tertiary)] border border-[var(--tool-border)] rounded-md p-2.5"
+                                          >
+                                            <div
+                                              class="text-xs text-[var(--text-tertiary)] mb-1"
+                                            >
+                                              Summary
+                                            </div>
+                                            <div
+                                              class="text-[var(--text-primary)] text-xs whitespace-pre-wrap"
+                                              x-text="parseEscapes(block.result.content?.substring(0, 500) + (block.result.content?.length > 500 ? '...' : ''))"
+                                            ></div>
+                                          </div>
+                                        </template>
+                                        <template x-if="block.result.sources">
+                                          <div
+                                            class="text-xs text-[var(--text-tertiary)]"
+                                          >
+                                            <span
+                                              x-text="block.result.sources.length + ' sources found'"
+                                            ></span>
+                                          </div>
+                                        </template>
+                                      </div>
+                                    </template>
+
+                                    <!-- Query Documents Result -->
+                                    <template
+                                      x-if="block.name === 'query_documents'"
+                                    >
+                                      <div class="space-y-2">
+                                        <template
+                                          x-if="block.result.result_count !== undefined"
+                                        >
+                                          <div
+                                            class="text-xs text-[var(--text-tertiary)]"
+                                            x-text="block.result.result_count + ' relevant passages found'"
+                                          ></div>
+                                        </template>
+                                        <template x-if="block.result.context">
+                                          <div
+                                            class="bg-[var(--bg-tertiary)] border border-[var(--tool-border)] rounded-md p-2.5"
+                                          >
+                                            <div
+                                              class="text-xs text-[var(--text-tertiary)] mb-1"
+                                            >
+                                              Context Preview
+                                            </div>
+                                            <div
+                                              class="text-[var(--text-primary)] text-xs whitespace-pre-wrap"
+                                              x-text="parseEscapes(block.result.context?.substring(0, 300) + (block.result.context?.length > 300 ? '...' : ''))"
+                                            ></div>
+                                          </div>
+                                        </template>
+                                      </div>
+                                    </template>
+
+                                    <!-- Generic Result -->
+                                    <template
+                                      x-if="!['search_web', 'query_documents'].includes(block.name)"
+                                    >
+                                      <div
+                                        class="bg-[var(--bg-tertiary)] border border-[var(--tool-border)] rounded-md p-2.5"
+                                      >
+                                        <div
+                                          class="text-[var(--text-primary)] text-xs whitespace-pre-wrap font-mono"
+                                          x-text="formatToolResult(block.result)"
+                                        ></div>
+                                      </div>
+                                    </template>
+                                  </div>
+                                </template>
+
+                                <!-- Error -->
+                                <template x-if="block.status === 'error'">
+                                  <div
+                                    class="text-[var(--error)] text-xs whitespace-pre-wrap"
+                                    x-text="block.result?.error || 'Unknown error'"
+                                  ></div>
+                                </template>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    </template>
+                      </template>
 
-                    <!-- Sources Section -->
-                    <template
-                      x-if="message.role === 'assistant' && extractSources(message.blocks).length > 0"
-                    >
-                      <div class="pt-2 border-t border-[var(--border-primary)]">
-                        <button
-                          @click="toggleBlock('sources-' + message.id)"
-                          class="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
-                        >
-                          <i
-                            class="ph ph-book-open"
-                            :class="isExpanded('sources-' + message.id) ? 'rotate-90' : ''"
-                          ></i>
-                          <span
-                            >Sources (<span
-                              x-text="extractSources(message.blocks).length"
-                            ></span
-                            >)</span
+                      <!-- Sources Section -->
+                      <template
+                        x-if="message.role === 'assistant' && extractSources(message.blocks).length > 0"
+                      >
+                        <div class="pt-2 border-t border-[var(--border-primary)]">
+                          <button
+                            @click="toggleBlock('sources-' + message.id)"
+                            class="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
                           >
-                        </button>
-                        <div
-                          x-show="isExpanded('sources-' + message.id)"
-                          x-collapse
-                        >
-                          <div
-                            class="mt-2 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg p-3 max-h-48 overflow-y-auto"
-                          >
-                            <ol
-                              class="list-decimal list-inside space-y-1 text-xs"
+                            <i
+                              class="ph ph-book-open"
+                              :class="isExpanded('sources-' + message.id) ? 'rotate-90' : ''"
+                            ></i>
+                            <span
+                              >Sources (<span
+                                x-text="extractSources(message.blocks).length"
+                              ></span
+                              >)</span
                             >
-                              <template
-                                x-for="(source, idx) in extractSources(message.blocks)"
-                                :key="idx"
+                          </button>
+                          <div
+                            x-show="isExpanded('sources-' + message.id)"
+                            x-collapse
+                          >
+                            <div
+                              class="mt-2 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg p-3 max-h-48 overflow-y-auto"
+                            >
+                              <ol
+                                class="list-decimal list-inside space-y-1 text-xs"
                               >
-                                <li class="text-[var(--text-secondary)]">
-                                  <a
-                                    @click.prevent="handleSourceClick(source)"
-                                    :href="source.url || '#'"
-                                    rel="noopener"
-                                    class="text-[var(--text-link)] hover:underline cursor-pointer"
-                                    x-text="source.title || source.url"
-                                  ></a>
-                                </li>
-                              </template>
-                            </ol>
+                                <template
+                                  x-for="(source, idx) in extractSources(message.blocks)"
+                                  :key="idx"
+                                >
+                                  <li class="text-[var(--text-secondary)]">
+                                    <a
+                                      @click.prevent="handleSourceClick(source)"
+                                      :href="source.url || '#'"
+                                      rel="noopener"
+                                      class="text-[var(--text-link)] hover:underline cursor-pointer"
+                                      x-text="source.title || source.url"
+                                    ></a>
+                                  </li>
+                                </template>
+                              </ol>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </template>
-                  </div>
-                </template>
+                      </template>
+                    </div>
+                  </template>
 
-                <!-- Fallback: plain content (no blocks) -->
-                <template
-                  x-if="(!message.blocks || message.blocks.length === 0)"
-                >
-                  <div
-                    class="prose"
-                    x-html="renderWithCitations(message.content, extractSources(message.blocks))"
-                  ></div>
-                </template>
+                  <!-- Fallback: plain content (no blocks) -->
+                  <template
+                    x-if="(!message.blocks || message.blocks.length === 0)"
+                  >
+                    <div
+                      class="prose"
+                      x-html="renderWithCitations(message.content, extractSources(message.blocks))"
+                    ></div>
+                  </template>
+                </div>
+                <!-- Edit Mode (absolutely positioned overlay, sibling of content — not affected by content's opacity) -->
+                <div class="p-4 absolute inset-0 z-[1]" :class="{'invisible-keep-layout': editingMessageId !== message.id}">
+                  <textarea
+                    x-model="editContent"
+                    rows="3"
+                    class="input w-full text-sm resize-none"
+                    placeholder="Edit your message..."
+                  ></textarea>
+                  <div class="flex gap-2 mt-2">
+                    <button
+                      @click="saveEdit(message.id)"
+                      class="btn btn-primary btn-sm"
+                    >
+                      Save
+                    </button>
+                    <button
+                      @click="cancelEdit()"
+                      class="btn btn-secondary btn-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               </div>
-              <!-- Edit Mode (absolutely positioned overlay, sibling of content — not affected by content's opacity) -->
-              <div class="p-4 absolute inset-0 z-[1]" :class="{'invisible-keep-layout': editingMessageId !== message.id}">
-                <textarea
-                  x-model="editContent"
-                  rows="3"
-                  class="input w-full text-sm resize-none"
-                  placeholder="Edit your message..."
-                ></textarea>
-                <div class="flex gap-2 mt-2">
+
+              <!-- Message Actions at bottom of bubble -->
+              <div class="px-4 pb-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" :class="message.role === 'user' ? 'border-t border-white/20' : 'border-t border-[var(--border-primary)]/60'">
+                <button
+                  @click="copyMessage(message)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Copy"
+                >
+                  <i class="ph ph-copy text-sm"></i>
+                </button>
+                <template x-if="message.role === 'assistant'">
                   <button
-                    @click="saveEdit(message.id)"
-                    class="btn btn-primary btn-sm"
+                    @click="regenerate(message.id)"
+                    class="btn btn-icon btn-ghost text-xs"
+                    title="Regenerate"
+                    :disabled="isLoading"
                   >
-                    Save
+                    <i class="ph ph-arrow-clockwise text-sm"></i>
                   </button>
+                </template>
+                <template x-if="message.role === 'assistant'">
                   <button
-                    @click="cancelEdit()"
-                    class="btn btn-secondary btn-sm"
+                    @click="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? stopAudio() : speakMessage(message)"
+                    class="btn btn-icon btn-ghost text-xs"
+                    :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
                   >
-                    Cancel
+                    <i
+                      class="ph ph-speaker-high text-sm"
+                      x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
+                    ></i>
+                    <i
+                      class="ph ph-pause text-sm"
+                      x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                    ></i>
                   </button>
+                </template>
+                <template x-if="message.role === 'assistant' && message.content?.trim()">
+                  <button
+                    @click="takeNote(message)"
+                    class="btn btn-icon btn-ghost text-xs"
+                    title="Take note"
+                  >
+                    <i class="ph ph-notebook text-sm"></i>
+                  </button>
+                </template>
+                <template
+                  x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                >
+                  <button
+                    @click="stopAudio()"
+                    class="btn btn-icon btn-ghost text-xs text-[var(--error)]"
+                    title="Stop"
+                  >
+                    <i class="ph ph-stop text-sm"></i>
+                  </button>
+                </template>
+                <button
+                  @click="startEdit(message.id, message.content)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Edit"
+                >
+                  <i class="ph ph-pencil-simple text-sm"></i>
+                </button>
+                <button
+                  @click="deleteMessage(message.id, $event)"
+                  class="btn btn-icon btn-ghost text-xs"
+                  title="Delete"
+                >
+                  <i class="ph ph-trash text-sm"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Streaming Indicator -->
+        <template x-if="isLoading && !toolStatus.active">
+          <div class="flex justify-start items-start gap-2.5">
+            <div class="msg-avatar">
+              <i class="ph ph-robot"></i>
+            </div>
+            <div class="message-assistant p-3">
+              <div class="flex items-center gap-3">
+                <div class="flex items-center gap-1.5">
+                  <div
+                    class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
+                  ></div>
+                  <div
+                    class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
+                  ></div>
+                  <div
+                    class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
+                  ></div>
+                </div>
+                <button @click="cancelRequest()" class="btn btn-secondary btn-xs">
+                  <i class="ph ph-stop text-xs"></i> Stop
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Tool Status -->
+        <template x-if="toolStatus.active">
+          <div class="flex justify-start items-start gap-2.5">
+            <div class="msg-avatar">
+              <i class="ph ph-robot"></i>
+            </div>
+            <div class="tool-block p-3 max-w-md">
+              <div class="flex items-center gap-3">
+                <i
+                  class="ph ph-spinner animate-spin text-[var(--tool-accent)] text-lg"
+                ></i>
+                <div class="flex-1 min-w-0">
+                  <div
+                    class="font-medium text-sm text-[var(--tool-text)]"
+                    x-text="toolStatus.tool"
+                  ></div>
+                  <div
+                    class="text-xs text-[var(--text-tertiary)]"
+                    x-text="toolStatus.status"
+                  ></div>
+                  <template x-if="toolStatus.progress !== null">
+                    <div class="progress-bar mt-2">
+                      <div
+                        class="progress-bar-fill"
+                        :style="`width: ${toolStatus.progress}%`"
+                      ></div>
+                    </div>
+                  </template>
+                </div>
+                <button @click="cancelRequest()" class="btn btn-secondary btn-xs">
+                  <i class="ph ph-x text-xs"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ COMPOSER ═══════════ -->
+  <div class="px-4 pb-4 pt-2 flex-shrink-0">
+    <div class="max-w-[64rem] mx-auto w-full">
+      <!-- File Preview Bar -->
+      <template x-if="attachedFiles.length > 0">
+        <div class="flex flex-wrap gap-1.5 mb-1.5 px-0.5">
+          <template x-for="(file, idx) in attachedFiles" :key="'file-' + idx">
+            <div class="relative group flex items-center gap-1 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-md px-1.5 py-1 text-xs max-w-[180px]">
+              <!-- Image thumbnail -->
+              <template x-if="file.preview">
+                <img :src="file.preview" class="w-5 h-5 rounded object-cover flex-shrink-0" />
+              </template>
+              <template x-if="!file.preview">
+                <i :class="'ph ' + getFileIcon(file.type) + ' text-sm text-[var(--text-tertiary)] flex-shrink-0'"></i>
+              </template>
+              <div class="min-w-0 flex-1 leading-tight">
+                <div class="truncate font-medium text-[10px]" x-text="file.filename"></div>
+                <div class="text-[var(--text-tertiary)] text-[10px]" x-text="formatFileSize(file.size)"></div>
+              </div>
+              <!-- Uploading spinner -->
+              <template x-if="file.uploading">
+                <i class="ph ph-spinner animate-spin text-xs text-[var(--accent-primary)]"></i>
+              </template>
+              <!-- Remove button -->
+              <button @click="removeFile(idx)" class="btn btn-icon btn-ghost p-0 absolute -top-1 -right-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="Remove" style="width:14px;height:14px;min-width:0">
+                <i class="ph ph-x text-[10px]"></i>
+              </button>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <div class="composer">
+        <!-- Composer: full-width textarea on top, controls below -->
+        <form @submit.prevent="sendMessage()" class="flex flex-col px-2.5 pt-2 pb-2">
+          <!-- Hidden file input -->
+          <input
+            type="file"
+            x-ref="fileInput"
+            @change="handleFileSelect($event)"
+            multiple
+            accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xls,.xlsx,.py,.js,.ts,.html,.css"
+            class="hidden"
+          />
+
+          <textarea
+            x-model="inputMessage"
+            x-ref="chatInput"
+            @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
+            @focus="isFocused = true"
+            @blur="isFocused = false"
+            placeholder="Message… (Shift+Enter for new line)"
+            class="composer-input w-full transition-[min-height] duration-200"
+            :style="`min-height: ${isFocused ? '110px' : '36px'}; max-height: 200px`"
+            :disabled="isLoading"
+          ></textarea>
+
+          <!-- Controls bar: dropdowns + actions -->
+          <div class="flex items-center justify-between gap-1.5 mt-1">
+            <!-- Left cluster: agent / model / docs / MCP dropdowns -->
+            <div class="flex items-center gap-1.5 min-w-0">
+            <!-- Agent Selector -->
+            <div
+              class="relative"
+              x-data="{ open: false }"
+              @click.outside="open = false"
+              x-show="availableAgents.length > 0"
+            >
+              <button
+                type="button"
+                @click="open = !open"
+                class="dropdown-btn"
+                :class="selectedAgentId ? 'dropdown-btn-active' : ''"
+                title="Agent"
+              >
+                <i class="ph ph-user text-sm"></i>
+                <span class="max-w-[100px] truncate" x-text="selectedAgentName"></span>
+                <i class="ph ph-caret-down text-xs"></i>
+              </button>
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[200px]">
+                <div class="max-h-[40vh] overflow-y-auto py-1">
+                  <button
+                    type="button"
+                    @click="selectAgent(null)"
+                    class="dropdown-item"
+                    :class="!selectedAgentId ? 'dropdown-item-active' : ''"
+                  >
+                    <i class="ph ph-check text-xs" x-show="!selectedAgentId"></i>
+                    <span>Default Agent</span>
+                  </button>
+                  <template x-for="agent in availableAgents" :key="agent.id">
+                    <button
+                      type="button"
+                      @click="selectAgent(agent.id)"
+                      class="dropdown-item"
+                      :class="selectedAgentId === agent.id ? 'dropdown-item-active' : ''"
+                    >
+                      <i class="ph ph-check text-xs" x-show="selectedAgentId === agent.id"></i>
+                      <span class="truncate" x-text="agent.name"></span>
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>
 
-            <!-- Message Actions at bottom of bubble -->
-            <div class="px-4 pb-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" :class="message.role === 'user' ? 'border-t border-white/20' : 'border-t border-[var(--border-primary)]/30'">
+            <!-- Model Selector -->
+            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
               <button
-                @click="copyMessage(message)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Copy"
+                type="button"
+                @click="open = !open"
+                class="dropdown-btn"
+                :class="selectedModel ? 'dropdown-btn-active' : ''"
+                title="Model"
               >
-                <i class="ph ph-copy text-sm"></i>
+                <i class="ph ph-cpu text-sm"></i>
+                <span class="max-w-[130px] truncate" x-text="selectedModelName"></span>
+                <i class="ph ph-caret-down text-xs"></i>
               </button>
-              <template x-if="message.role === 'assistant'">
-                <button
-                  @click="regenerate(message.id)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Regenerate"
-                  :disabled="isLoading"
-                >
-                  <i class="ph ph-arrow-clockwise text-sm"></i>
-                </button>
-              </template>
-              <template x-if="message.role === 'assistant'">
-                <button
-                  @click="speakMessage(message)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Read aloud"
-                >
-                  <i
-                    class="ph ph-speaker-high text-sm"
-                    x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
-                  ></i>
-                  <i
-                    class="ph ph-pause text-sm"
-                    x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-                  ></i>
-                </button>
-              </template>
-              <template x-if="message.role === 'assistant' && message.content?.trim()">
-                <button
-                  @click="takeNote(message)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Take note"
-                >
-                  <i class="ph ph-notebook text-sm"></i>
-                </button>
-              </template>
-              <template
-                x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-              >
-                <button
-                  @click="stopAudio()"
-                  class="btn btn-icon btn-ghost text-xs text-[var(--error)]"
-                  title="Stop"
-                >
-                  <i class="ph ph-stop text-sm"></i>
-                </button>
-              </template>
-              <button
-                @click="startEdit(message.id, message.content)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Edit"
-              >
-                <i class="ph ph-pencil-simple text-sm"></i>
-              </button>
-              <button
-                @click="deleteMessage(message.id, $event)"
-                class="btn btn-icon btn-ghost text-xs"
-                title="Delete"
-              >
-                <i class="ph ph-trash text-sm"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <!-- Streaming Indicator -->
-      <template x-if="isLoading && !toolStatus.active">
-        <div class="flex justify-start">
-          <div class="message-assistant p-4">
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-1.5">
-                <div
-                  class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
-                ></div>
-                <div
-                  class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
-                ></div>
-                <div
-                  class="w-2 h-2 bg-[var(--accent-primary)] rounded-full animate-typing-dot"
-                ></div>
-              </div>
-              <button @click="cancelRequest()" class="btn btn-danger btn-xs">
-                <i class="ph ph-stop text-xs"></i> Stop
-              </button>
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <!-- Tool Status -->
-      <template x-if="toolStatus.active">
-        <div class="flex justify-start">
-          <div class="tool-block p-3 max-w-md">
-            <div class="flex items-center gap-3">
-              <i
-                class="ph ph-spinner animate-spin text-[var(--tool-text)] text-lg"
-              ></i>
-              <div class="flex-1 min-w-0">
-                <div
-                  class="font-medium text-sm text-[var(--tool-text)]"
-                  x-text="toolStatus.tool"
-                ></div>
-                <div
-                  class="text-xs text-[var(--text-tertiary)]"
-                  x-text="toolStatus.status"
-                ></div>
-                <template x-if="toolStatus.progress !== null">
-                  <div class="progress-bar mt-2">
-                    <div
-                      class="progress-bar-fill"
-                      :style="`width: ${toolStatus.progress}%`"
-                    ></div>
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[220px]">
+                <div class="max-h-[40vh] overflow-y-auto py-1">
+                  <template x-for="model in availableModels" :key="model.id">
+                    <button
+                      type="button"
+                      @click="selectModel(model.id)"
+                      class="dropdown-item"
+                      :class="selectedModel === model.id ? 'dropdown-item-active' : ''"
+                    >
+                      <i class="ph ph-check text-xs" x-show="selectedModel === model.id"></i>
+                      <span class="truncate" x-text="model.name || model.id"></span>
+                    </button>
+                  </template>
+                  <div x-show="availableModels.length === 0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">
+                    No models available
                   </div>
-                </template>
+                </div>
               </div>
-              <button @click="cancelRequest()" class="btn btn-danger btn-xs">
-                <i class="ph ph-x text-xs"></i>
+            </div>
+
+            <!-- Document Selector -->
+            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+              <button
+                type="button"
+                @click="open = !open"
+                class="dropdown-btn"
+                :class="selectedDocumentIds.length > 0 ? 'dropdown-btn-active' : ''"
+                title="Documents"
+              >
+                <i class="ph ph-books text-sm"></i>
+                <span x-text="selectedDocumentIds.length > 0 ? (selectedDocumentIds.includes('all') ? 'All Docs' : selectedDocumentIds.length + ' docs') : 'Docs'"></span>
+                <i class="ph ph-caret-down text-xs"></i>
               </button>
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[220px]">
+                <div class="max-h-[45vh] overflow-y-auto py-1">
+                  <label class="dropdown-item cursor-pointer border-b border-[var(--border-primary)]">
+                    <input type="checkbox" :checked="isDocumentSelected('all')" @change="toggleDocument('all')" class="rounded" style="accent-color: var(--accent-primary)" />
+                    <span class="font-medium">All documents</span>
+                  </label>
+                  <template x-for="doc in documents" :key="doc.id">
+                    <label class="dropdown-item cursor-pointer">
+                      <input type="checkbox" :checked="isDocumentSelected(doc.id)" @change="toggleDocument(doc.id)" class="rounded" style="accent-color: var(--accent-primary)" />
+                      <span class="truncate" x-text="doc.filename"></span>
+                    </label>
+                  </template>
+                  <div x-show="documents.length === 0" class="px-3 py-3 text-xs text-[var(--text-tertiary)] text-center">
+                    No documents uploaded
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- MCP Servers (multi-level: servers → tools + management) -->
+            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+              <button
+                type="button"
+                @click="open = !open"
+                class="dropdown-btn"
+                :class="mcpServers.some(s => s.enabled) ? 'dropdown-btn-active' : ''"
+                title="MCP Servers"
+              >
+                <i class="ph ph-plugs-connected text-sm"></i>
+                <span x-text="mcpSummary"></span>
+                <i class="ph ph-caret-down text-xs"></i>
+              </button>
+              <div x-show="open" x-cloak class="dropdown-panel w-[340px]">
+                <!-- Header -->
+                <div class="flex items-center justify-between px-3 py-2 border-b border-[var(--border-primary)]">
+                  <span class="text-sm font-semibold">MCP Servers</span>
+                  <button type="button" @click="openAddServer()" class="btn btn-secondary btn-xs">
+                    <i class="ph ph-plus text-xs"></i> Add
+                  </button>
+                </div>
+                <div class="max-h-[50vh] overflow-y-auto">
+                  <!-- List view: servers → tools -->
+                  <template x-if="mcpView === 'list'">
+                    <div>
+                      <template x-for="server in mcpServers" :key="server.name">
+                        <div class="px-3 py-2.5 border-b border-[var(--border-primary)] last:border-b-0">
+                          <div class="flex items-center gap-2">
+                            <span class="badge-dot flex-shrink-0" :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"></span>
+                            <span class="font-medium text-sm flex-1 min-w-0 truncate" x-text="server.name"></span>
+                            <button
+                              type="button"
+                              class="toggle"
+                              :class="server.enabled ? 'toggle-on' : ''"
+                              @click="toggleServerEnabled(server, !server.enabled)"
+                              :title="server.enabled ? 'Disable server' : 'Enable server'"
+                            ></button>
+                          </div>
+                          <div class="text-xs text-[var(--text-tertiary)] mt-0.5" x-text="server.transport_type + (server.error ? ' — ' + server.error : '')"></div>
+                          <div class="flex gap-0.5 mt-1.5">
+                            <button type="button" @click="reconnectServer(server.name)" class="btn btn-ghost btn-xs" title="Reconnect">
+                              <i class="ph ph-arrows-clockwise text-xs"></i>
+                            </button>
+                            <button type="button" @click="refreshServerTools(server.name)" class="btn btn-ghost btn-xs" title="Refresh tools">
+                              <i class="ph ph-arrows-circle-right text-xs"></i>
+                            </button>
+                            <button type="button" @click="openEditServer(server)" class="btn btn-ghost btn-xs" title="Edit">
+                              <i class="ph ph-pencil-simple text-xs"></i>
+                            </button>
+                            <button type="button" @click="removeServer(server.name)" class="btn btn-ghost btn-xs text-[var(--error)]" title="Remove">
+                              <i class="ph ph-trash text-xs"></i>
+                            </button>
+                          </div>
+                          <template x-if="server.tools.length > 0">
+                            <div class="mt-2">
+                              <button
+                                type="button"
+                                @click="server.toolsExpanded = !server.toolsExpanded"
+                                class="flex items-center gap-1 text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                <i class="ph ph-caret-right text-xs transition-transform" :class="server.toolsExpanded ? 'rotate-90' : ''"></i>
+                                <span x-text="server.tools.length + ' tool' + (server.tools.length === 1 ? '' : 's')"></span>
+                              </button>
+                              <div x-show="server.toolsExpanded" x-collapse class="mt-1.5 space-y-0.5">
+                                <template x-for="tool in server.tools" :key="tool.name">
+                                  <label class="flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer hover:bg-[var(--bg-tertiary)] text-xs" :title="tool.description || ''">
+                                    <input type="checkbox" :checked="!server.disabled_tools.includes(tool.name)" @change="toggleToolEnabled(server, tool.name, !$event.target.checked)" class="rounded" style="accent-color: var(--accent-primary)" />
+                                    <span class="truncate" x-text="tool.name"></span>
+                                  </label>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                      <div x-show="mcpServers.length === 0" class="px-3 py-6 text-center text-xs text-[var(--text-tertiary)]">
+                        No MCP servers configured.
+                        <button type="button" @click="openAddServer()" class="text-[var(--text-link)] hover:underline">Add one</button>
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Form view: add / edit server -->
+                  <template x-if="mcpView === 'form'">
+                    <div class="p-3 space-y-2">
+                      <div>
+                        <label class="text-xs text-[var(--text-tertiary)]">Name</label>
+                        <input x-model="mcpForm.name" type="text" class="input text-sm" placeholder="server-name" />
+                      </div>
+                      <div>
+                        <label class="text-xs text-[var(--text-tertiary)]">Transport</label>
+                        <select x-model="mcpForm.transport_type" class="select text-sm w-full">
+                          <option value="stdio">stdio</option>
+                          <option value="sse">SSE</option>
+                          <option value="streamable-http">Streamable HTTP</option>
+                        </select>
+                      </div>
+                      <template x-if="mcpForm.transport_type === 'stdio'">
+                        <div class="space-y-2">
+                          <div>
+                            <label class="text-xs text-[var(--text-tertiary)]">Command</label>
+                            <input x-model="mcpForm.command" type="text" class="input text-sm" placeholder="npx" />
+                          </div>
+                          <div>
+                            <label class="text-xs text-[var(--text-tertiary)]">Args (JSON array)</label>
+                            <input x-model="mcpForm.args" type="text" class="input text-sm" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]' />
+                          </div>
+                          <div>
+                            <label class="text-xs text-[var(--text-tertiary)]">Env (JSON object)</label>
+                            <input x-model="mcpForm.env" type="text" class="input text-sm" placeholder='{"KEY": "value"}' />
+                          </div>
+                        </div>
+                      </template>
+                      <template x-if="mcpForm.transport_type !== 'stdio'">
+                        <div>
+                          <label class="text-xs text-[var(--text-tertiary)]">URL</label>
+                          <input x-model="mcpForm.url" type="text" class="input text-sm" placeholder="https://..." />
+                        </div>
+                      </template>
+                      <div>
+                        <label class="text-xs text-[var(--text-tertiary)]">Timeout (s)</label>
+                        <input x-model.number="mcpForm.timeout" type="number" class="input text-sm" />
+                      </div>
+                      <div class="flex gap-2 pt-1">
+                        <button type="button" @click="saveMCPServer()" class="btn btn-primary btn-sm flex-1">Save</button>
+                        <button type="button" @click="cancelMCPForm()" class="btn btn-secondary btn-sm">Cancel</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </template>
-    </div>
 
-    <!-- Input Area -->
-    <div
-      class="px-4 flex-shrink-0 pb-4"
-    >
-      <!-- File Preview Bar -->
-      <template x-if="attachedFiles.length > 0">
-        <div class="flex flex-wrap gap-2 mb-2 px-0.5">
-          <template x-for="(file, idx) in attachedFiles" :key="'file-' + idx">
-            <div class="relative group flex items-center gap-1.5 bg-[var(--bg-tertiary)] border border-[var(--border-primary)] rounded-lg px-2 py-1.5 text-xs max-w-[200px]">
-              <!-- Image thumbnail -->
-              <template x-if="file.preview">
-                <img :src="file.preview" class="w-8 h-8 rounded object-cover flex-shrink-0" />
-              </template>
-              <template x-if="!file.preview">
-                <i :class="'ph ' + getFileIcon(file.type) + ' text-base text-[var(--text-tertiary)]'"></i>
-              </template>
-              <div class="min-w-0 flex-1">
-                <div class="truncate font-medium" x-text="file.filename"></div>
-                <div class="text-[var(--text-tertiary)]" x-text="formatFileSize(file.size)"></div>
-              </div>
-              <!-- Uploading spinner -->
-              <template x-if="file.uploading">
-                <i class="ph ph-spinner animate-spin text-sm text-[var(--accent-primary)]"></i>
-              </template>
-              <!-- Remove button -->
-              <button @click="removeFile(idx)" class="btn btn-icon btn-ghost text-xs p-0.5 absolute -top-1.5 -right-1.5 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity" title="Remove">
-                <i class="ph ph-x text-xs"></i>
-              </button>
-            </div>
-          </template>
-        </div>
-      </template>
+          <div class="flex items-center gap-1 flex-shrink-0">
+            <!-- Attach button -->
+            <button
+              type="button"
+              @click="triggerFileUpload()"
+              :disabled="isLoading || isUploading"
+              class="btn btn-icon btn-ghost h-[32px] w-[32px] p-0"
+              title="Attach files"
+            >
+              <i class="ph ph-paperclip text-base"></i>
+            </button>
 
-      <!-- Input Box -->
-      <form @submit.prevent="sendMessage()" class="flex gap-3 items-end">
-        <!-- Hidden file input -->
-        <input
-          type="file"
-          x-ref="fileInput"
-          @change="handleFileSelect($event)"
-          multiple
-          accept="image/*,.pdf,.doc,.docx,.txt,.md,.json,.csv,.xls,.xlsx,.py,.js,.ts,.html,.css"
-          class="hidden"
-        />
+            <!-- Mic button -->
+            <button
+              type="button"
+              @click="toggleRecording()"
+              :disabled="isLoading || !sttSupported"
+              class="btn btn-icon btn-ghost h-[32px] w-[32px] p-0"
+              :class="isRecording ? '!text-[var(--error)] !bg-red-500/10 animate-pulse' : ''"
+              x-show="sttSupported"
+              :title="isRecording ? 'Stop recording' : 'Voice input'"
+            >
+              <i
+                class="ph text-base"
+                :class="isRecording ? 'ph-microphone-slash' : 'ph-microphone'"
+              ></i>
+            </button>
 
-        <textarea
-          x-model="inputMessage"
-          x-ref="chatInput"
-          @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
-          @focus="isFocused = true"
-          @blur="isFocused = false"
-          placeholder="Type a message... (Shift+Enter for new line)"
-          class="input flex-1 resize-none transition-[min-height] duration-200"
-          :style="`min-height: ${isLoading || (!isFocused && messages.length > 0) ? '44px' : '120px'}; max-height: 200px`"
-          :disabled="isLoading"
-        ></textarea>
-
-        <div class="flex gap-2 items-end flex-shrink-0">
-          <!-- Attach button -->
-          <button
-            type="button"
-            @click="triggerFileUpload()"
-            :disabled="isLoading || isUploading"
-            class="btn btn-icon btn-ghost h-[44px] w-[44px] p-0"
-            title="Attach files"
-          >
-            <i class="ph ph-paperclip text-lg"></i>
-          </button>
-
-          <button
-            type="submit"
-            :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isLoading || isUploading"
-            class="btn btn-primary h-[44px] w-[44px] p-0"
-            title="Send"
-          >
-            <i class="ph ph-paper-plane-right text-lg"></i>
-          </button>
-        </div>
-      </form>
-    </div>
-
-    <!-- Source Content Modal -->
-    <div
-      x-show="showSourceModal"
-      x-cloak
-      @click.self="closeSourceModal()"
-      @keydown.escape.window="closeSourceModal()"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-    >
-      <div class="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
-        <!-- Modal Header -->
-        <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
-          <h3 class="font-semibold flex items-center gap-2">
-            <i class="ph ph-file-text text-[var(--accent-primary)]"></i>
-            <span x-text="selectedSource?.title || 'Source Content'"></span>
-          </h3>
-          <button @click="closeSourceModal()" class="btn btn-icon btn-ghost">
-            <i class="ph ph-x text-lg"></i>
-          </button>
-        </div>
-        
-        <!-- Modal Content -->
-        <div class="flex-1 overflow-y-auto px-6 py-4">
-          <div class="prose prose-sm max-w-none text-sm text-[var(--text-primary)]">
-            <p x-html="selectedSource?.chunk_content?.replace(/\n/g, '<br>') || ''"></p>
+            <button
+              type="submit"
+              :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isLoading || isUploading"
+              class="btn btn-primary h-[32px] w-[32px] p-0"
+              title="Send"
+            >
+              <i class="ph ph-paper-plane-right text-base"></i>
+            </button>
           </div>
-        </div>
-
-        <!-- Modal Footer -->
-        <div class="px-6 py-3 border-t border-[var(--border-primary)] flex justify-between items-center bg-[var(--bg-tertiary)] flex-shrink-0">
-          <div class="text-xs text-[var(--text-tertiary)]">
-            <span x-text="'Document ID: ' + (selectedSource?.title?.split(' - ')[0] || 'Unknown')"></span>
           </div>
-          <button @click="closeSourceModal()" class="btn btn-primary btn-sm">
-            Close
-          </button>
-        </div>
+        </form>
       </div>
     </div>
-  </main>
+  </div>
+
+  <!-- Source Content Modal -->
+  <div
+    x-show="showSourceModal"
+    x-cloak
+    @click.self="closeSourceModal()"
+    @keydown.escape.window="closeSourceModal()"
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+  >
+    <div class="bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between flex-shrink-0">
+        <h3 class="font-semibold flex items-center gap-2">
+          <i class="ph ph-file-text text-[var(--accent-primary)]"></i>
+          <span x-text="selectedSource?.title || 'Source Content'"></span>
+        </h3>
+        <button @click="closeSourceModal()" class="btn btn-icon btn-ghost">
+          <i class="ph ph-x text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Modal Content -->
+      <div class="flex-1 overflow-y-auto px-6 py-4">
+        <div class="prose prose-sm max-w-none text-sm text-[var(--text-primary)]">
+          <p x-html="selectedSource?.chunk_content?.replace(/\n/g, '<br>') || ''"></p>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3 border-t border-[var(--border-primary)] flex justify-between items-center bg-[var(--bg-tertiary)] flex-shrink-0">
+        <div class="text-xs text-[var(--text-tertiary)]">
+          <span x-text="'Document ID: ' + (selectedSource?.title?.split(' - ')[0] || 'Unknown')"></span>
+        </div>
+        <button @click="closeSourceModal()" class="btn btn-primary btn-sm">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+</main>

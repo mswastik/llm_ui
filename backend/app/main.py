@@ -64,7 +64,9 @@ tool_executor = ToolExecutor(mcp_manager)
 # Set TTS service in settings manager
 settings_manager.set_tts_service(tool_executor.tts_service)
 
-
+# Initialize STT service
+from tools.stt_service import STTService, STTConfig
+stt_service = STTService(STTConfig.from_settings(settings_manager.get_settings()))
 
 
 @app.get("/")
@@ -341,7 +343,104 @@ async def _core_stream_handler(
                             else:
                                 content_parts.append({"type": "text", "text": f"\n[Image file not found: {f_name}]"})
                         else:
-                            content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
+                            # Try to read and include file content for text-based files and PDFs
+                            f_path = os.path.join(UPLOAD_DIR, os.path.basename(f_url))
+                            text_exts = {'.txt','.md','.json','.csv','.yaml','.yml','.xml','.log',
+                                         '.py','.js','.ts','.jsx','.tsx','.html','.css','.scss','.less',
+                                         '.sh','.bash','.zsh','.env','.ini','.cfg','.conf',
+                                         '.sql','.r','.rb','.php','.go','.rs','.java','.kt','.swift',
+                                         '.c','.cpp','.h','.hpp','.toml','.gradle','.makefile','.dockerfile',
+                                         '.diff','.patch','.svg'}
+                            file_ext = os.path.splitext(f_name)[1].lower()
+
+                            if file_ext == '.pdf' and os.path.exists(f_path):
+                                try:
+                                    from pypdf import PdfReader
+                                    pdf_content = []
+                                    char_count = 0
+                                    for page in PdfReader(f_path).pages:
+                                        text = (page.extract_text() or '').strip()
+                                        if text:
+                                            remaining = 100000 - char_count
+                                            if remaining <= 0:
+                                                pdf_content.append('[...truncated...]')
+                                                break
+                                            pdf_content.append(text[:remaining])
+                                            char_count += len(text[:remaining])
+                                    pdf_text = '\n\n'.join(pdf_content)
+                                    content_parts.append({
+                                        "type": "text",
+                                        "text": f"\n\nThe user attached the PDF '{f_name}'. Its content:\n\n{pdf_text}"
+                                    })
+                                except ImportError:
+                                    content_parts.append({"type": "text", "text": f"\n[Attached PDF: {f_name}]"})
+                                except Exception as e:
+                                    print(f"[FILE] Error reading PDF {f_path}: {e}")
+                                    content_parts.append({"type": "text", "text": f"\n[Attached PDF: {f_name}]"})
+
+                            elif file_ext == '.docx' and os.path.exists(f_path):
+                                try:
+                                    from docx import Document
+                                    paras = [p.text for p in Document(f_path).paragraphs if p.text]
+                                    doc_text = '\n\n'.join(paras)[:100000]
+                                    content_parts.append({
+                                        "type": "text",
+                                        "text": f"\n\nThe user attached the Word document '{f_name}'. Its content:\n\n{doc_text}"
+                                    })
+                                except ImportError:
+                                    content_parts.append({"type": "text", "text": f"\n[Attached Word document: {f_name}]"})
+                                except Exception as e:
+                                    print(f"[FILE] Error reading DOCX {f_path}: {e}")
+                                    content_parts.append({"type": "text", "text": f"\n[Attached Word document: {f_name}]"})
+
+                            elif file_ext == '.xlsx' and os.path.exists(f_path):
+                                try:
+                                    from openpyxl import load_workbook
+                                    wb = load_workbook(f_path, read_only=True, data_only=True)
+                                    sheets_text = []
+                                    char_count = 0
+                                    for sheet_name in wb.sheetnames:
+                                        ws = wb[sheet_name]
+                                        rows = []
+                                        max_rows = 60
+                                        for i, row in enumerate(ws.iter_rows(values_only=True)):
+                                            if i >= max_rows:
+                                                rows.append(f'... ({ws.max_row or "?"} total rows)')
+                                                break
+                                            row_vals = [str(c) if c is not None else '' for c in row]
+                                            rows.append(' | '.join(row_vals))
+                                        sheet_text = f'--- Sheet: {sheet_name} ---\n' + '\n'.join(rows)
+                                        remaining = 100000 - char_count
+                                        if remaining <= 0:
+                                            break
+                                        sheets_text.append(sheet_text[:remaining])
+                                        char_count += len(sheet_text[:remaining])
+                                    wb.close()
+                                    xlsx_text = '\n\n'.join(sheets_text)
+                                    content_parts.append({
+                                        "type": "text",
+                                        "text": f"\n\nThe user attached the spreadsheet '{f_name}'. Its content:\n\n{xlsx_text}"
+                                    })
+                                except ImportError:
+                                    content_parts.append({"type": "text", "text": f"\n[Attached spreadsheet: {f_name}]"})
+                                except Exception as e:
+                                    print(f"[FILE] Error reading XLSX {f_path}: {e}")
+                                    content_parts.append({"type": "text", "text": f"\n[Attached spreadsheet: {f_name}]"})
+
+                            elif file_ext in text_exts and os.path.exists(f_path):
+                                try:
+                                    with open(f_path, "r", encoding="utf-8", errors="replace") as text_f:
+                                        file_content = text_f.read(100000)
+                                    content_parts.append({
+                                        "type": "text",
+                                        "text": f"\n\nThe user attached the file '{f_name}'. Its content:\n\n```{file_ext.lstrip('.')}\n{file_content}\n```"
+                                    })
+                                except Exception as e:
+                                    print(f"[FILE] Error reading {f_path}: {e}")
+                                    content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
+
+                            else:
+                                content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
                     llm_messages.append({"role": role, "content": content_parts})
                 else:
                     llm_messages.append({"role": role, "content": content})
@@ -1564,6 +1663,47 @@ async def get_tts_status():
     }
 
 
+# STT Endpoints
+@app.post("/api/stt/transcribe")
+async def transcribe_audio(request: Request):
+    """
+    Transcribe audio to text using STT.
+    Accepts multipart/form-data with an audio file.
+    """
+    try:
+        form = await request.form()
+        audio_file = form.get("audio")
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="No audio file provided")
+
+        audio_data = await audio_file.read()
+        filename = getattr(audio_file, "filename", "recording.webm") or "recording.webm"
+
+        result = await stt_service.transcribe(audio_data, filename=filename)
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Transcription failed"))
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"STT error: {str(e)}")
+
+
+@app.get("/api/stt/status")
+async def stt_status():
+    """Check STT availability and current config"""
+    status = await stt_service.check_availability()
+    status["config"] = {
+        "engine": stt_service.config.engine,
+        "model": stt_service.config.model,
+        "language": stt_service.config.language,
+    }
+    return status
+
+
 # Backup Management
 @app.get("/api/backup/status")
 async def get_backup_status():
@@ -1609,21 +1749,32 @@ async def update_settings(request: Request):
         llm_client.base_url = settings.get('llama_cpp_base_url', llm_client.base_url)
         llm_client.model = settings.get('llama_cpp_model', llm_client.model)
         print(f"Updated LLM client: base_url={llm_client.base_url}, model={llm_client.model}")
-    
+
+    # Update STT service config if STT settings changed
+    stt_keys = {'stt_engine', 'stt_model', 'stt_language', 'stt_openai_api_key'}
+    if stt_keys & set(data.keys()):
+        global stt_service
+        stt_service = STTService(STTConfig.from_settings(updated_settings))
+        print(f"Updated STT service: engine={stt_service.config.engine}, model={stt_service.config.model}")
+
     return updated_settings
 
 
 @app.get("/api/audio/{filename}")
 async def get_audio_file(filename: str):
     """Serve generated TTS audio files"""
+    import mimetypes
     audio_path = os.path.join(UPLOAD_DIR, filename)
 
     if not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    mime_type, _ = mimetypes.guess_type(filename)
+    media_type = mime_type or "audio/mpeg"
+
     return FileResponse(
         audio_path,
-        media_type="audio/mpeg",
+        media_type=media_type,
         filename=filename
     )
 

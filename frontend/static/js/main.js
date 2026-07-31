@@ -28,7 +28,7 @@ console.log('[main] Alpine ESM module loaded')
 // 2. Import SSE + TTS services (no Alpine dependency)
 // ═══════════════════════════════════════════════════════════
 import { SSEService, sseService } from './services/sse.js'
-import { TTSService, ttsService } from './services/tts.js?v=37'
+import { TTSService, ttsService } from './services/tts.js?v=38'
 window.sseService = sseService
 window.ttsService = ttsService
 

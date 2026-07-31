@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=37'
+import { ttsService } from '../services/tts.js?v=38'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
@@ -855,9 +855,9 @@ const chatComponent = () => ({
     const ui = this.$store.ui
     const isThis = ui.isPlaying && ui.currentAudioMessageId === msg.id
     if (!isThis) { this.speakMessage(msg); return }
-    // Audio loaded but paused (autoplay was blocked earlier) → start it
+    // Only resume if the audio is loaded but never started (autoplay was blocked)
     const a = ttsService.currentAudio
-    if (a && a.paused && !a.ended && a.readyState >= 2) {
+    if (a && a.paused && a.currentTime === 0 && a.readyState >= 2) {
       a.play().catch(() => {})
       return
     }

@@ -9,6 +9,9 @@ export class TTSService {
     this.currentAudioMessageId = null
     this.isPlaying = false
     this.stopped = false
+    // Every element this service ever created — stop() pauses ALL of them,
+    // so a stale/null currentAudio can never leave audio playing
+    this.audioElements = new Set()
     // Single writer: the chat component registers this to mirror real audio state into the store
     this.onStateChange = null
   }
@@ -36,6 +39,7 @@ export class TTSService {
       if (this.currentAudio === audio) {
         this.isPlaying = false
         this.currentAudio = null
+        this.audioElements.delete(audio)
         this.#emit()
         onEnd?.()
       }
@@ -44,6 +48,7 @@ export class TTSService {
       if (this.currentAudio === audio && !this.stopped) {
         this.isPlaying = false
         this.currentAudio = null
+        this.audioElements.delete(audio)
         this.#emit()
         onEnd?.()
       }
@@ -86,6 +91,7 @@ export class TTSService {
       this.currentAudio = new Audio(audioUrl)
       this.currentAudioMessageId = typeof message === 'object' ? message.id : null
       this.isPlaying = true
+      this.audioElements.add(this.currentAudio)
       this.#emit()
 
       // State follows the audio element's real events (play/pause/ended/error)
@@ -99,8 +105,10 @@ export class TTSService {
           onError?.('Audio ready — click the button to play')
           return true
         }
+        const el = this.currentAudio
         this.isPlaying = false
         this.currentAudio = null
+        this.audioElements.delete(el)
         this.#emit()
         onError?.('Playback failed: ' + e.message)
         onEnd?.()
@@ -116,7 +124,10 @@ export class TTSService {
 
   stop() {
     this.stopped = true
-    this.currentAudio?.pause()
+    // Pause every element we ever created — even if currentAudio drifted null,
+    // the playing element is still in the set and gets silenced
+    this.audioElements.forEach(el => { try { el.pause() } catch { /* noop */ } })
+    this.audioElements.clear()
     this.currentAudio = null
     this.isPlaying = false
     this.#emit()

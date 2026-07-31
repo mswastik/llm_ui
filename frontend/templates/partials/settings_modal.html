@@ -233,9 +233,7 @@
                 class="input text-sm"
               >
                 <option value="edge-tts">Edge TTS</option>
-                <option value="pyttsx3">Pyttsx3</option>
                 <option value="kokoro">Kokoro TTS (82M params)</option>
-                <option value="inflect-nano">Inflect-Nano v1 (4.6M params)</option>
               </select>
             </div>
             <div>
@@ -286,21 +284,12 @@
                   </optgroup>
                 </select>
               </template>
-              <template
-                x-if="$store.ui.settingsData.tts_engine !== 'kokoro' && $store.ui.settingsData.tts_engine !== 'inflect-nano'"
-              >
+              <template x-if="$store.ui.settingsData.tts_engine !== 'kokoro'">
                 <input
                   type="text"
                   x-model="$store.ui.settingsData.tts_voice"
                   class="input text-sm"
                 />
-              </template>
-              <template x-if="$store.ui.settingsData.tts_engine === 'inflect-nano'">
-                <p
-                  class="input text-sm text-[var(--text-secondary)] flex items-center"
-                >
-                  Default (Male, US)
-                </p>
               </template>
             </div>
             <div x-show="$store.ui.settingsData.tts_engine === 'kokoro'">
@@ -329,21 +318,23 @@
                 <option value="cuda">CUDA</option>
               </select>
             </div>
-            <div x-show="$store.ui.settingsData.tts_engine === 'inflect-nano'" class="md:col-span-2">
+            <div x-show="$store.ui.settingsData.tts_engine === 'kokoro'">
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Model Path</label
+                >Speed <span class="text-[var(--text-tertiary)]">(higher = faster)</span></label
               >
-              <input
-                type="text"
-                x-model="$store.ui.settingsData.inflect_nano_model_path"
+              <select
+                x-model="$store.ui.settingsData.kokoro_speed"
                 class="input text-sm"
-                placeholder="models/Inflect-Nano-v1"
-              />
-              <p class="text-xs text-[var(--text-tertiary)] mt-1">
-                Path to cloned repo from
-                <a href="https://huggingface.co/owensong/Inflect-Nano-v1" target="_blank" class="text-[var(--text-link)] hover:underline">hf.co/owensong/Inflect-Nano-v1</a>
-              </p>
+              >
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1.0">1.0x</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="1.75">1.75x</option>
+                <option value="2.0">2.0x</option>
+              </select>
             </div>
             <div class="md:col-span-2">
               <label class="flex items-center gap-2 cursor-pointer">

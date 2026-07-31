@@ -58,8 +58,6 @@ const settings = () => {
       settings.kokoro_device = settings.kokoro_device || 'cpu'
     } else if (settings.tts_engine === 'edge-tts') {
       settings.tts_voice = 'en-IN-NeerjaNeural'
-    } else if (settings.tts_engine === 'inflect-nano') {
-      settings.inflect_nano_model_path = settings.inflect_nano_model_path || 'models/Inflect-Nano-v1'
     }
   },
 

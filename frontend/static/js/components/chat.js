@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=39'
+import { ttsService } from '../services/tts.js?v=40'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 

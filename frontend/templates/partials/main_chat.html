@@ -18,7 +18,7 @@
       </div>
 
       <!-- Messages -->
-      <div class="py-3 space-y-5">
+      <div class="py-0 space-y-5">
         <!-- Empty State -->
         <div x-show="messages.length === 0" class="empty-state">
           <div class="empty-state-icon">
@@ -398,6 +398,76 @@
                           </div>
                         </div>
                       </template>
+                  <!-- Message Actions at bottom of bubble -->
+                <div class="z-2 px-4 py-0 my-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" style="margin:1px;">
+                  <button
+                    @click="copyMessage(message)"
+                    class="ml-auto btn btn-icon btn-ghost text-xs"
+                    title="Copy"
+                  >
+                    <i class="ph ph-copy text-sm"></i>
+                  </button>
+                  <template x-if="message.role === 'assistant'">
+                    <button
+                      @click="regenerate(message.id)"
+                      class="btn btn-icon btn-ghost text-xs"
+                      title="Regenerate"
+                      :disabled="isLoading"
+                    >
+                      <i class="ph ph-arrow-clockwise text-sm"></i>
+                    </button>
+                  </template>
+                  <template x-if="message.role === 'assistant'">
+                    <button
+                      @click="handleTtsClick(message)"
+                      class="btn btn-icon btn-ghost text-xs"
+                      :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
+                    >
+                      <i
+                        class="ph ph-speaker-high text-sm"
+                        x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
+                      ></i>
+                      <i
+                        class="ph ph-pause text-sm"
+                        x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                      ></i>
+                    </button>
+                  </template>
+                  <template x-if="message.role === 'assistant' && message.content?.trim()">
+                    <button
+                      @click="takeNote(message)"
+                      class="btn btn-icon btn-ghost text-xs"
+                      title="Take note"
+                    >
+                      <i class="ph ph-notebook text-sm"></i>
+                    </button>
+                  </template>
+                  <template
+                    x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                  >
+                    <button
+                      @click="stopAudio()"
+                      class="btn btn-icon btn-ghost text-xs text-[var(--error)]"
+                      title="Stop"
+                    >
+                      <i class="ph ph-stop text-sm"></i>
+                    </button>
+                  </template>
+                  <button
+                    @click="startEdit(message.id, message.content)"
+                    class="btn btn-icon btn-ghost text-xs"
+                    title="Edit"
+                  >
+                    <i class="ph ph-pencil-simple text-sm"></i>
+                  </button>
+                  <button
+                    @click="deleteMessage(message.id, $event)"
+                    class="btn btn-icon btn-ghost text-xs"
+                    title="Delete"
+                  >
+                    <i class="ph ph-trash text-sm"></i>
+                  </button>
+                </div>
 
                       <!-- Sources Section -->
                       <template
@@ -484,77 +554,8 @@
                     </button>
                   </div>
                 </div>
-              </div>
 
-              <!-- Message Actions at bottom of bubble -->
-              <div class="px-4 pb-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" :class="message.role === 'user' ? 'border-t border-white/20' : 'border-t border-[var(--border-primary)]/60'">
-                <button
-                  @click="copyMessage(message)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Copy"
-                >
-                  <i class="ph ph-copy text-sm"></i>
-                </button>
-                <template x-if="message.role === 'assistant'">
-                  <button
-                    @click="regenerate(message.id)"
-                    class="btn btn-icon btn-ghost text-xs"
-                    title="Regenerate"
-                    :disabled="isLoading"
-                  >
-                    <i class="ph ph-arrow-clockwise text-sm"></i>
-                  </button>
-                </template>
-                <template x-if="message.role === 'assistant'">
-                  <button
-                    @click="handleTtsClick(message)"
-                    class="btn btn-icon btn-ghost text-xs"
-                    :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
-                  >
-                    <i
-                      class="ph ph-speaker-high text-sm"
-                      x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
-                    ></i>
-                    <i
-                      class="ph ph-pause text-sm"
-                      x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-                    ></i>
-                  </button>
-                </template>
-                <template x-if="message.role === 'assistant' && message.content?.trim()">
-                  <button
-                    @click="takeNote(message)"
-                    class="btn btn-icon btn-ghost text-xs"
-                    title="Take note"
-                  >
-                    <i class="ph ph-notebook text-sm"></i>
-                  </button>
-                </template>
-                <template
-                  x-if="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-                >
-                  <button
-                    @click="stopAudio()"
-                    class="btn btn-icon btn-ghost text-xs text-[var(--error)]"
-                    title="Stop"
-                  >
-                    <i class="ph ph-stop text-sm"></i>
-                  </button>
-                </template>
-                <button
-                  @click="startEdit(message.id, message.content)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Edit"
-                >
-                  <i class="ph ph-pencil-simple text-sm"></i>
-                </button>
-                <button
-                  @click="deleteMessage(message.id, $event)"
-                  class="btn btn-icon btn-ghost text-xs"
-                  title="Delete"
-                >
-                  <i class="ph ph-trash text-sm"></i>
-                </button>
+
               </div>
             </div>
           </div>

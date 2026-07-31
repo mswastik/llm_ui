@@ -3,16 +3,15 @@ Text-to-Speech (TTS) Service for the LLM UI.
 
 Provides lightweight TTS capabilities using either:
 - edge-tts (Microsoft Edge TTS API - requires internet but high quality)
-- pyttsx3 (offline, cross-platform)
 - kokoro (high-quality local TTS, requires model download from HuggingFace)
-- or a local model like Piper TTS (very lightweight, ~50MB)
 """
 
 import asyncio
 import hashlib
 import os
+import re
 import uuid
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
 from dataclasses import dataclass
 from settings import UPLOAD_DIR
@@ -23,26 +22,6 @@ try:
     HAS_EDGE_TTS = True
 except ImportError:
     HAS_EDGE_TTS = False
-
-try:
-    import pyttsx3
-    HAS_PYTTSX3 = True
-except ImportError:
-    HAS_PYTTSX3 = False
-
-def _check_inflect_nano_available(model_path: Optional[str] = None):
-    """Check if Inflect-Nano-v1 model files exist at the configured path.
-
-    Always re-checks the filesystem — no global cache, because the user
-    may change the path in settings or clone the repo after startup.
-    """
-    path = model_path or "models/Inflect-Nano-v1"
-    acoustic = os.path.join(path, "weights", "inflect_nano_v1_acoustic.pt")
-    vocoder = os.path.join(path, "weights", "inflect_nano_v1_vocoder.pt")
-    available = os.path.exists(acoustic) and os.path.exists(vocoder)
-    if available:
-        print(f"[TTS] Inflect-Nano-v1 found at {path}")
-    return available
 
 
 # Kokoro is imported lazily to avoid import-time errors with spacy/pydantic on Python 3.14
@@ -103,13 +82,12 @@ KOKORO_VOICES = {
 @dataclass
 class TTSConfig:
     """Configuration for TTS service"""
-    engine: str = "edge-tts"  # Options: "edge-tts", "pyttsx3", "kokoro"
+    engine: str = "edge-tts"  # Options: "edge-tts", "kokoro"
     #voice: str = "en-US-ChristopherNeural"  # Default Edge TTS voice
-    voice: str = "en-IN-NeerjaNeural" #en-IN-PrabhatNeural en-IN-NeerjaNeural
+    voice: str = "en-US-MichelleNeural" #en-IN-PrabhatNeural en-IN-NeerjaNeural
     rate: str = "+0%"  # Speech rate adjustment
     volume: float = 1.0  # Volume (0.0 to 1.0)
     output_dir: str = UPLOAD_DIR
-    inflect_nano_model_path: str = "models/Inflect-Nano-v1"  # Path to cloned HF repo
     kokoro_lang: str = "a"  # Kokoro language code: 'a' for American English, 'b' for British English
     kokoro_device: str = "cpu"  # Kokoro device: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
     kokoro_volume: float = 1.0  # Kokoro volume (0.0 to 1.0)
@@ -124,7 +102,6 @@ class TTSConfig:
             rate=settings_dict.get('tts_rate', '+0%'),
             volume=float(settings_dict.get('tts_volume', 1.0)),
             output_dir=settings_dict.get('upload_dir', UPLOAD_DIR),
-            inflect_nano_model_path=settings_dict.get('inflect_nano_model_path', 'models/Inflect-Nano-v1'),
             kokoro_lang=settings_dict.get('kokoro_lang', 'a'),
             kokoro_device=settings_dict.get('kokoro_device', 'cpu'),
             kokoro_volume=float(settings_dict.get('kokoro_volume', 1.0)),
@@ -132,30 +109,69 @@ class TTSConfig:
         )
 
 
+_MONEY_SUFFIXES = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
+
+
+def _money_to_words(raw, suffix):
+    """'1.5', 'M' -> 'one point five million dollars'; '100' -> 'one hundred dollars'."""
+    from num2words import num2words
+    try:
+        value = float(raw.replace(",", ""))
+    except ValueError:
+        return None
+    if suffix:
+        value *= _MONEY_SUFFIXES[suffix.lower()]
+    dollars = int(value)
+    cents = round((value - dollars) * 100)
+    def nw(x):  # num2words inserts grouping commas; strip for smooth TTS
+        return num2words(x).replace(",", "")
+    if dollars and cents:
+        return f"{nw(dollars)} dollars and {nw(cents)} cents"
+    if dollars:
+        unit = "dollar" if dollars == 1 else "dollars"
+        return f"{nw(dollars)} {unit}"
+    if cents:
+        return f"{nw(cents)} cents"
+    return "zero dollars"
+
+
+def normalize_tts_text(text: str) -> str:
+    """Rewrite number-heavy text so TTS engines (esp. Kokoro) read it correctly.
+
+    Kokoro/misaki mangles $ amounts, percents, ordinals and bare numbers. The
+    rewrites here are conservative — they match what Edge TTS would say anyway
+    — so it is safe to run before any engine. Requires num2words; no-ops if missing.
+    """
+    try:
+        from num2words import num2words
+    except ImportError:
+        return text
+
+    text = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)\s+(million|billion|trillion|thousand)\b",
+                  lambda m: f"{num2words(m.group(1).replace(',', '')).replace(',', '')} {m.group(2).lower()} dollars", text)
+    text = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)([kmbtKMBT]?)\b",
+                  lambda m: _money_to_words(m.group(1), m.group(2)) or m.group(0), text)
+    text = re.sub(r"\b([\d,]+(?:\.\d+)?)\s*\$",
+                  lambda m: _money_to_words(m.group(1), "") or m.group(0), text)
+    text = re.sub(r"\b([\d.,]+)%",
+                  lambda m: f"{num2words(m.group(1).replace(',', '')).replace(',', '')} percent", text)
+    text = re.sub(r"\b(\d+)(st|nd|rd|th)\b",
+                  lambda m: num2words(int(m.group(1)), to="ordinal"), text)
+    # Bare numbers, but not ones glued to : / - . (times, dates, ranges, versions)
+    text = re.sub(r"(?<![\w:./-])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\w:./%-])",
+                  lambda m: num2words(m.group(1).replace(",", "")).replace(",", ""), text)
+    return text
+
+
 class TTSService:
     """Text-to-Speech service supporting multiple backends"""
-    
     def __init__(self, config: TTSConfig = None):
         self.config = config or TTSConfig()
         self._ensure_output_dir()
-        
-        # Initialize pyttsx3 engine if needed
-        if self.config.engine == "pyttsx3" and HAS_PYTTSX3:
-            self.engine = pyttsx3.init()
-            self.engine.setProperty('rate', 150)
-            self.engine.setProperty('volume', self.config.volume)
-        else:
-            self.engine = None
-        
+
         # Initialize Kokoro pipeline if needed (lazy loading)
         self._kokoro_pipeline = None
 
-        # Inflect-Nano model cache (loaded once, reused across calls)
-        self._inflect_nano_acoustic = None
-        self._inflect_nano_vocoder = None
-        self._inflect_nano_speakers = None
-        self._inflect_nano_device = None
-    
     def _ensure_output_dir(self):
         """Ensure TTS output directory exists"""
         os.makedirs(self.config.output_dir, exist_ok=True)
@@ -169,8 +185,8 @@ class TTSService:
         else:
             text_hash = hashlib.md5(f"{text}_{voice}_{rate}".encode()).hexdigest()
 
-        # Kokoro and Inflect-Nano output WAV format
-        actual_format = "wav" if self.config.engine in ("kokoro", "inflect-nano") else output_format
+        # Kokoro outputs WAV format
+        actual_format = "wav" if self.config.engine == "kokoro" else output_format
 
         return f"tts_{text_hash}.{actual_format}"
 
@@ -222,11 +238,17 @@ class TTSService:
         text: str,
         voice: Optional[str] = None,
         rate: Optional[str] = None,
-        output_format: str = "mp3"
+        output_format: str = "mp3",
+        should_stop: Optional[Callable[[], bool]] = None
     ) -> Dict[str, Any]:
         """Generate speech audio from text."""
         if not text.strip():
             return {"success": False, "error": "No text provided"}
+
+        # Rewrite $ amounts, %, ordinals and bare numbers so the engine
+        # (especially Kokoro) reads them correctly. Cache key uses the
+        # normalized text since that is what gets synthesized.
+        text = normalize_tts_text(text)
 
         voice = voice or self.config.voice
         rate = rate or self.config.rate
@@ -249,26 +271,20 @@ class TTSService:
 
         if engine == "edge-tts" and HAS_EDGE_TTS:
             return await self._generate_with_edge_tts(text, voice, rate, filepath)
-        elif engine == "pyttsx3" and HAS_PYTTSX3:
-            return await self._generate_with_pyttsx3(text, filepath)
         elif engine == "kokoro" and _check_kokoro_available():
-            return await self._generate_with_kokoro(text, voice, filepath)
-        elif engine == "inflect-nano" and _check_inflect_nano_available(self.config.inflect_nano_model_path):
-            return await self._generate_with_inflect_nano(text, filepath)
+            return await self._generate_with_kokoro(text, voice, filepath, should_stop)
 
         # User explicitly chose an engine but it's not available → tell them, don't silently fall back
-        if engine in ("edge-tts", "pyttsx3", "kokoro", "inflect-nano"):
+        if engine in ("edge-tts", "kokoro"):
             return {"success": False, "error": f"TTS engine '{engine}' is selected but not available. Check Settings → TTS."}
 
         # Auto-fallback when no engine is explicitly selected (shouldn't happen, but safe)
         if HAS_EDGE_TTS:
             return await self._generate_with_edge_tts(text, voice, rate, filepath)
         elif _check_kokoro_available():
-            return await self._generate_with_kokoro(text, voice, filepath)
-        elif _check_inflect_nano_available(self.config.inflect_nano_model_path):
-            return await self._generate_with_inflect_nano(text, filepath)
+            return await self._generate_with_kokoro(text, voice, filepath, should_stop)
         else:
-            return {"success": False, "error": "No TTS engine available. Install edge-tts, pyttsx3, inflect-nano, or kokoro."}
+            return {"success": False, "error": "No TTS engine available. Install edge-tts or kokoro."}
     
     async def _generate_with_edge_tts(
         self,
@@ -292,38 +308,12 @@ class TTSService:
         except Exception as e:
             return {"success": False, "error": f"Edge TTS error: {str(e)}"}
     
-    async def _generate_with_pyttsx3(
-        self,
-        text: str,
-        filepath: str
-    ) -> Dict[str, Any]:
-        """Generate speech using pyttsx3 (offline, lower quality)"""
-        try:
-            # Set volume property before generating speech
-            self.engine.setProperty('volume', self.config.volume)
-            
-            # pyttsx3 is synchronous, run in thread pool
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self.engine.save_to_file(text, filepath)
-            )
-            self.engine.runAndWait()
-
-            return {
-                "success": True,
-                "filepath": filepath,
-                "audio_url": f"/api/audio/{os.path.basename(filepath)}",
-                "engine": "pyttsx3"
-            }
-        except Exception as e:
-            return {"success": False, "error": f"pyttsx3 error: {str(e)}"}
-    
     async def _generate_with_kokoro(
         self,
         text: str,
         voice: Optional[str],
-        filepath: str
+        filepath: str,
+        should_stop: Optional[Callable[[], bool]] = None
     ) -> Dict[str, Any]:
         """Generate speech using Kokoro TTS (high quality, local, requires model download)"""
         try:
@@ -350,12 +340,18 @@ class TTSService:
                     voice = "af_bella"  # Fallback
 
             # Generate speech in a thread pool (Kokoro is synchronous)
+            # Native speed param: shorter durations -> genuinely faster inference
+            speed = self.config.kokoro_speed
             loop = asyncio.get_event_loop()
 
             def _generate():
                 # Kokoro returns generator of (graphemes, phonemes, audio)
+                # Bail between segments once the client has stopped/disconnected
                 audio_segments = []
-                for _, _, audio in pipeline(text, voice=voice):
+                for _, _, audio in pipeline(text, voice=voice, speed=speed):
+                    if should_stop and should_stop():
+                        print("[TTS] Kokoro generation cancelled by client")
+                        return None
                     audio_segments.append(audio)
 
                 # Concatenate all audio segments
@@ -377,7 +373,10 @@ class TTSService:
                     # Retry generation with CPU pipeline
                     def _generate_cpu():
                         audio_segments = []
-                        for _, _, audio in pipeline(text, voice=voice):
+                        for _, _, audio in pipeline(text, voice=voice, speed=speed):
+                            if should_stop and should_stop():
+                                print("[TTS] Kokoro generation cancelled by client")
+                                return None
                             audio_segments.append(audio)
 
                         if audio_segments:
@@ -390,6 +389,8 @@ class TTSService:
                     raise e
 
             if audio_data is None:
+                if should_stop and should_stop():
+                    return {"success": False, "error": "TTS generation cancelled"}
                 return {"success": False, "error": "Kokoro generated no audio"}
 
             # Apply volume adjustment if needed (using kokoro-specific volume)
@@ -397,34 +398,8 @@ class TTSService:
                 print(f"Applying Kokoro volume adjustment: {self.config.kokoro_volume}")
                 audio_data = audio_data * self.config.kokoro_volume
 
-            # Apply speed adjustment if needed
-            if self.config.kokoro_speed != 1.0:
-                print(f"Applying Kokoro speed adjustment: {self.config.kokoro_speed}")
-                try:
-                    import librosa
-                    # Resample audio to change speed (pitch-preserving)
-                    # Speed up = higher sample rate output, then resample back to original
-                    speed_factor = self.config.kokoro_speed
-                    # Stretch/compress audio using time-stretch
-                    audio_data = librosa.effects.time_stretch(audio_data.astype(np.float32), rate=speed_factor)
-                    print(f"Speed adjustment applied using librosa")
-                except ImportError:
-                    # If librosa is not available, use scipy
-                    try:
-                        from scipy.interpolate import interp1d
-                        original_length = len(audio_data)
-                        target_length = int(original_length / self.config.kokoro_speed)
-                        
-                        if target_length != original_length:
-                            # Create interpolation function
-                            x_original = np.linspace(0, 1, original_length)
-                            x_target = np.linspace(0, 1, target_length)
-                            f = interp1d(x_original, audio_data, kind='linear', fill_value='extrapolate')
-                            audio_data = f(x_target)
-                            print(f"Speed adjustment applied using scipy")
-                    except ImportError:
-                        # If neither librosa nor scipy is available, warn but continue without speed adjustment
-                        print("Warning: Speed adjustment requires librosa or scipy. Continuing without speed adjustment.")
+            # Speed is applied natively at inference (pipeline speed= param);
+            # the old librosa/scipy time-stretch post-processing is gone.
 
             # Save as WAV file (Kokoro outputs at 24kHz)
             sf.write(filepath, audio_data, 24000)
@@ -442,117 +417,6 @@ class TTSService:
         except Exception as e:
             return {"success": False, "error": f"Kokoro TTS error: {str(e)}"}
 
-    async def _generate_with_inflect_nano(self, text: str, filepath: str) -> Dict[str, Any]:
-        """Generate speech using Inflect-Nano-v1 (ultra-small local TTS, ~4.6M params).
-
-        Models are cached in the service instance so they are only loaded once.
-        """
-        import sys
-        import soundfile as sf
-        import numpy as np
-        import torch
-        from pathlib import Path
-
-        model_path = Path(self.config.inflect_nano_model_path).resolve()
-        weights_dir = model_path / "weights"
-        acoustic_path = weights_dir / "inflect_nano_v1_acoustic.pt"
-        vocoder_path = weights_dir / "inflect_nano_v1_vocoder.pt"
-
-        if not acoustic_path.exists() or not vocoder_path.exists():
-            return {"success": False, "error": f"Inflect-Nano model not found at {model_path}. Clone: git clone https://huggingface.co/owensong/Inflect-Nano-v1 {model_path}"}
-
-        # Add repo dirs to sys.path for vendored imports (idempotent: duplicates are harmless)
-        for p in [str(model_path), str(model_path / "third_party" / "tiny_tts_frontend")]:
-            if p not in sys.path:
-                sys.path.insert(0, p)
-
-        try:
-            from inflect_nano.text_cleaning import clean_tinytts_text
-            from inflect_nano.vocoder import HifiGanGenerator, make_config
-            from inflect_nano.acoustic import MicroFastSpeech, MicroFastSpeechConfig
-            from tiny_tts.text import phonemes_to_ids
-            from tiny_tts.text.english import grapheme_to_phoneme, normalize_text
-            from tiny_tts.nn import commons
-            from tiny_tts.utils import ADD_BLANK
-        except ImportError as e:
-            return {"success": False, "error": f"Inflect-Nano import error: {e}. Make sure the repo is cloned."}
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        try:
-            loop = asyncio.get_event_loop()
-
-            def _generate():
-                # Load models into cache if not already loaded for this device
-                cache_key = (str(acoustic_path), str(vocoder_path), str(device))
-                if (self._inflect_nano_acoustic is None
-                        or self._inflect_nano_cache_key != cache_key):
-                    acoustic_ckpt = torch.load(str(acoustic_path), map_location=device, weights_only=False)
-                    acoustic_cfg = MicroFastSpeechConfig(**acoustic_ckpt["config"])
-                    self._inflect_nano_acoustic = MicroFastSpeech(acoustic_cfg).to(device)
-                    self._inflect_nano_acoustic.load_state_dict(acoustic_ckpt["model"])
-                    self._inflect_nano_acoustic.eval()
-
-                    vocoder_ckpt = torch.load(str(vocoder_path), map_location=device, weights_only=False)
-                    vocoder_cfg = make_config((vocoder_ckpt.get("config") or {}).get("variant", "snake_v2mid"))
-                    self._inflect_nano_vocoder = HifiGanGenerator(vocoder_cfg).to(device)
-                    self._inflect_nano_vocoder.load_state_dict(vocoder_ckpt["generator"])
-                    self._inflect_nano_vocoder.remove_weight_norm()
-                    self._inflect_nano_vocoder.eval()
-
-                    self._inflect_nano_speakers = acoustic_ckpt.get("speakers") or {"mark": 0}
-                    self._inflect_nano_device = str(device)
-                    self._inflect_nano_cache_key = cache_key
-                    print("[TTS] Inflect-Nano models loaded and cached")
-
-                acoustic = self._inflect_nano_acoustic
-                vocoder = self._inflect_nano_vocoder
-                speakers = self._inflect_nano_speakers
-
-                # Text processing
-                cleaned = clean_tinytts_text(text)
-                normalized = normalize_text(cleaned)
-                phones, tones, _ = grapheme_to_phoneme(normalized)
-                phone_ids, tone_ids, lang_ids = phonemes_to_ids(phones, tones, "EN")
-
-                if ADD_BLANK:
-                    phone_ids = commons.insert_blanks(phone_ids, 0)
-                    tone_ids = commons.insert_blanks(tone_ids, 0)
-                    lang_ids = commons.insert_blanks(lang_ids, 0)
-
-                phone_t = torch.LongTensor(phone_ids).unsqueeze(0).to(device)
-                tone_t = torch.LongTensor(tone_ids).unsqueeze(0).to(device)
-                lang_t = torch.LongTensor(lang_ids).unsqueeze(0).to(device)
-                speaker_t = torch.LongTensor([int(next(iter(speakers.values())))]).to(device)
-
-                # Synthesize mel -> waveform
-                with torch.inference_mode():
-                    mel = acoustic.infer(phone_t, tone_t, lang_t, speaker_t,
-                                         length_scale=1.0, pitch_scale=1.0, energy_scale=1.0)
-                    wav = vocoder(mel).squeeze().detach().cpu().numpy()
-
-                # Normalize
-                wav = wav - wav.mean()
-                peak = float(np.max(np.abs(wav)) + 1e-9)
-                if peak > 0.95:
-                    wav *= 0.95 / peak
-                wav = np.clip(wav, -1.0, 1.0)
-
-                sf.write(str(filepath), wav, 24000, subtype="PCM_16")
-
-            await loop.run_in_executor(None, _generate)
-
-            return {
-                "success": True,
-                "filepath": filepath,
-                "audio_url": f"/api/audio/{os.path.basename(filepath)}",
-                "engine": "inflect-nano",
-                "voice": "default (male)"
-            }
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            return {"success": False, "error": f"Inflect-Nano error: {str(e)}"}
-
     def list_available_voices(self) -> Dict[str, Any]:
         """List available voices for the configured engine"""
         voices = []
@@ -568,14 +432,6 @@ class TTSService:
                 {"id": "en-IN-NeerjaNeural", "name": "Neerja (Female, IN)", "gender": "female", "locale": "en-IN"},
                 {"id": "en-IN-PrabhatNeural", "name": "Prabhat (Male, IN)", "gender": "male", "locale": "en-IN"},
             ]
-        elif self.config.engine == "pyttsx3" and HAS_PYTTSX3:
-            for voice in self.engine.getProperty('voices'):
-                voices.append({
-                    "id": voice.id,
-                    "name": voice.name,
-                    "gender": "unknown",
-                    "locale": voice.languages[0] if voice.languages else "unknown"
-                })
         elif self.config.engine == "kokoro" and _check_kokoro_available():
             # Return Kokoro voices
             for voice_id, voice_info in KOKORO_VOICES.items():
@@ -585,13 +441,6 @@ class TTSService:
                     "gender": voice_info["gender"],
                     "locale": voice_info["locale"]
                 })
-        elif self.config.engine == "inflect-nano" and _check_inflect_nano_available(self.config.inflect_nano_model_path):
-            voices.append({
-                "id": "default",
-                "name": "Default (Male, US)",
-                "gender": "male",
-                "locale": "en-US"
-            })
         
         return {
             "engine": self.config.engine,
@@ -619,21 +468,6 @@ class TTSService:
                 "available": False
             })
         
-        if HAS_PYTTSX3:
-            engines.append({
-                "id": "pyttsx3",
-                "name": "pyttsx3",
-                "description": "Offline TTS - lower quality, no internet required",
-                "available": True
-            })
-        else:
-            engines.append({
-                "id": "pyttsx3",
-                "name": "pyttsx3",
-                "description": "Offline TTS - lower quality, no internet required (not installed)",
-                "available": False
-            })
-        
         if _check_kokoro_available():
             engines.append({
                 "id": "kokoro",
@@ -649,16 +483,9 @@ class TTSService:
                 "available": False
             })
 
-        engines.append({
-            "id": "inflect-nano",
-            "name": "Inflect-Nano v1",
-            "description": "Ultra-small local TTS (~4.6M params) - clone HF repo to models/Inflect-Nano-v1",
-            "available": _check_inflect_nano_available()
-        })
-        
         return {
             "engines": engines,
-            "default_engine": "edge-tts" if HAS_EDGE_TTS else ("kokoro" if _check_kokoro_available() else "pyttsx3")
+            "default_engine": "edge-tts" if HAS_EDGE_TTS else "kokoro"
         }
 
 
@@ -684,3 +511,29 @@ TTS_TOOL_DEFINITION = {
         }
     }
 }
+
+
+if __name__ == "__main__":
+    # Self-check: normalization must turn number-heavy text into words a
+    # TTS engine would say correctly, and leave dates/times/ranges alone.
+    cases = {
+        "$100": "one hundred dollars",
+        "$1.5M": "one million five hundred thousand dollars",
+        "$100 million": "one hundred million dollars",
+        "$1.5 billion": "one point five billion dollars",
+        "$0.99": "ninety-nine cents",
+        "100$": "one hundred dollars",
+        "25%": "twenty-five percent",
+        "1st place": "first place",
+        "42 apples": "forty-two apples",
+        "3.14": "three point one four",
+        "3.5 stars": "three point five stars",
+        "12:30 PM": "12:30 PM",  # untouched: time
+        "12/25/2024": "12/25/2024",  # untouched: date
+        "10-20 items": "10-20 items",  # untouched: range
+        "5km away": "5km away",  # untouched: unit
+    }
+    for inp, expected in cases.items():
+        got = normalize_tts_text(inp)
+        assert got == expected, f"{inp!r} -> {got!r}, expected {expected!r}"
+    print("normalizer self-check: OK")

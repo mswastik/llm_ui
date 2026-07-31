@@ -73,7 +73,6 @@ DEFAULTS = {
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
     "tts_auto_read": False,
-    "inflect_nano_model_path": "models/Inflect-Nano-v1",
 }
 
 # Create upload directory if it doesn't exist
@@ -115,7 +114,6 @@ class Settings(BaseModel):
     kokoro_volume: float = DEFAULTS["kokoro_volume"]
     kokoro_speed: float = DEFAULTS["kokoro_speed"]
     tts_auto_read: bool = DEFAULTS["tts_auto_read"]
-    inflect_nano_model_path: str = DEFAULTS["inflect_nano_model_path"]
 
 
 # Module-level constants set once from DEFAULTS (used by importers)
@@ -168,7 +166,6 @@ _ENV_MAP = {
     "tts_auto_read": "TTS_AUTO_READ",
     "stt_engine": "STT_ENGINE",
     "stt_model": "STT_MODEL",
-    "inflect_nano_model_path": "INFLECT_NANO_MODEL_PATH",
 }
 
 
@@ -210,7 +207,7 @@ class SettingsManager:
         # Update TTS settings if changed and TTS service is available
         tts_keys = {'tts_engine', 'tts_voice', 'tts_rate', 'tts_volume',
                     'kokoro_lang', 'kokoro_device', 'kokoro_volume', 'kokoro_speed',
-                    'tts_auto_read', 'inflect_nano_model_path'}
+                    'tts_auto_read'}
         if tts_keys & set(new_settings.keys()) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)

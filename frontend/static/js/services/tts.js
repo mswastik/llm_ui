@@ -31,6 +31,7 @@ export class TTSService {
     this.audioElements.delete(el)
     if (this.currentAudio === el) this.currentAudio = null
     this.isPlaying = false
+    this.currentAudioMessageId = null
     this.#emit()
   }
 
@@ -144,6 +145,7 @@ export class TTSService {
     this.audioElements.forEach(el => { try { el.pause() } catch { /* noop */ } })
     this.audioElements.clear()
     this.currentAudio = null
+    this.currentAudioMessageId = null
     this.isPlaying = false
     this.#emit()
   }

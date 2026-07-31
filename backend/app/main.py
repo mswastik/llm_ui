@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import asyncio
 import json
 import os
+import threading
 import uuid
 import contextvars
 from typing import AsyncGenerator, Dict, List, Optional
@@ -1625,11 +1626,19 @@ async def generate_tts(request: Request):
         
         if not text.strip():
             raise HTTPException(status_code=400, detail="Text is required")
-        
-        result = await tool_executor.tts_service.generate_speech(
-            text=text,
-            voice=voice
-        )
+
+        # Watch for client disconnect (pause/stop clicked): when it happens, set
+        # the stop flag so long Kokoro generation bails between segments.
+        stop_flag = threading.Event()
+        watcher = asyncio.create_task(_watch_disconnect(request, stop_flag))
+        try:
+            result = await tool_executor.tts_service.generate_speech(
+                text=text,
+                voice=voice,
+                should_stop=stop_flag.is_set
+            )
+        finally:
+            watcher.cancel()
         
         if not result.get("success"):
             raise HTTPException(status_code=500, detail=result.get("error", "TTS generation failed"))
@@ -1643,6 +1652,15 @@ async def generate_tts(request: Request):
         raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
 
 
+async def _watch_disconnect(request: Request, stop_flag):
+    """Poll request.is_disconnected() from the event loop and set stop_flag."""
+    while not stop_flag.is_set():
+        if await request.is_disconnected():
+            stop_flag.set()
+            return
+        await asyncio.sleep(0.2)
+
+
 @app.get("/api/tts/voices")
 async def list_tts_voices():
     """List available TTS voices"""
@@ -1652,12 +1670,11 @@ async def list_tts_voices():
 @app.get("/api/tts/status")
 async def get_tts_status():
     """Check if TTS is available"""
-    from tools.tts_service import HAS_EDGE_TTS, HAS_PYTTSX3, _check_kokoro_available
+    from tools.tts_service import HAS_EDGE_TTS, _check_kokoro_available
     kokoro_available = _check_kokoro_available()
     return {
-        "available": HAS_EDGE_TTS or HAS_PYTTSX3 or kokoro_available,
+        "available": HAS_EDGE_TTS or kokoro_available,
         "edge_tts": HAS_EDGE_TTS,
-        "pyttsx3": HAS_PYTTSX3,
         "kokoro": kokoro_available,
         "engine": tool_executor.tts_service.config.engine
     }

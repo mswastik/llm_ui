@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=38'
+import { ttsService } from '../services/tts.js?v=39'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
@@ -852,16 +852,14 @@ const chatComponent = () => ({
 
   // ─── TTS ──────────────────────────────────────────────
   handleTtsClick(msg) {
+    // Pause icon means generating-or-playing → clicking ALWAYS stops.
+    // Speaker icon means idle → clicking starts speech. No ambiguous states.
     const ui = this.$store.ui
-    const isThis = ui.isPlaying && ui.currentAudioMessageId === msg.id
-    if (!isThis) { this.speakMessage(msg); return }
-    // Only resume if the audio is loaded but never started (autoplay was blocked)
-    const a = ttsService.currentAudio
-    if (a && a.paused && a.currentTime === 0 && a.readyState >= 2) {
-      a.play().catch(() => {})
-      return
+    if (ui.isPlaying && ui.currentAudioMessageId === msg.id) {
+      this.stopAudio()
+    } else {
+      this.speakMessage(msg)
     }
-    this.stopAudio()
   },
 
   async speakMessage(msg) {

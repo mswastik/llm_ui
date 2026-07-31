@@ -9,8 +9,9 @@ import logging
 from typing import Dict, Any, AsyncGenerator, List
 
 from tools.rag_service import RAGService, RAG_TOOL_DEFINITION
-from tools.tts_service import TTSService, TTS_TOOL_DEFINITION
+from tools.tts_service import TTSService, TTSConfig, TTS_TOOL_DEFINITION
 from tools.base import current_document_ids
+from settings import settings_manager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ class ToolExecutor:
     def __init__(self, mcp_manager=None):
         self.mcp_manager = mcp_manager
         self.rag_service = RAGService()
-        self.tts_service = TTSService()
+        # Create TTS service from saved settings (engine, voice, kokoro device, ...)
+        self.tts_service = TTSService(TTSConfig.from_settings(settings_manager.get_settings()))
 
     def get_tool_definitions(
         self,

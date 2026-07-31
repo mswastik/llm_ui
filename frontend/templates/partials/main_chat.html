@@ -507,7 +507,7 @@
                 </template>
                 <template x-if="message.role === 'assistant'">
                   <button
-                    @click="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? stopAudio() : speakMessage(message)"
+                    @click="handleTtsClick(message)"
                     class="btn btn-icon btn-ghost text-xs"
                     :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
                   >

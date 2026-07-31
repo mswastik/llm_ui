@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=32'
+import { ttsService } from '../services/tts.js?v=37'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
@@ -107,6 +107,14 @@ const chatComponent = () => ({
     this.selectedAgentId = this.$store.chat.selectedAgentId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     await ttsService.checkAvailability()
+
+    // Single writer: TTS icon state mirrors the real audio element, never drifts
+    ttsService.onStateChange = ({ playing, msgId }) => {
+      this.$store.ui.isPlaying = playing
+      this.$store.ui.currentAudioMessageId = msgId
+      this.$store.ui.currentAudio = playing ? ttsService.currentAudio : null
+    }
+
     this.sttSupported = sttService.isSupported()
     this.checkActiveStream()
 
@@ -843,6 +851,19 @@ const chatComponent = () => ({
   },
 
   // ─── TTS ──────────────────────────────────────────────
+  handleTtsClick(msg) {
+    const ui = this.$store.ui
+    const isThis = ui.isPlaying && ui.currentAudioMessageId === msg.id
+    if (!isThis) { this.speakMessage(msg); return }
+    // Audio loaded but paused (autoplay was blocked earlier) → start it
+    const a = ttsService.currentAudio
+    if (a && a.paused && !a.ended && a.readyState >= 2) {
+      a.play().catch(() => {})
+      return
+    }
+    this.stopAudio()
+  },
+
   async speakMessage(msg) {
     const loading = this.$store.ui
     // Set playing state immediately BEFORE the async request so the pause icon shows right away

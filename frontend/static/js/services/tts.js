@@ -8,6 +8,46 @@ export class TTSService {
     this.currentAudio = null
     this.currentAudioMessageId = null
     this.isPlaying = false
+    this.stopped = false
+    // Single writer: the chat component registers this to mirror real audio state into the store
+    this.onStateChange = null
+  }
+
+  // Emit the authoritative (drift-proof) state derived from the audio element
+  #emit() {
+    this.onStateChange?.({
+      playing: this.isPlaying,
+      msgId: this.currentAudioMessageId,
+    })
+  }
+
+  #attachEvents(audio, onEnd) {
+    audio.addEventListener('play', () => {
+      this.isPlaying = true
+      this.#emit()
+    })
+    audio.addEventListener('pause', () => {
+      if (this.currentAudio === audio) {
+        this.isPlaying = false
+        this.#emit()
+      }
+    })
+    audio.addEventListener('ended', () => {
+      if (this.currentAudio === audio) {
+        this.isPlaying = false
+        this.currentAudio = null
+        this.#emit()
+        onEnd?.()
+      }
+    })
+    audio.addEventListener('error', () => {
+      if (this.currentAudio === audio && !this.stopped) {
+        this.isPlaying = false
+        this.currentAudio = null
+        this.#emit()
+        onEnd?.()
+      }
+    })
   }
 
   async checkAvailability() {
@@ -19,6 +59,7 @@ export class TTSService {
   }
 
   async speak(message, onError, onEnd) {
+    this.stopped = false
     try {
       const textContent = typeof message === 'object' ? (message.content || '') : message
       const res = await fetch('/api/tts/generate', {
@@ -32,6 +73,8 @@ export class TTSService {
       }
       const data = await res.json()
 
+      if (this.stopped) return false
+
       if (!data.success) {
         throw new Error(data.error || 'TTS generation failed')
       }
@@ -43,19 +86,22 @@ export class TTSService {
       this.currentAudio = new Audio(audioUrl)
       this.currentAudioMessageId = typeof message === 'object' ? message.id : null
       this.isPlaying = true
+      this.#emit()
 
-      // Wire ended BEFORE play() so even a short clip flips the icon back only on completion
-      this.currentAudio.onended = () => {
-        this.isPlaying = false
-        this.currentAudio = null
-        onEnd?.()
-      }
+      // State follows the audio element's real events (play/pause/ended/error)
+      this.#attachEvents(this.currentAudio, onEnd)
 
       try {
         await this.currentAudio.play()
       } catch (e) {
+        // Autoplay blocked: keep the audio loaded so the next click starts it
+        if (e && e.name === 'NotAllowedError') {
+          onError?.('Audio ready — click the button to play')
+          return true
+        }
         this.isPlaying = false
         this.currentAudio = null
+        this.#emit()
         onError?.('Playback failed: ' + e.message)
         onEnd?.()
         return false
@@ -69,9 +115,11 @@ export class TTSService {
   }
 
   stop() {
+    this.stopped = true
     this.currentAudio?.pause()
     this.currentAudio = null
     this.isPlaying = false
+    this.#emit()
   }
 }
 

@@ -63,19 +63,40 @@ def _check_kokoro_available():
             HAS_KOKORO = False
     return HAS_KOKORO
 
-# Kokoro voice definitions
+# Kokoro voice definitions (validated against hexgrad/Kokoro-82M voices/)
 KOKORO_VOICES = {
-    # American English voices
+    # American English female
     "af_bella": {"name": "Bella (Female, American)", "gender": "female", "locale": "en-US"},
     "af_sarah": {"name": "Sarah (Female, American)", "gender": "female", "locale": "en-US"},
     "af_sky": {"name": "Sky (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_heart": {"name": "Heart (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_nicole": {"name": "Nicole (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_aoede": {"name": "Aoede (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_kore": {"name": "Kore (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_nova": {"name": "Nova (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_alloy": {"name": "Alloy (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_jessica": {"name": "Jessica (Female, American)", "gender": "female", "locale": "en-US"},
+    "af_river": {"name": "River (Female, American)", "gender": "female", "locale": "en-US"},
+    # American English male
     "am_adam": {"name": "Adam (Male, American)", "gender": "male", "locale": "en-US"},
     "am_michael": {"name": "Michael (Male, American)", "gender": "male", "locale": "en-US"},
-    # British English voices
+    "am_echo": {"name": "Echo (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_eric": {"name": "Eric (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_fenrir": {"name": "Fenrir (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_liam": {"name": "Liam (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_onyx": {"name": "Onyx (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_puck": {"name": "Puck (Male, American)", "gender": "male", "locale": "en-US"},
+    "am_santa": {"name": "Santa (Male, American)", "gender": "male", "locale": "en-US"},
+    # British English female
     "bf_emma": {"name": "Emma (Female, British)", "gender": "female", "locale": "en-GB"},
     "bf_isabella": {"name": "Isabella (Female, British)", "gender": "female", "locale": "en-GB"},
+    "bf_alice": {"name": "Alice (Female, British)", "gender": "female", "locale": "en-GB"},
+    "bf_lily": {"name": "Lily (Female, British)", "gender": "female", "locale": "en-GB"},
+    # British English male
     "bm_george": {"name": "George (Male, British)", "gender": "male", "locale": "en-GB"},
     "bm_lewis": {"name": "Lewis (Male, British)", "gender": "male", "locale": "en-GB"},
+    "bm_daniel": {"name": "Daniel (Male, British)", "gender": "male", "locale": "en-GB"},
+    "bm_fable": {"name": "Fable (Male, British)", "gender": "male", "locale": "en-GB"},
 }
 
 

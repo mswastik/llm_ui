@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=40'
+import { ttsService } from '../services/tts.js?v=44'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
@@ -112,7 +112,7 @@ const chatComponent = () => ({
     ttsService.onStateChange = ({ playing, msgId }) => {
       this.$store.ui.isPlaying = playing
       this.$store.ui.currentAudioMessageId = msgId
-      this.$store.ui.currentAudio = playing ? ttsService.currentAudio : null
+      this.$store.ui.currentAudio = playing ? ttsService.player : null
     }
 
     this.sttSupported = sttService.isSupported()
@@ -594,7 +594,8 @@ const chatComponent = () => ({
           if (lastMsg?.role === 'assistant' && lastMsg.content?.trim()) {
             const plainText = formatters.stripMarkdown(lastMsg.content)
             const plainMsg = { ...lastMsg, content: plainText }
-            ttsService.speak(plainMsg, null, () => {
+            const slot = document.getElementById('tts-slot-' + lastMsg.id)
+            ttsService.speak(plainMsg, slot, null, () => {
               this.$store.ui.currentAudio = null
               this.$store.ui.currentAudioMessageId = null
               this.$store.ui.isPlaying = false
@@ -872,7 +873,8 @@ const chatComponent = () => ({
     const plainText = formatters.stripMarkdown(msg.content || '')
     const plainMsg = { ...msg, content: plainText }
 
-    const success = await ttsService.speak(plainMsg,
+    const slot = document.getElementById('tts-slot-' + msg.id)
+    const success = await ttsService.speak(plainMsg, slot,
       (err) => this.$store.ui.showToast(err, 'error'),
       () => {
         // Audio finished or failed — reset UI state
@@ -882,7 +884,7 @@ const chatComponent = () => ({
       }
     )
     if (success) {
-      this.$store.ui.currentAudio = ttsService.currentAudio
+      this.$store.ui.currentAudio = ttsService.player
     } else {
       // TTS request failed — revert the optimistic UI state
       this.$store.ui.currentAudio = null

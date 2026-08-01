@@ -163,6 +163,24 @@ def normalize_tts_text(text: str) -> str:
     return text
 
 
+def _is_abbrev_fragment(p: str) -> bool:
+    return len(p) <= 6 and p.endswith('.') and not re.search(r"[^A-Za-z.]", p)
+
+
+def _split_sentences(text: str) -> List[str]:
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", text.strip()) if p.strip()]
+    out, buf = [], ""
+    for p in parts:
+        if _is_abbrev_fragment(p):
+            buf = (buf + " " + p).strip()
+        else:
+            out.append((buf + " " + p).strip())
+            buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
 class TTSService:
     """Text-to-Speech service supporting multiple backends"""
     def __init__(self, config: TTSConfig = None):
@@ -416,6 +434,84 @@ class TTSService:
             return {"success": False, "error": f"Missing dependency for Kokoro: {missing_pkg}. Install with: pip install {missing_pkg}"}
         except Exception as e:
             return {"success": False, "error": f"Kokoro TTS error: {str(e)}"}
+
+    async def stream_speech(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        rate: Optional[str] = None,
+        should_stop: Optional[Callable[[], bool]] = None
+    ) -> AsyncGenerator[tuple, None]:
+        """Async generator: yield (filename, audio_url) per sentence as each is generated.
+
+        edge-tts: one segment (whole text — cloud synth is fast enough).
+        kokoro: one segment per sentence, each cached by sentence hash, so
+        re-reads of the same message stream instantly from cache. Generation
+        bails between sentences once should_stop() is true (client paused).
+        """
+        text = normalize_tts_text(text)
+        voice = voice or self.config.voice
+        rate = rate or self.config.rate
+        engine = self.config.engine
+
+        if engine == "edge-tts" and HAS_EDGE_TTS:
+            filename = self._get_cache_filename(text, voice, rate, "mp3")
+            filepath = os.path.join(self.config.output_dir, filename)
+            if not os.path.exists(filepath):
+                await self._generate_with_edge_tts(text, voice, rate, filepath)
+            yield filename, f"/api/audio/{filename}"
+            return
+
+        if engine != "kokoro" or not _check_kokoro_available():
+            return
+
+        import soundfile as sf
+        import numpy as np
+
+        pipeline = self._get_kokoro_pipeline()
+        if pipeline is None:
+            return
+
+        if voice not in KOKORO_VOICES:
+            voice = "bf_emma" if self.config.kokoro_lang == "b" else "af_bella"
+
+        speed = self.config.kokoro_speed
+        loop = asyncio.get_running_loop()
+
+        for sentence in _split_sentences(text):
+            if should_stop and should_stop():
+                return
+            filename = self._get_cache_filename(sentence, voice, rate, "wav")
+            filepath = os.path.join(self.config.output_dir, filename)
+            if not os.path.exists(filepath):
+                def _gen():
+                    audio_parts = []
+                    for _, _, audio in pipeline(sentence, voice=voice, speed=speed):
+                        if should_stop and should_stop():
+                            return None
+                        audio_parts.append(audio)
+                    if not audio_parts:
+                        return None
+                    return np.concatenate(audio_parts)
+                try:
+                    audio_data = await loop.run_in_executor(None, _gen)
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        self._kokoro_pipeline = None
+                        pipeline = self._get_kokoro_pipeline()
+                        if pipeline is None:
+                            return
+                        audio_data = await loop.run_in_executor(None, _gen)
+                    else:
+                        raise
+                if audio_data is None:
+                    if should_stop and should_stop():
+                        return
+                    continue
+                if self.config.kokoro_volume != 1.0:
+                    audio_data = audio_data * self.config.kokoro_volume
+                sf.write(filepath, audio_data, 24000)
+            yield filename, f"/api/audio/{filename}"
 
     def list_available_voices(self) -> Dict[str, Any]:
         """List available voices for the configured engine"""

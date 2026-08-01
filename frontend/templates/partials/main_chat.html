@@ -84,6 +84,7 @@
                   >
                     <div class="flex flex-wrap gap-2 -mt-2 pb-2">
                       <template x-for="(f, fi) in message.files" :key="'uf-' + fi">
+                        <div class="contents">
                         <template x-if="f.type?.startsWith('image/')">
                           <a :href="f.url" target="_blank" class="block rounded-lg overflow-hidden border border-white/20 hover:opacity-90 transition-opacity max-w-[200px]">
                             <img :src="f.url" :alt="f.filename" class="w-full h-auto object-cover max-h-[200px]" loading="lazy" />
@@ -96,6 +97,7 @@
                             <span class="opacity-60 flex-shrink-0" x-text="formatFileSize(f.size)"></span>
                           </a>
                         </template>
+                        </div>
                       </template>
                     </div>
                   </template>
@@ -399,7 +401,7 @@
                         </div>
                       </template>
                   <!-- Message Actions at bottom of bubble -->
-                <div class="z-2 px-4 py-0 my-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" style="margin:1px;">
+                   <div class="z-2 px-4 py-0 my-0 flex items-center gap-1 transition-opacity" :class="($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'" style="margin:1px;">
                   <button
                     @click="copyMessage(message)"
                     class="ml-auto btn btn-icon btn-ghost text-xs"
@@ -418,20 +420,28 @@
                     </button>
                   </template>
                   <template x-if="message.role === 'assistant'">
-                    <button
-                      @click="handleTtsClick(message)"
-                      class="btn btn-icon btn-ghost text-xs"
-                      :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
-                    >
-                      <i
-                        class="ph ph-speaker-high text-sm"
-                        x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
-                      ></i>
-                      <i
-                        class="ph ph-pause text-sm"
-                        x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
-                      ></i>
-                    </button>
+                    <!-- Single root (Alpine x-if renders only the first element) — button + slot -->
+                    <div class="flex items-center gap-1">
+                      <button
+                        @click="handleTtsClick(message)"
+                        class="btn btn-icon btn-ghost text-xs"
+                        :title="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id ? 'Stop' : 'Read aloud'"
+                      >
+                        <i
+                          class="ph ph-speaker-high text-sm"
+                          x-show="!($store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id)"
+                        ></i>
+                        <i
+                          class="ph ph-pause text-sm"
+                          x-show="$store.ui.isPlaying && $store.ui.currentAudioMessageId === message.id"
+                        ></i>
+                      </button>
+                      <!-- TTS player slot: streaming <audio controls> is injected here, inline with the read-aloud button -->
+                      <div
+                        :id="'tts-slot-' + message.id"
+                        class="tts-slot hidden flex items-center"
+                      ></div>
+                    </div>
                   </template>
                   <template x-if="message.role === 'assistant' && message.content?.trim()">
                     <button

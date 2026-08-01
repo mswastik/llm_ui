@@ -1652,6 +1652,60 @@ async def generate_tts(request: Request):
         raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
 
 
+@app.post("/api/tts/generate/stream")
+async def generate_tts_stream(request: Request):
+    """Stream TTS audio as it is generated.
+
+    Response is NDJSON (one JSON object per line, media_type application/x-ndjson):
+      {"seg": "tts_xxx.wav", "url": "/api/audio/tts_xxx.wav"}   — one segment ready
+      {"done": true}                                             — all segments sent
+      {"error": "..."}                                          — failure
+
+    The client plays segments as they arrive (first sentence ≈ first audio).
+    Cancelling the fetch marks the request disconnected; the server stops
+    generation between sentences.
+    """
+    from tools.tts_service import HAS_EDGE_TTS, _check_kokoro_available
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    text = data.get("text", "")
+    voice = data.get("voice")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    svc = tool_executor.tts_service
+    engine = svc.config.engine
+    if engine == "kokoro" and not _check_kokoro_available():
+        raise HTTPException(status_code=500, detail="Kokoro engine is not available")
+    if engine == "edge-tts" and not HAS_EDGE_TTS:
+        raise HTTPException(status_code=500, detail="Edge TTS engine is not available")
+
+    stop_flag = threading.Event()
+    watcher = asyncio.create_task(_watch_disconnect(request, stop_flag))
+
+    async def event_stream():
+        try:
+            async for filename, url in svc.stream_speech(
+                text=text, voice=voice, should_stop=stop_flag.is_set
+            ):
+                yield json.dumps({"seg": filename, "url": url}) + "\n"
+            yield json.dumps({"done": True}) + "\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield json.dumps({"error": str(e)}) + "\n"
+        finally:
+            watcher.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def _watch_disconnect(request: Request, stop_flag):
     """Poll request.is_disconnected() from the event loop and set stop_flag."""
     while not stop_flag.is_set():

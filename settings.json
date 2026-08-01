@@ -30,6 +30,6 @@
   "kokoro_lang": "a",
   "kokoro_device": "cpu",
   "kokoro_volume": 1,
-  "kokoro_speed": "1.0",
+  "kokoro_speed": "1.5",
   "tts_auto_read": false
 }

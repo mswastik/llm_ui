@@ -323,17 +323,14 @@
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Speed <span class="text-[var(--text-tertiary)]">(higher = faster)</span></label
               >
-              <select
+              <input
+                type="number"
                 x-model="$store.ui.settingsData.kokoro_speed"
+                min="0.5"
+                max="2.0"
+                step="0.05"
                 class="input text-sm"
-              >
-                <option value="0.5">0.5x</option>
-                <option value="0.75">0.75x</option>
-                <option value="1.0">1.0x</option>
-                <option value="1.5">1.5x</option>
-                <option value="1.75">1.75x</option>
-                <option value="2.0">2.0x</option>
-              </select>
+              />
             </div>
             <div class="md:col-span-2">
               <label class="flex items-center gap-2 cursor-pointer">

@@ -2,7 +2,7 @@
  * Chat Component — Messages, streaming, tools, TTS
  */
 import { sseService } from '../services/sse.js'
-import { ttsService } from '../services/tts.js?v=44'
+import { ttsService } from '../services/tts.js?v=45'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
@@ -109,8 +109,9 @@ const chatComponent = () => ({
     await ttsService.checkAvailability()
 
     // Single writer: TTS icon state mirrors the real audio element, never drifts
-    ttsService.onStateChange = ({ playing, msgId }) => {
+    ttsService.onStateChange = ({ playing, paused, msgId }) => {
       this.$store.ui.isPlaying = playing
+      this.$store.ui.isPaused = paused
       this.$store.ui.currentAudioMessageId = msgId
       this.$store.ui.currentAudio = playing ? ttsService.player : null
     }
@@ -599,6 +600,7 @@ const chatComponent = () => ({
               this.$store.ui.currentAudio = null
               this.$store.ui.currentAudioMessageId = null
               this.$store.ui.isPlaying = false
+              this.$store.ui.isPaused = false
             })
           }
         }
@@ -853,14 +855,22 @@ const chatComponent = () => ({
 
   // ─── TTS ──────────────────────────────────────────────
   handleTtsClick(msg) {
-    // Pause icon means generating-or-playing → clicking ALWAYS stops.
-    // Speaker icon means idle → clicking starts speech. No ambiguous states.
     const ui = this.$store.ui
-    if (ui.isPlaying && ui.currentAudioMessageId === msg.id) {
-      this.stopAudio()
+    if (ui.currentAudioMessageId === msg.id) {
+      if (ui.isPlaying) this.pauseAudio()
+      else if (ui.isPaused) this.resumeAudio()
+      else this.speakMessage(msg)
     } else {
       this.speakMessage(msg)
     }
+  },
+
+  pauseAudio() {
+    ttsService.pause()
+  },
+
+  resumeAudio() {
+    ttsService.resume()
   },
 
   async speakMessage(msg) {
@@ -868,6 +878,7 @@ const chatComponent = () => ({
     // Set playing state immediately BEFORE the async request so the pause icon shows right away
     this.$store.ui.currentAudioMessageId = msg.id
     this.$store.ui.isPlaying = true
+    this.$store.ui.isPaused = false
 
     // Send plain text (no markdown) to TTS so it doesn't read out asterisks, hyphens, etc.
     const plainText = formatters.stripMarkdown(msg.content || '')
@@ -881,6 +892,7 @@ const chatComponent = () => ({
         this.$store.ui.currentAudio = null
         this.$store.ui.currentAudioMessageId = null
         this.$store.ui.isPlaying = false
+        this.$store.ui.isPaused = false
       }
     )
     if (success) {
@@ -890,6 +902,7 @@ const chatComponent = () => ({
       this.$store.ui.currentAudio = null
       this.$store.ui.currentAudioMessageId = null
       this.$store.ui.isPlaying = false
+      this.$store.ui.isPaused = false
     }
   },
 
@@ -898,6 +911,7 @@ const chatComponent = () => ({
     this.$store.ui.currentAudio = null
     this.$store.ui.currentAudioMessageId = null
     this.$store.ui.isPlaying = false
+    this.$store.ui.isPaused = false
   },
 
   // ─── Toggle Helpers ───────────────────────────────────

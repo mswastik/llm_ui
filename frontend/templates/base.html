@@ -51,6 +51,7 @@
         sidebarWidth: parseInt(localStorage.getItem('sidebarWidth') || '280'),
         showMcpPanel: false, showAgents: false, showSettings: false, showDocuments: false,
         toast: { show: false, message: '', type: 'success' },
+        isPaused: false,
         settingsData: {}, mcpServers: [], mcpTools: [],
         newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 },
         editingServer: false,
@@ -80,7 +81,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=42"></script>
+    <script type="module" src="/static/js/main.js?v=43"></script>
 
     {% block extra_head %}{% endblock %}
 </head>

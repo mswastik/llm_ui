@@ -11,6 +11,7 @@ export class TTSService {
   constructor() {
     this.ttsAvailable = false
     this.isPlaying = false
+    this.isPaused = false
     this.currentAudioMessageId = null
     // Per-call cancellation token: stop() bumps it, invalidating every in-flight speak()
     this.stopCounter = 0
@@ -33,6 +34,7 @@ export class TTSService {
   #emit() {
     this.onStateChange?.({
       playing: this.isPlaying,
+      paused: this.isPaused,
       msgId: this.currentAudioMessageId,
     })
   }
@@ -45,13 +47,20 @@ export class TTSService {
     el.className = 'tts-player max-w-48 h-8 rounded flex-shrink-0'
     el.addEventListener('ended', () => this.#advance())
     el.addEventListener('pause', (e) => {
-      // Only a USER's native pause stops playback. Natural end-of-media also
-      // fires a trusted 'pause' (before 'ended') — that must ADVANCE, not stop.
-      if (e.isTrusted && !el.ended && this.isPlaying && !this._stopping) this.stop()
+      if (this._stopping) return
+      // Natural end-of-media fires a trusted 'pause' before 'ended' — that
+      // must ADVANCE, not pause. Anything else that pauses mid-segment
+      // (user pressed the native control) means paused, not stopped.
+      if (e.isTrusted && !el.ended && (this.isPlaying || this.isPaused)) {
+        this.isPlaying = false
+        this.isPaused = true
+        this.#emit()
+      }
     })
     el.addEventListener('play', () => {
       if (!this._stopping) {
         this.isPlaying = true
+        this.isPaused = false
         this.#emit()
       }
     })
@@ -97,6 +106,7 @@ export class TTSService {
 
   #finish() {
     this.isPlaying = false
+    this.isPaused = false
     this.currentAudioMessageId = null
     const cb = this._finishCb
     this._finishCb = null
@@ -241,9 +251,28 @@ export class TTSService {
     this.waiting = false
     this._finishCb = null
     this.isPlaying = false
+    this.isPaused = false
     this.currentAudioMessageId = null
     this._stopping = false
     this.#emit()
+  }
+
+  // Pause mid-stream: element keeps currentTime + segment queue + the open
+  // NDJSON fetch, so resume() continues exactly where it stopped.
+  pause() {
+    if (!this.player || !this.isPlaying) return
+    this.player.pause() // untrusted event — listener won't re-enter
+    this.isPlaying = false
+    this.isPaused = true
+    this.#emit()
+  }
+
+  resume() {
+    if (!this.player || !this.isPaused) return
+    this.isPaused = false
+    this.isPlaying = true
+    this.#emit()
+    this.player.play().catch(() => {})
   }
 }
 

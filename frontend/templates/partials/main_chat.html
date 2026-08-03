@@ -1,9 +1,26 @@
 <!-- ═══════════ MAIN CHAT AREA ═══════════ -->
 <main
-  class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)]"
+  class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)] relative"
   x-data="chat"
   x-init="init()"
+  @dragenter.prevent="handleDragEnter()"
+  @dragover.prevent
+  @dragleave="handleDragLeave()"
+  @drop.prevent="handleDrop($event)"
 >
+  <!-- Drag & Drop Overlay -->
+  <div
+    x-show="dragOver"
+    x-cloak
+    class="absolute inset-0 z-[60] flex items-center justify-center pointer-events-none"
+  >
+    <div class="flex flex-col items-center gap-3 px-8 py-10 rounded-2xl bg-[var(--bg-secondary)]/90 border-2 border-dashed border-[var(--accent-primary)] shadow-xl">
+      <i class="ph ph-cloud-arrow-up text-4xl text-[var(--accent-primary)]"></i>
+      <span class="text-sm font-medium text-[var(--text-primary)]">Drop files to attach</span>
+      <span class="text-xs text-[var(--text-tertiary)]">Attach files to your message</span>
+    </div>
+  </div>
+
   <!-- Messages Container -->
   <div id="messages-container" class="flex-1 overflow-y-auto">
     <div class="mx-auto w-full px-4">

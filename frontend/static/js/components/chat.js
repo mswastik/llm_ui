@@ -33,6 +33,10 @@ const chatComponent = () => ({
   attachedFiles: [],
   isUploading: false,
 
+  // Drag-and-drop state
+  dragOver: false,
+  dragCounter: 0,
+
   // Expanded state for collapsible blocks
   expandedBlocks: {},
 
@@ -294,10 +298,18 @@ const chatComponent = () => ({
   },
 
   handleFileSelect(e) {
-    const files = Array.from(e.target.files || [])
+    this.addFiles(e.target.files || [])
+    e.target.value = ''
+  },
+
+  addFiles(fileList) {
+    const files = Array.from(fileList || [])
     if (!files.length) return
     const remaining = 10 - this.attachedFiles.length
-    files.slice(0, remaining).forEach(f => {
+    if (files.length > remaining) {
+      this.$store.ui.showToast('Maximum 10 files per message', 'warning')
+    }
+    files.slice(0, Math.max(0, remaining)).forEach(f => {
       this.attachedFiles.push({
         file: f,
         preview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null,
@@ -310,7 +322,26 @@ const chatComponent = () => ({
         error: null
       })
     })
-    e.target.value = ''
+  },
+
+  handleDragEnter() {
+    this.dragCounter++
+    this.dragOver = true
+  },
+
+  handleDragLeave() {
+    this.dragCounter = Math.max(0, this.dragCounter - 1)
+    if (this.dragCounter === 0) this.dragOver = false
+  },
+
+  handleDrop(e) {
+    this.dragCounter = 0
+    this.dragOver = false
+    if (this.isLoading || this.isUploading) {
+      this.$store.ui.showToast('Cannot attach files while a request is running', 'warning')
+      return
+    }
+    this.addFiles(e.dataTransfer?.files)
   },
 
   removeFile(idx) {

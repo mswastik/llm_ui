@@ -116,6 +116,22 @@ class Settings(BaseModel):
     tts_auto_read: bool = DEFAULTS["tts_auto_read"]
 
 
+def _coerce_setting(key: str, value: Any) -> Any:
+    """Coerce string values to the Settings field's type (setattr bypasses Pydantic validation)."""
+    if not isinstance(value, str):
+        return value
+    field = Settings.model_fields.get(key)
+    if field is None:
+        return value
+    ann = field.annotation
+    if ann is float or ann is int:
+        try:
+            return float(value) if ann is float else int(value)
+        except ValueError:
+            return value
+    return value
+
+
 # Module-level constants set once from DEFAULTS (used by importers)
 DATABASE_URL = DEFAULTS["database_url"]
 LLAMA_CPP_BASE_URL = DEFAULTS["llama_cpp_base_url"]
@@ -199,7 +215,7 @@ class SettingsManager:
         # Update the settings object
         for key, value in new_settings.items():
             if hasattr(self.settings, key):
-                setattr(self.settings, key, value)
+                setattr(self.settings, key, _coerce_setting(key, value))
 
         # Sync changed env vars
         _sync_env(new_settings)
@@ -228,7 +244,7 @@ class SettingsManager:
                 # Update settings object with saved values
                 for key, value in saved_settings.items():
                     if hasattr(self.settings, key):
-                        setattr(self.settings, key, value)
+                        setattr(self.settings, key, _coerce_setting(key, value))
 
                 # Sync env vars from saved settings
                 _sync_env(saved_settings)

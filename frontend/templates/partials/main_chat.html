@@ -27,7 +27,7 @@
       <!-- Conversation Title (inline, subtle) -->
       <div class="pt-4 pb-1">
         <input
-          :value="currentConversationTitle"
+          :value="$store.chat.currentConversationTitle"
           @change="updateTitle($event)"
           class="w-full text-center text-[0.8rem] font-medium text-[var(--text-tertiary)] bg-transparent border-none outline-none hover:text-[var(--text-secondary)] focus:text-[var(--text-primary)] transition-colors"
           placeholder="Untitled conversation"

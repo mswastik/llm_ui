@@ -5,6 +5,7 @@ Wraps MCP tool calls and custom tools to provide streaming progress
 updates to the UI via Server-Sent Events.
 """
 import asyncio
+import json
 import logging
 from typing import Dict, Any, AsyncGenerator, List
 
@@ -35,7 +36,14 @@ class ToolExecutor:
         tools = []
 
         if enable_rag:
-            tools.append(RAG_TOOL_DEFINITION)
+            sections = self.rag_service.store.list_sections()
+            rag_def = json.loads(json.dumps(RAG_TOOL_DEFINITION))
+            if sections:
+                listing = "\n".join(f"- {s}" for s in sections)
+                rag_def["function"]["description"] += (
+                    "\n\nAvailable sections in the documents (use the exact title "
+                    "for the 'section' parameter):\n" + listing)
+            tools.append(rag_def)
         if TTS_TOOL_DEFINITION.get("function", {}).get("name") not in exclude_tools:
             tools.append(TTS_TOOL_DEFINITION)
 
@@ -101,6 +109,7 @@ class ToolExecutor:
     async def _query_documents_with_progress(self, arguments: Dict[str, Any], request_id: str) -> AsyncGenerator[Dict, None]:
         query = arguments.get("query", "")
         document_ids = arguments.get("document_ids") or current_document_ids.get()
+        section = arguments.get("section")
         top_k = arguments.get("top_k", 10)
 
         if not query:
@@ -109,7 +118,8 @@ class ToolExecutor:
 
         yield {"type": "tool_progress", "tool": "query_documents", "status": "Searching documents...", "progress": 0}
 
-        result = await self.rag_service.query(query=query, document_ids=document_ids, top_k=top_k, progress_callback=None)
+        result = await self.rag_service.query(query=query, document_ids=document_ids, top_k=top_k,
+                                              section=section, progress_callback=None)
 
         if "error" in result:
             yield {"type": "tool_error", "tool": "query_documents", "error": result["error"]}
@@ -143,5 +153,5 @@ class ToolExecutor:
     async def process_document_for_rag(self, document_id: str, filepath: str, file_type: str, progress_callback=None) -> Dict:
         return await self.rag_service.process_document(document_id=document_id, filepath=filepath, file_type=file_type, progress_callback=progress_callback)
 
-    def delete_document_from_rag(self, document_id: str):
-        self.rag_service.delete_document(document_id)
+    async def delete_document_from_rag(self, document_id: str):
+        await self.rag_service.delete_document(document_id)

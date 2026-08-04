@@ -204,6 +204,20 @@ async def init_db():
         pass
 
 
+async def shutdown_db():
+    """Checkpoint pending WAL data into the main DB file and close the pool.
+
+    Ensures llm_ui.db contains every committed write and the -wal/-shm
+    files are cleared when the app shuts down cleanly.
+    """
+    try:
+        async with engine.connect() as conn:
+            await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        await engine.dispose()
+    except Exception as e:
+        print(f"[DB] WAL checkpoint on shutdown failed: {e}")
+
+
 @asynccontextmanager
 async def get_db():
     """Get database session"""

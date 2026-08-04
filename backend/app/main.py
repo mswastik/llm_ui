@@ -14,7 +14,7 @@ from typing import AsyncGenerator, Dict, List, Optional
 from tools.base import current_document_ids
 
 from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
-from database.models import init_db, get_db
+from database.models import init_db, get_db, shutdown_db
 from database.crud import (
     create_conversation, get_conversation, get_all_conversations,
     add_message, get_conversation_messages, update_conversation_title,
@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await backup_scheduler.stop()
     await mcp_manager.cleanup()
+    await shutdown_db()
 
 app = FastAPI(title="LLM UI with MCP Support", lifespan=lifespan)
 
@@ -1317,10 +1318,13 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
         file_type = "text"
     elif file_ext in [".pdf"]:
         file_type = "pdf"
-    elif file_ext in [".doc", ".docx"]:
+    elif file_ext in [".docx"]:
         file_type = "document"
     elif file_ext in [".json", ".yaml", ".yml"]:
         file_type = "data"
+
+    if file_type == "unknown":
+        raise HTTPException(status_code=400, detail="Unsupported file type. Supported: txt, md, pdf, docx, json, yaml, yml")
     
     # Create document record
     async with get_db() as db:
@@ -1420,7 +1424,7 @@ async def delete_document_endpoint(document_id: str):
             raise HTTPException(status_code=404, detail="Document not found")
         
         # Delete from RAG index
-        tool_executor.delete_document_from_rag(document_id)
+        await tool_executor.delete_document_from_rag(document_id)
         
         # Delete file from disk
         try:
@@ -1470,7 +1474,8 @@ async def rag_query_endpoint(request: Request):
     data = await request.json()
     query = data.get("query", "")
     document_ids = data.get("document_ids")
-    top_k = data.get("top_k", 10)
+    section = data.get("section")
+    top_k = min(data.get("top_k", 10), 50)
     
     if not query:
         raise HTTPException(status_code=400, detail="Query is required")
@@ -1478,7 +1483,8 @@ async def rag_query_endpoint(request: Request):
     result = await tool_executor.rag_service.query(
         query=query,
         document_ids=document_ids,
-        top_k=top_k
+        top_k=top_k,
+        section=section
     )
     
     return result
@@ -1797,7 +1803,7 @@ async def trigger_backup():
 @app.post("/api/backup/scheduler/restart")
 async def restart_backup_scheduler():
     """Restart the backup scheduler (e.g., after settings change)"""
-    backup_scheduler.restart()
+    await backup_scheduler.restart()
     return {"status": "success", "message": "Backup scheduler restarted"}
 
 

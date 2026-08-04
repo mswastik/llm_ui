@@ -156,11 +156,14 @@ class BackupScheduler:
             self._task = None
         print("[BACKUP] Scheduler stopped")
 
-    def restart(self):
-        """Restart the scheduler (e.g., after settings change)."""
-        if self._task:
-            self._task.cancel()
-        self._running = False
+    async def restart(self):
+        """Restart the scheduler (e.g., after settings change).
+
+        Fully stops the running loop (cancelling it AND awaiting completion)
+        before starting a fresh one, so there is never more than one live
+        scheduler task.
+        """
+        await self.stop()
         self.start()
 
     async def _run_loop(self):
@@ -168,21 +171,30 @@ class BackupScheduler:
         while self._running:
             try:
                 if settings_manager.settings.backup_enabled:
-                    interval = settings_manager.settings.backup_interval_hours * 3600
-                    result = backup_database()
-                    if not result.get("success"):
-                        print(f"[BACKUP] Scheduled backup failed: {result.get('error')}")
+                    interval = int(settings_manager.settings.backup_interval_hours * 3600)
                 else:
                     interval = 3600  # Check every hour if backup gets enabled
             except Exception as e:
                 print(f"[BACKUP] Scheduler error: {e}")
                 interval = 3600
 
-            # Sleep in small increments to allow clean shutdown
+            # Sleep the interval FIRST, then back up. Starting/restarting the
+            # scheduler must not fire an instant backup — that piled up several
+            # backups at the same time whenever settings were saved.
             for _ in range(max(1, interval // 5)):
                 if not self._running:
                     return
                 await asyncio.sleep(5)
+
+            # Re-check after sleeping; the enabled flag may have changed.
+            if not settings_manager.settings.backup_enabled:
+                continue
+            try:
+                result = backup_database()
+                if not result.get("success"):
+                    print(f"[BACKUP] Scheduled backup failed: {result.get('error')}")
+            except Exception as e:
+                print(f"[BACKUP] Scheduler error: {e}")
 
 
 # Global scheduler instance

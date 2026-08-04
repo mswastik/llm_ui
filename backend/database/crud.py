@@ -45,8 +45,9 @@ async def get_conversation(db: AsyncSession, conversation_id: str) -> Optional[D
     }
 
 
-async def get_all_conversations(db: AsyncSession, limit: int = 50) -> List[Dict]:
-    """Get all conversations ordered by most recent"""
+async def get_all_conversations(db: AsyncSession, limit: Optional[int] = None) -> List[Dict]:
+    """Get all conversations ordered by most recent (no limit by default;
+    all conversations are returned so none are hidden from the UI)."""
     result = await db.execute(
         select(Conversation)
         .options(selectinload(Conversation.agent))
@@ -134,7 +135,10 @@ async def add_message(
         if thinking_parts:
             thinking = '\n'.join(thinking_parts)
         
-        # Extract tool_calls from blocks
+        # Extract tool_calls from blocks. Keep only lightweight call metadata
+        # in the column — the full result/sources/progress payload lives in
+        # metadata.blocks (the render source of truth), so storing it twice
+        # roughly doubled message size for every tool-using message.
         tool_call_blocks = [b for b in blocks if b.get('type') == 'tool_call']
         if tool_call_blocks:
             tool_calls = []
@@ -144,13 +148,6 @@ async def add_message(
                     'arguments': block.get('arguments', {}),
                     'status': block.get('status', 'completed'),
                     'progress': block.get('progress', 100),
-                    'result': block.get('result'),
-                    'sources': block.get('sources', []),
-                    'search_steps': block.get('search_steps', []),
-                    'search_terms': block.get('search_terms', []),
-                    'reasoning': block.get('reasoning'),
-                    'coverage_score': block.get('coverage_score'),
-                    'progress_history': block.get('progress_history', [])
                 })
     
     message = Message(

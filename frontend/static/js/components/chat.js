@@ -23,7 +23,7 @@ const chatComponent = () => ({
   // MCP server management (composer dropdown)
   mcpServers: [],
   mcpView: 'list', // 'list' | 'form'
-  mcpForm: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60, originalName: null },
+  mcpForm: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60, originalName: null },
   currentConversationTitle: 'New Chat',
 
   // Input focus state for expanded input sizing
@@ -237,7 +237,7 @@ const chatComponent = () => ({
   },
 
   openAddServer() {
-    this.mcpForm = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60, originalName: null }
+    this.mcpForm = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60, originalName: null }
     this.mcpView = 'form'
   },
 
@@ -246,6 +246,7 @@ const chatComponent = () => ({
       name: server.name, transport_type: server.transport_type,
       command: server.command || '', args: JSON.stringify(server.args || []),
       url: server.url || '', env: server.env ? JSON.stringify(server.env) : '{}',
+      headers: server.headers ? JSON.stringify(server.headers) : '{}',
       timeout: server.timeout || 60, originalName: server.name
     }
     this.mcpView = 'form'
@@ -260,13 +261,15 @@ const chatComponent = () => ({
     if (f.transport_type !== 'stdio' && !f.url) { this.$store.ui.showToast('URL required for SSE/HTTP', 'error'); return }
     if (f.transport_type === 'stdio' && !f.command) { this.$store.ui.showToast('Command required for stdio', 'error'); return }
 
-    let args = [], env = {}
+    let args = [], env = {}, headers = {}
     try { args = JSON.parse(f.args || '[]'); if (!Array.isArray(args)) args = [] }
     catch (e) { this.$store.ui.showToast('Invalid JSON in Args', 'error'); return }
     try { env = JSON.parse(f.env || '{}'); if (typeof env !== 'object' || Array.isArray(env)) env = {} }
     catch (e) { this.$store.ui.showToast('Invalid JSON in Env', 'error'); return }
+    try { headers = JSON.parse(f.headers || '{}'); if (typeof headers !== 'object' || Array.isArray(headers)) headers = {} }
+    catch (e) { this.$store.ui.showToast('Invalid JSON in Headers', 'error'); return }
 
-    const payload = { name, transport_type: f.transport_type, command: f.command, args, env, url: f.url || null, timeout: f.timeout || 60 }
+    const payload = { name, transport_type: f.transport_type, command: f.command, args, env, headers, url: f.url || null, timeout: f.timeout || 60 }
     try {
       const res = f.originalName
         ? await api.put(`/api/mcp/servers/${encodeURIComponent(f.originalName)}`, payload)

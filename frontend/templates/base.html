@@ -53,9 +53,9 @@
         toast: { show: false, message: '', type: 'success' },
         isPaused: false,
         settingsData: {}, mcpServers: [], mcpTools: [],
-        newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 },
+        newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60 },
         editingServer: false,
-        editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '', timeout: 60 },
+        editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', enabled: true, originalName: '', timeout: 60 },
         settingsTab: 'general',
         showNotes: false, notes: [], documents: [], activeAgentFilters: [], activeTagFilter: null, editingTagsForConversation: null, tagInput: '',
         toggleDarkMode() { this.darkMode = !this.darkMode; localStorage.setItem('darkMode', this.darkMode); document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light') },
@@ -81,7 +81,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=43"></script>
+    <script type="module" src="/static/js/main.js?v=44"></script>
 
     {% block extra_head %}{% endblock %}
 </head>

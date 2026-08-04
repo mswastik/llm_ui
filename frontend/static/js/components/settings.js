@@ -11,9 +11,9 @@ const settings = () => {
   settings: {},
   mcpServers: [],
   mcpTools: [],
-  newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}' },
+  newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60 },
   editingServer: false,
-  editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '' },
+  editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', enabled: true, originalName: '', timeout: 60 },
   backupStatus: null,
   backupFiles: [],
   backupRunning: false,
@@ -136,6 +136,20 @@ const settings = () => {
         }
       }
 
+      // Parse headers (or use empty object)
+      let headers = {}
+      const headersStr = (this.newServer.headers || '').trim()
+      if (headersStr && headersStr !== '{}') {
+        try {
+          headers = JSON.parse(headersStr)
+          if (typeof headers !== 'object' || Array.isArray(headers)) headers = {}
+        } catch (parseErr) {
+          console.error('[settings] Failed to parse headers:', { value: headersStr, error: parseErr.message })
+          this.$store.ui.showToast(`Invalid JSON in Headers field: ${parseErr.message}. Expected: {"Authorization": "Bearer token"}`, 'error')
+          return
+        }
+      }
+
       if (!this.newServer.name?.trim()) {
         this.$store.ui.showToast('Name is required for MCP server', 'error')
         return
@@ -155,11 +169,12 @@ const settings = () => {
         command: this.newServer.command,
         args, env,
         url: this.newServer.url || null,
+        headers,
         timeout: this.newServer.timeout || 60
       })
 
       await this.loadMCPServers()
-      this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', timeout: 60 }
+      this.newServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60 }
       if (response.connected === false) {
         this.$store.ui.showToast(response.error || response.message || 'Server added but connection failed', 'warning')
       } else {
@@ -177,6 +192,7 @@ const settings = () => {
       args: JSON.stringify(server.args || []),
       url: server.url || '',
       env: server.env ? JSON.stringify(server.env) : '{}',
+      headers: server.headers ? JSON.stringify(server.headers) : '{}',
       enabled: server.enabled !== false,
       originalName: server.name,
       timeout: server.timeout || 60
@@ -186,13 +202,19 @@ const settings = () => {
 
   closeEdit() {
     this.editingServer = false
-    this.editServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', enabled: true, originalName: '', timeout: 60 }
+    this.editServer = { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', enabled: true, originalName: '', timeout: 60 }
   },
 
   async saveEdit() {
     try {
       const args = JSON.parse(this.editServer.args)
       const env = this.editServer.env?.trim() ? JSON.parse(this.editServer.env) : {}
+      let headers = {}
+      const headersStr = (this.editServer.headers || '').trim()
+      if (headersStr && headersStr !== '{}') {
+        headers = JSON.parse(headersStr)
+        if (typeof headers !== 'object' || Array.isArray(headers)) headers = {}
+      }
 
       if (!this.editServer.name?.trim()) {
         this.$store.ui.showToast('Name is required for MCP server', 'error')
@@ -211,6 +233,7 @@ const settings = () => {
         name: this.editServer.name, transport_type: this.editServer.transport_type,
         command: this.editServer.command, args, env,
         url: this.editServer.url || null,
+        headers,
         timeout: this.editServer.timeout || 60
       })
 

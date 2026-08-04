@@ -28,6 +28,8 @@ class MCPServerConfig:
     env: Dict[str, str] = field(default_factory=dict)
     # For HTTP/SSE transport
     url: Optional[str] = None
+    # Custom HTTP headers (e.g. Authorization) for HTTP/SSE transport
+    headers: Dict[str, str] = field(default_factory=dict)
     # Connection timeout in seconds
     timeout: float = 60.0
     # Whether server is enabled
@@ -87,6 +89,7 @@ class MCPClientManager:
                 args=config.get("args", []),
                 env=config.get("env", {}),
                 url=config.get("url"),
+                headers=config.get("headers", {}),
                 timeout=config.get("timeout", 60.0),
                 enabled=config.get("enabled", True),
                 disabled_tools=config.get("disabled_tools", [])
@@ -177,11 +180,16 @@ class MCPClientManager:
             FastMCP Client instance
         """
         from fastmcp.client.transports import StdioTransport
+        from fastmcp.client.transports import SSETransport, StreamableHttpTransport
         
         if config.transport_type in ("sse", "http", "streamable-http"):
             # HTTP/SSE transport
             if not config.url:
                 raise ValueError(f"URL required for {config.transport_type} transport")
+            transport_cls = SSETransport if config.transport_type == "sse" else StreamableHttpTransport
+            headers = config.headers or None
+            if headers:
+                return FastMCPClient(transport_cls(url=config.url, headers=headers), timeout=config.timeout)
             return FastMCPClient(config.url, timeout=config.timeout)
 
         elif config.transport_type == "stdio":
@@ -467,6 +475,7 @@ class MCPClientManager:
                 "args": instance.config.args,
                 "env": instance.config.env,
                 "url": instance.config.url,
+                "headers": instance.config.headers,
                 "tool_count": len(instance.tools),
                 "is_connected": instance.is_connected,
                 "is_initialized": instance.is_initialized,
@@ -483,7 +492,8 @@ class MCPClientManager:
         env: Dict[str, str] = None,
         transport_type: str = "stdio",
         url: Optional[str] = None,
-        timeout: float = 60.0
+        timeout: float = 60.0,
+        headers: Dict[str, str] = None
     ) -> bool:
         """
         Add and connect to a new MCP server.
@@ -496,6 +506,7 @@ class MCPClientManager:
             transport_type: Transport type ('stdio', 'sse', 'http')
             url: URL for HTTP/SSE transport
             timeout: Connection timeout in seconds
+            headers: Custom HTTP headers (e.g. Authorization) for HTTP/SSE transport
             
         Returns:
             True if server was added and connected successfully
@@ -505,10 +516,11 @@ class MCPClientManager:
 
         args = args or []
         env = env or {}
+        headers = headers or {}
         
         # Save to database
         async with get_db() as db:
-            await add_mcp_server(db, name, command, args, env, transport_type, url, timeout=timeout)
+            await add_mcp_server(db, name, command, args, env, transport_type, url, timeout=timeout, headers=headers)
 
         # Create config and connect
         config = MCPServerConfig(
@@ -518,6 +530,7 @@ class MCPClientManager:
             args=args,
             env=env,
             url=url,
+            headers=headers,
             timeout=timeout
         )
 

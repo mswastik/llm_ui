@@ -54,9 +54,9 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // ═══════════════════════════════════════════════════════════
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
-import { sidebar } from './components/sidebar.js'
-import { chatComponent } from './components/chat.js'
-import { settings } from './components/settings.js'
+import { sidebar } from './components/sidebar.js?v=60'
+import { chatComponent } from './components/chat.js?v=60'
+import { settings } from './components/settings.js?v=60'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {

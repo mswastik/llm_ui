@@ -830,6 +830,7 @@ async def list_mcp_servers():
             **server,
             "enabled": db_enabled.get(server["name"], True),
             "disabled_tools": db_info.get("disabled_tools", []),
+            "headers": db_info.get("headers", {}),
             "timeout": db_info.get("timeout", 60.0)
         })
 
@@ -843,6 +844,7 @@ async def list_mcp_servers():
                 "args": db_server.get("args"),
                 "env": db_server.get("env"),
                 "url": db_server.get("url"),
+                "headers": db_server.get("headers", {}),
                 "tool_count": 0,
                 "is_connected": False,
                 "is_initialized": False,
@@ -865,6 +867,7 @@ async def add_mcp_server(request: Request):
     transport_type = data.get("transport_type", "stdio")
     url = data.get("url")
     timeout = data.get("timeout", 60.0)
+    headers = data.get("headers", {}) or {}
     
     # Validate based on transport type
     if transport_type in ("sse", "streamable-http"):
@@ -874,7 +877,7 @@ async def add_mcp_server(request: Request):
         if not command:
             raise HTTPException(status_code=400, detail="Command is required for stdio transport")
 
-    success, error = await mcp_manager.add_server(name, command, args, env, transport_type, url, timeout=timeout)
+    success, error = await mcp_manager.add_server(name, command, args, env, transport_type, url, timeout=timeout, headers=headers)
 
     if success:
         return {"status": "success", "message": f"Server '{name}' added and connected successfully", "connected": True}
@@ -915,6 +918,7 @@ async def update_mcp_server(server_name: str, request: Request):
     transport_type = data.get("transport_type", "stdio")
     url = data.get("url")
     timeout = data.get("timeout", 60.0)
+    headers = data.get("headers", {}) or {}
     
     # Validate based on transport type
     if transport_type in ("sse", "http", "streamable-http"):
@@ -935,7 +939,8 @@ async def update_mcp_server(server_name: str, request: Request):
         env=env,
         transport_type=transport_type,
         url=url,
-        timeout=timeout
+        timeout=timeout,
+        headers=headers
     )
 
     if success:
@@ -1013,7 +1018,8 @@ async def toggle_mcp_server_endpoint(server_name: str, request: Request):
                 command=config_data.get("command"),
                 args=config_data.get("args", []),
                 env=config_data.get("env", {}),
-                url=config_data.get("url")
+                url=config_data.get("url"),
+                headers=config_data.get("headers", {})
             )
             await mcp_manager._connect_server(config)
     else:

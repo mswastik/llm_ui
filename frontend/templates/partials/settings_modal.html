@@ -490,6 +490,22 @@
                 placeholder="https://..."
               />
             </div>
+            <div x-show="newServer.transport_type !== 'stdio'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Headers (JSON)</label
+              >
+              <input
+                type="text"
+                x-model="newServer.headers"
+                class="input text-sm"
+                placeholder='{"Authorization": "Bearer token"}'
+              />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                Optional. Custom HTTP headers, e.g.
+                <code class="text-[0.75rem]">{"Authorization": "Bearer &lt;token&gt;"}</code>
+              </p>
+            </div>
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
@@ -656,7 +672,7 @@
                     placeholder='["-y", "package"]'
                   />
                 </div>
-                <div x-show="editServer.transport_type === 'stdio'">
+                <div>
                   <label
                     class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                     >Env (JSON)</label
@@ -681,6 +697,22 @@
                     x-model="editServer.url"
                     class="input text-sm"
                   />
+                </div>
+                <div x-show="editServer.transport_type !== 'stdio'">
+                  <label
+                    class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                    >Headers (JSON)</label
+                  >
+                  <input
+                    type="text"
+                    x-model="editServer.headers"
+                    class="input text-sm"
+                    placeholder='{"Authorization": "Bearer token"}'
+                  />
+                  <p class="text-xs text-[var(--text-tertiary)] mt-1">
+                    Optional. Custom HTTP headers, e.g.
+                    <code class="text-[0.75rem]">{"Authorization": "Bearer &lt;token&gt;"}</code>
+                  </p>
                 </div>
                 <div>
                   <label

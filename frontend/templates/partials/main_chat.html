@@ -936,16 +936,22 @@
                             <label class="text-xs text-[var(--text-tertiary)]">Args (JSON array)</label>
                             <input x-model="mcpForm.args" type="text" class="input text-sm" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]' />
                           </div>
-                          <div>
-                            <label class="text-xs text-[var(--text-tertiary)]">Env (JSON object)</label>
-                            <input x-model="mcpForm.env" type="text" class="input text-sm" placeholder='{"KEY": "value"}' />
-                          </div>
                         </div>
                       </template>
+                      <div>
+                        <label class="text-xs text-[var(--text-tertiary)]">Env (JSON object)</label>
+                        <input x-model="mcpForm.env" type="text" class="input text-sm" placeholder='{"KEY": "value"}' />
+                      </div>
                       <template x-if="mcpForm.transport_type !== 'stdio'">
                         <div>
                           <label class="text-xs text-[var(--text-tertiary)]">URL</label>
                           <input x-model="mcpForm.url" type="text" class="input text-sm" placeholder="https://..." />
+                        </div>
+                      </template>
+                      <template x-if="mcpForm.transport_type !== 'stdio'">
+                        <div>
+                          <label class="text-xs text-[var(--text-tertiary)]">Headers (JSON object, e.g. Authorization)</label>
+                          <input x-model="mcpForm.headers" type="text" class="input text-sm" placeholder='{"Authorization": "Bearer token"}' />
                         </div>
                       </template>
                       <div>

@@ -79,6 +79,7 @@ class MCPServer(Base):
     
     # For SSE and StreamableHTTP transports
     url = Column(String, nullable=True)
+    headers = Column(JSON, default=dict)  # Custom HTTP headers (e.g. Authorization) for SSE/HTTP transports
     
     enabled = Column(Integer, default=1)  # SQLite doesn't have native boolean
     disabled_tools = Column(JSON, default=list)  # List of tool names disabled for this server
@@ -178,6 +179,18 @@ async def init_db():
         print("[DB] Migrated mcp_servers: added disabled_tools column")
     except OperationalError:
         # Column already exists — that's fine
+        pass
+
+    # ── Migration: add headers column to mcp_servers ──────────────────────
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE mcp_servers ADD COLUMN headers JSON DEFAULT '{}'"
+                )
+            )
+        print("[DB] Migrated mcp_servers: added headers column")
+    except OperationalError:
         pass
 
     # ── Migration: add version/version_group columns to messages ────────

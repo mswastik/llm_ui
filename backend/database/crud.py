@@ -295,7 +295,8 @@ async def add_mcp_server(
     env: Dict,
     transport_type: str = "stdio",
     url: Optional[str] = None,
-    timeout: float = 60.0
+    timeout: float = 60.0,
+    headers: Optional[Dict] = None
 ) -> Dict:
     """Add an MCP server configuration. Updates if exists."""
     # Check if server already exists
@@ -312,6 +313,7 @@ async def add_mcp_server(
         server.env = env
         server.url = url
         server.timeout = timeout
+        server.headers = headers or {}
         server.enabled = 1  # Re-enable if it was disabled
     else:
         # Create new server
@@ -322,7 +324,8 @@ async def add_mcp_server(
             args=args,
             env=env,
             url=url,
-            timeout=timeout
+            timeout=timeout,
+            headers=headers or {}
         )
         db.add(server)
 
@@ -336,6 +339,7 @@ async def add_mcp_server(
         "args": server.args,
         "env": server.env,
         "url": server.url,
+        "headers": server.headers or {},
         "enabled": bool(server.enabled),
         "disabled_tools": server.disabled_tools or [],
         "timeout": server.timeout,
@@ -358,6 +362,7 @@ async def get_all_mcp_servers(db: AsyncSession) -> List[Dict]:
             "args": server.args,
             "env": server.env,
             "url": server.url,
+            "headers": server.headers or {},
             "enabled": bool(server.enabled),
             "disabled_tools": server.disabled_tools or [],
             "timeout": server.timeout,
@@ -382,6 +387,7 @@ async def get_enabled_mcp_servers(db: AsyncSession) -> List[Dict]:
             "args": server.args,
             "env": server.env,
             "url": server.url,
+            "headers": server.headers or {},
             "disabled_tools": server.disabled_tools or [],
             "timeout": server.timeout,
         }

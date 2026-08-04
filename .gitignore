@@ -7,3 +7,4 @@ uploads/*
 graphify-out/
 .vscode/
 models/
+llm_ui.db.pre-migrate

@@ -59,7 +59,7 @@ import { chatComponent } from './components/chat.js?v=64'
 import { settings } from './components/settings.js?v=68'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
-import { agentsPanel } from './components/agents_panel.js?v=64'
+import { agentsPanel } from './components/agents_panel.js?v=65'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {

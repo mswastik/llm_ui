@@ -112,8 +112,12 @@ class ToolExecutor:
 
         return tools
 
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], request_id: str, call_key: str = None, conversation_id: str = None) -> AsyncGenerator[Dict, None]:
-        """Execute a tool and yield progress updates."""
+    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], request_id: str, call_key: str = None, conversation_id: str = None, skill_allowlist: List[str] = None) -> AsyncGenerator[Dict, None]:
+        """Execute a tool and yield progress updates.
+
+        skill_allowlist: when set (non-empty list of skill names), load_skill
+        only resolves skills in the list; None/empty = all skills allowed.
+        """
         try:
             if tool_name == "query_documents":
                 async for p in self._query_documents_with_progress(arguments, request_id):
@@ -140,18 +144,22 @@ class ToolExecutor:
                     yield p
             elif tool_name == "load_skill":
                 name = str(arguments.get("name", "")).strip()
-                skill = get_skill(name)
-                if not skill:
-                    yield {"type": "tool_error", "tool": tool_name, "error": f"Skill '{name}' not found"}
+                if skill_allowlist is not None and name not in skill_allowlist:
+                    yield {"type": "tool_error", "tool": tool_name,
+                           "error": f"Skill '{name}' is not enabled for this agent (allowed: {', '.join(skill_allowlist)})"}
                 else:
-                    result = {
-                        "name": skill["name"],
-                        "description": skill["description"],
-                        "instructions": skill["body"][:MAX_SKILL_CONTENT_CHARS],
-                        "files": skill["manifest"],
-                    }
-                    yield {"type": "tool_progress", "tool": tool_name, "status": f"Loaded skill: {skill['name']}",
-                           "progress": 100, "result": result}
+                    skill = get_skill(name)
+                    if not skill:
+                        yield {"type": "tool_error", "tool": tool_name, "error": f"Skill '{name}' not found"}
+                    else:
+                        result = {
+                            "name": skill["name"],
+                            "description": skill["description"],
+                            "instructions": skill["body"][:MAX_SKILL_CONTENT_CHARS],
+                            "files": skill["manifest"],
+                        }
+                        yield {"type": "tool_progress", "tool": tool_name, "status": f"Loaded skill: {skill['name']}",
+                               "progress": 100, "result": result}
             elif tool_name == "create_skill":
                 name = str(arguments.get("name", "")).strip()
                 description = str(arguments.get("description", "")).strip()

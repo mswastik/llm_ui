@@ -4,6 +4,37 @@
  */
 import { api } from '../utils.js'
 
+// Custom tool catalogue (names must match backend exclusion list in main.py).
+const TOOL_GROUPS = [
+  { label: 'General', tools: [
+    { name: 'generate_speech', label: 'Text-to-speech (generate_speech)' },
+    { name: 'run_command', label: 'Terminal (run_command)' },
+    { name: 'run_job', label: 'Jobs (run_job)' },
+  ]},
+  { label: 'Skills', tools: [
+    { name: 'load_skill', label: 'Load skills' },
+    { name: 'create_skill', label: 'Create skills' },
+    { name: 'search_skills', label: 'Search skill registry' },
+    { name: 'install_skill', label: 'Install registry skills' },
+  ]},
+  { label: 'Memory', tools: [
+    { name: 'memory_write', label: 'Write memory' },
+    { name: 'memory_read', label: 'Read memory' },
+    { name: 'memory_search', label: 'Search memory' },
+    { name: 'memory_delete', label: 'Delete memory' },
+  ]},
+  { label: 'Admin', tools: [
+    { name: 'list_agents', label: 'List agents' },
+    { name: 'create_agent', label: 'Create agents' },
+    { name: 'delete_agent', label: 'Delete agents' },
+    { name: 'list_mcp_servers', label: 'List MCP servers' },
+    { name: 'add_mcp_server', label: 'Add MCP servers' },
+    { name: 'remove_mcp_server', label: 'Remove MCP servers' },
+    { name: 'list_providers', label: 'List providers' },
+    { name: 'add_provider', label: 'Add providers' },
+  ]},
+]
+
 const agentsPanel = () => ({
   agents: [],
   loading: true,
@@ -12,13 +43,20 @@ const agentsPanel = () => ({
   formData: {
     name: '', description: '', system_prompt: '', model: '',
     provider_id: '', temperature: 0.7, top_k: 3, max_tokens: 4096,
-    enable_rag: false, rag_similarity_threshold: 0.7
+    enable_rag: false, rag_similarity_threshold: 0.7,
+    enabled_tools: [], enabled_mcp_servers: [], enabled_skills: []
   },
   availableModels: [],
   availableProviders: [],
+  mcpServers: [],
+  skills: [],
+  toolGroups: TOOL_GROUPS,
 
   async init() {
-    await Promise.all([this.loadAgents(), this.loadModels(), this.loadProviders()])
+    await Promise.all([
+      this.loadAgents(), this.loadModels(), this.loadProviders(),
+      this.loadMcpServers(), this.loadSkills()
+    ])
   },
 
   async loadAgents() {
@@ -28,6 +66,20 @@ const agentsPanel = () => ({
       this.agents = r.agents || []
     } catch (e) { this.agents = [] }
     this.loading = false
+  },
+
+  async loadMcpServers() {
+    try {
+      const r = await api.get('/api/mcp/servers')
+      this.mcpServers = r.servers || []
+    } catch (e) { this.mcpServers = [] }
+  },
+
+  async loadSkills() {
+    try {
+      const r = await api.get('/api/skills')
+      this.skills = r.skills || []
+    } catch (e) { this.skills = [] }
   },
 
   async loadModels() {
@@ -59,7 +111,8 @@ const agentsPanel = () => ({
       name: '', description: '', system_prompt: '', model: '',
       provider_id: this.availableProviders.find(p => p.is_default)?.id || this.availableProviders[0]?.id || '',
       temperature: 0.7, top_k: 3, max_tokens: 4096,
-      enable_rag: false, rag_similarity_threshold: 0.7
+      enable_rag: false, rag_similarity_threshold: 0.7,
+      enabled_tools: [], enabled_mcp_servers: [], enabled_skills: []
     }
     this.showCreate = true
   },
@@ -76,7 +129,10 @@ const agentsPanel = () => ({
       top_k: agent.top_k ?? 3,
       max_tokens: agent.max_tokens ?? 4096,
       enable_rag: !!agent.enable_rag,
-      rag_similarity_threshold: agent.rag_similarity_threshold ?? 0.7
+      rag_similarity_threshold: agent.rag_similarity_threshold ?? 0.7,
+      enabled_tools: agent.enabled_tools || [],
+      enabled_mcp_servers: agent.enabled_mcp_servers || [],
+      enabled_skills: agent.enabled_skills || []
     }
     this.showCreate = true
   },

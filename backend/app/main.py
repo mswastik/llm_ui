@@ -485,7 +485,8 @@ async def _core_stream_handler(
                             "max_tokens": agent.max_tokens,
                             "enable_rag": bool(agent.enable_rag),
                             "enabled_tools": agent.enabled_tools or [],
-                            "enabled_mcp_servers": agent.enabled_mcp_servers or []
+                            "enabled_mcp_servers": agent.enabled_mcp_servers or [],
+                            "enabled_skills": agent.enabled_skills or []
                         }
 
             # Resolve LLM provider: agent's provider > requested provider > default.
@@ -539,11 +540,22 @@ async def _core_stream_handler(
                 from tools.skills_tool import skill_index
                 idx = skill_index()
                 if idx:
-                    system_prompt_content += (
-                        "\n\n### Available skills\n"
-                        "Call load_skill(name) to load a skill's full instructions "
-                        "when it is relevant to the current task.\n" + idx
-                    )
+                    # Agent can restrict which skills are visible; empty = all.
+                    enabled_skills = set()
+                    if agent_config and agent_config.get("enabled_skills"):
+                        enabled_skills = set(agent_config["enabled_skills"])
+                    if enabled_skills:
+                        idx = "\n".join(
+                            line for line in idx.splitlines()
+                            if line.startswith("- ")
+                            and line[2:].split(":", 1)[0].strip() in enabled_skills
+                        )
+                    if idx:
+                        system_prompt_content += (
+                            "\n\n### Available skills\n"
+                            "Call load_skill(name) to load a skill's full instructions "
+                            "when it is relevant to the current task.\n" + idx
+                        )
             except Exception as e:
                 print(f"[SKILLS] index injection failed: {e}")
             
@@ -917,7 +929,8 @@ async def _core_stream_handler(
                             pending_tool_call['arguments'],
                             request_id,
                             call_key=pending_tool_call.get('key'),
-                            conversation_id=conversation_id
+                            conversation_id=conversation_id,
+                            skill_allowlist=(agent_config or {}).get("enabled_skills") or None
                         ):
                             # Forward the progress event
                             yield f"data: {json.dumps(progress_event)}\n\n"
@@ -1933,6 +1946,7 @@ def _agent_to_dict(agent) -> Dict:
         "system_prompt": agent.system_prompt,
         "enabled_tools": agent.enabled_tools,
         "enabled_mcp_servers": agent.enabled_mcp_servers,
+        "enabled_skills": agent.enabled_skills or [],
         "enable_rag": bool(agent.enable_rag),
         "rag_similarity_threshold": agent.rag_similarity_threshold,
         "enable_web_search": bool(agent.enable_web_search),
@@ -1976,6 +1990,7 @@ async def create_agent_endpoint(request: Request):
         "system_prompt": data.get("system_prompt", ""),
         "enabled_tools": data.get("enabled_tools", []),
         "enabled_mcp_servers": data.get("enabled_mcp_servers", []),
+        "enabled_skills": data.get("enabled_skills", []),
         "enable_rag": 1 if data.get("enable_rag", False) else 0,
         "rag_similarity_threshold": data.get("rag_similarity_threshold", 0.4),
         "enable_web_search": 1 if data.get("enable_web_search", False) else 0,
@@ -2020,6 +2035,8 @@ async def update_agent_endpoint(agent_id: int, request: Request):
         update_data["enabled_tools"] = data["enabled_tools"]
     if "enabled_mcp_servers" in data:
         update_data["enabled_mcp_servers"] = data["enabled_mcp_servers"]
+    if "enabled_skills" in data:
+        update_data["enabled_skills"] = data["enabled_skills"]
     if "enable_rag" in data:
         update_data["enable_rag"] = 1 if data["enable_rag"] else 0
     if "rag_similarity_threshold" in data:

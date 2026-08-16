@@ -18,7 +18,66 @@ Read bootstrap context before asking questions: `strategy/brand.md` for brand, a
 
 This skill is self-contained for its frontmatter scope: use its local instructions, references, scripts, and assets as the playbook; ask only for missing task-specific inputs; hand off to adjacent skills instead of expanding scope; and return an actionable artifact, decision, plan, draft, or diagnostic.
 
+## Browser Initialization (All Social Media Platforms)
 
+**CRITICAL: Before ANY social media operation across all platforms (X/Twitter, LinkedIn via browser tools, Instagram, etc.)**, ensure the automation browser is running with Prateek's profile:
+
+```bash
+brave --user-data-dir=/home/swastik/.brave-profiles/prateek --remote-debugging-port=9222 &
+```
+
+**Procedure:**
+1. **Check if browser is already open**: Try `browser_open` with a test URL first
+2. **If it fails or page doesn't load**, run the command above to launch Brave with Prateek's profile
+3. **Wait 3-5 seconds** for the browser to initialize and connect
+4. **Then proceed** with any social media operations (feed reads, posts, comments, profile fetches via browser)
+5. **If still failing**, screenshot the page to diagnose login/session issues
+
+**Never fail silently** — always attempt browser initialization before reporting "no posts found" or connection errors.
+
+> **Note**: LinkedIn native tools (`get_my_profile`, `get_person_profile`, etc.) don't need browser. This applies to all browser-based social operations.
+
+## LinkedIn Account Management (Multi-Account Setup)
+
+**CRITICAL: Two LinkedIn MCP servers are configured for two different accounts.**
+
+### Account Mapping
+
+| MCP Server Name | Account Holder | Profile Summary | Status |
+|-----------------|----------------|-----------------|--------|
+| `mcp-server-linkedin` | **Prateek Gupta** | Marketing at Verit Analytics, Bengaluru | ✅ CONFIRMED (via get_my_profile) |
+| `linkedin-mcp-2` | **Swastik Mishra** | Supply Chain Analytics & Digital Transformation at Stryker | ⚠️ ASSUMED (needs verification) |
+
+### Current Limitation
+
+The LinkedIn tools available (`get_my_profile`, `get_person_profile`, `send_message`, etc.) do NOT have a parameter to specify which MCP server to use. They automatically route to the first/default server, which is currently **Prateek's account** (`mcp-server-linkedin`).
+
+**To access Swastik's account through `linkedin-mcp-2`:**
+- This requires a separate tool binding or configuration change
+- Currently, all LinkedIn native tool calls go to Prateek's account
+- For Swastik's profile data, use `get_person_profile(linkedin_username="swastikmishra")` which scrapes publicly available data
+
+### Verification Steps
+
+To confirm which MCP server is connected to which account:
+1. Call `get_my_profile()` — returns the account bound to the active/default MCP server
+2. If it returns Prateek's profile → `mcp-server-linkedin` is active (confirmed)
+3. To switch to Swastik's account, you'd need to reconfigure tool routing or use a separate session
+
+### Important Notes
+
+- **Prateek's browser**: Use Brave with `/home/swastik/.brave-profiles/prateek` for X/Twitter browser operations
+- **Swastik's browser**: If needed, would require a separate Brave profile (not yet configured)
+- **Content creation**: When creating content for Swastik, use his tone and expertise (supply chain analytics, digital transformation, 17 years experience at Stryker/BITS Pilani)
+- **Never post to the wrong account**: Double-check which MCP server is active before any write operation
+
+## LinkedIn Operations
+
+For LinkedIn profile reads and messaging, use `get_my_profile`, `get_person_profile`, `send_message` tools directly (no browser needed).
+
+## Twitter/X Operations
+
+For X/Twitter feed reads, posting, commenting, use the `social_read_feed`, `social_post`, `social_comment` tools. **Always ensure browser is initialized first** (see Browser Initialization section above).
 
 Create, optimize, analyze, and repurpose social media content across all platforms.
 

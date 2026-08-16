@@ -210,6 +210,7 @@ class Agent(Base):
     # Tools configuration
     enabled_tools = Column(JSON, default=list)  # List of tool names
     enabled_mcp_servers = Column(JSON, default=list)  # List of MCP server names
+    enabled_skills = Column(JSON, default=list)  # List of skill names (empty = all)
     
     # RAG configuration
     enable_rag = Column(Integer, default=0)  # SQLite doesn't have native boolean
@@ -271,6 +272,18 @@ async def init_db():
                 )
             )
         print("[DB] Migrated agents: added provider_id column")
+    except OperationalError:
+        pass
+
+    # ── Migration: add enabled_skills column to agents ────────────────
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE agents ADD COLUMN enabled_skills JSON DEFAULT '[]'"
+                )
+            )
+        print("[DB] Migrated agents: added enabled_skills column")
     except OperationalError:
         pass
 

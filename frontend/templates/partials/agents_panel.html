@@ -146,6 +146,111 @@
           >
         </label>
 
+        <!-- Capabilities: MCP servers / custom tools / skills (empty = allow all) -->
+        <div class="rounded-lg border border-[var(--border-primary)] p-3 space-y-2">
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+              >Enabled MCP Servers</label
+            >
+            <p class="text-xs text-[var(--text-tertiary)] mb-2">
+              Leave empty to allow all connected servers. Tools from unchecked
+              servers are hidden from this agent.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+              <template x-for="srv in mcpServers" :key="srv.name">
+                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    x-model="formData.enabled_mcp_servers"
+                    :value="srv.name"
+                    class="rounded border-[var(--border-input)] text-[var(--accent-primary)]"
+                  />
+                  <span class="truncate" x-text="srv.name"></span>
+                  <span
+                    x-show="!srv.enabled"
+                    class="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap"
+                    >(disabled)</span
+                  >
+                </label>
+              </template>
+              <p
+                x-show="mcpServers.length === 0"
+                class="text-xs text-[var(--text-tertiary)]"
+                >No MCP servers configured yet.</p
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--border-primary)] p-3 space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+              >Enabled Tools &amp; Skills</label
+            >
+            <p class="text-xs text-[var(--text-tertiary)] mb-2">
+              Leave empty to allow all built-in tools. Checked tools are the
+              only ones this agent can call.
+            </p>
+            <template x-for="group in toolGroups" :key="group.label">
+              <div class="mb-2">
+                <div
+                  class="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] mb-1"
+                  x-text="group.label"
+                ></div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                  <template x-for="tool in group.tools" :key="tool.name">
+                    <label class="flex items-center gap-2 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        x-model="formData.enabled_tools"
+                        :value="tool.name"
+                        class="rounded border-[var(--border-input)] text-[var(--accent-primary)]"
+                      />
+                      <span class="truncate" x-text="tool.label"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-[var(--border-primary)] p-3 space-y-2">
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+              >Enabled Skills</label
+            >
+            <p class="text-xs text-[var(--text-tertiary)] mb-2">
+              Leave empty to allow all skills. Only applies when the
+              <code class="text-[var(--text-code)]">load_skill</code> tool is
+              enabled above.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+              <template x-for="skill in skills" :key="skill.name">
+                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    x-model="formData.enabled_skills"
+                    :value="skill.name"
+                    class="rounded border-[var(--border-input)] text-[var(--accent-primary)]"
+                  />
+                  <span class="truncate" x-text="skill.name"></span>
+                  <span
+                    x-show="skill.draft"
+                    class="badge badge-warning text-[10px] whitespace-nowrap"
+                    >draft</span
+                  >
+                </label>
+              </template>
+              <p
+                x-show="skills.length === 0"
+                class="text-xs text-[var(--text-tertiary)]"
+                >No skills installed yet.</p
+              >
+            </div>
+          </div>
+        </div>
+
         <div class="flex flex-col flex-grow">
           <label
             class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
@@ -254,6 +359,18 @@
             <span
               class="badge badge-primary text-xs"
               x-text="agent.enabled_tools.length + ' tools'"
+            ></span>
+          </template>
+          <template x-if="agent.enabled_mcp_servers?.length">
+            <span
+              class="badge badge-primary text-xs"
+              x-text="agent.enabled_mcp_servers.length + ' MCP'"
+            ></span>
+          </template>
+          <template x-if="agent.enabled_skills?.length">
+            <span
+              class="badge badge-primary text-xs"
+              x-text="agent.enabled_skills.length + ' skills'"
             ></span>
           </template>
           <span

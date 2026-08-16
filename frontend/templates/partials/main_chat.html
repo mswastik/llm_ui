@@ -805,7 +805,7 @@
             placeholder="Message… (Shift+Enter for new line)"
             class="composer-input w-full transition-[min-height] duration-200"
             :style="`min-height: ${isFocused ? '110px' : '36px'}; max-height: 200px`"
-            :disabled="isLoading"
+            :placeholder="isLoading && $store.chat.activeStreaming.isStreaming ? 'Message… (sending interrupts the current response)' : 'Message… (Shift+Enter for new line)'"
           ></textarea>
 
           <!-- Controls bar: dropdowns + actions -->
@@ -951,21 +951,46 @@
                   </button>
                 </div>
                 <div class="max-h-[50vh] overflow-y-auto">
+                  <!-- Agent binding hint: all servers stay visible; blocked ones are disabled -->
+                  <template x-if="agentMcpRestricted">
+                    <div class="px-3 py-1.5 bg-[var(--bg-tertiary)] border-b border-[var(--border-primary)] text-[11px] text-[var(--text-secondary)]">
+                      Bound to <span class="font-medium" x-text="selectedAgentName"></span> — all servers visible;
+                      <span class="font-medium" x-text="agentAllowedServerNames.length"></span> allowed, others can be enabled for this session.
+                    </div>
+                  </template>
                   <!-- List view: servers → tools -->
                   <template x-if="mcpView === 'list'">
                     <div>
                       <template x-for="server in mcpServers" :key="server.name">
-                        <div class="px-3 py-2.5 border-b border-[var(--border-primary)] last:border-b-0">
+                        <div class="px-3 py-2.5 border-b border-[var(--border-primary)] last:border-b-0" :class="isMcpBlocked(server) ? 'opacity-50' : ''">
                           <div class="flex items-center gap-2">
                             <span class="badge-dot flex-shrink-0" :class="server.is_connected ? 'badge-dot-green' : 'badge-dot-red'"></span>
                             <span class="font-medium text-sm flex-1 min-w-0 truncate" x-text="server.name"></span>
-                            <button
-                              type="button"
-                              class="toggle"
-                              :class="server.enabled ? 'toggle-on' : ''"
-                              @click="toggleServerEnabled(server, !server.enabled)"
-                              :title="server.enabled ? 'Disable server' : 'Enable server'"
-                            ></button>
+                            <template x-if="isMcpOverridden(server)">
+                              <span class="badge badge-primary text-[10px]">session</span>
+                            </template>
+                            <template x-if="isMcpBlocked(server)">
+                              <span class="badge badge-warning text-[10px]">blocked</span>
+                            </template>
+                            <template x-if="isMcpOverridden(server)">
+                              <button type="button" class="btn btn-primary btn-xs" @click="toggleSessionOverride(server)" title="Revoke session override">
+                                Session on
+                              </button>
+                            </template>
+                            <template x-if="!isMcpOverridden(server) && isMcpBlocked(server)">
+                              <button type="button" class="btn btn-secondary btn-xs" @click="toggleSessionOverride(server)" title="Enable for this session only (agent still restricts it by default)">
+                                Enable
+                              </button>
+                            </template>
+                            <template x-if="!isMcpOverridden(server) && !isMcpBlocked(server)">
+                              <button
+                                type="button"
+                                class="toggle"
+                                :class="server.enabled ? 'toggle-on' : ''"
+                                @click="toggleServerEnabled(server, !server.enabled)"
+                                :title="server.enabled ? 'Disable server' : 'Enable server'"
+                              ></button>
+                            </template>
                           </div>
                           <div class="text-xs text-[var(--text-tertiary)] mt-0.5" x-text="server.transport_type + (server.error ? ' — ' + server.error : '')"></div>
                           <div class="flex gap-0.5 mt-1.5">
@@ -1099,9 +1124,9 @@
 
             <button
               type="submit"
-              :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || isLoading || isUploading"
+              :disabled="(!inputMessage.trim() && attachedFiles.length === 0) || (isLoading && !$store.chat.activeStreaming.isStreaming) || isUploading"
               class="btn btn-primary h-[32px] w-[32px] p-0"
-              title="Send"
+              :title="isLoading && $store.chat.activeStreaming.isStreaming ? 'Send — interrupts the current response' : 'Send'"
             >
               <i class="ph ph-paper-plane-right text-base"></i>
             </button>

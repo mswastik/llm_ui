@@ -19,6 +19,7 @@ export class SSEService {
       (options.enableRag ? '&enable_rag=1' : '') +
       (options.model ? `&model=${encodeURIComponent(options.model)}` : '') +
       (options.providerId ? `&provider_id=${encodeURIComponent(options.providerId)}` : '') +
+      (options.overrideServers?.length ? `&override_servers=${encodeURIComponent(options.overrideServers.join(','))}` : '') +
       (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '') +
       (options.version ? `&version=${options.version}` : '') +
       (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '')
@@ -70,6 +71,14 @@ export class SSEService {
       onComplete: (fn) => this.handlers.complete.push(fn),
       close: () => this.close()
     }
+  }
+
+  abort() {
+    this.controller?.abort()
+    this.controller = null
+    // Drop stale handlers so an interrupted stream can't process more events
+    // or fire complete/error callbacks after a steering message takes over.
+    this.handlers = { data: [], error: [], complete: [] }
   }
 
   close() {

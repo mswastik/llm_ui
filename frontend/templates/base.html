@@ -44,7 +44,7 @@
         loadSavedAgent() { const s = localStorage.getItem('selectedAgentId'); if (s && this.availableAgents.some(a => a.id === parseInt(s))) { this.selectedAgentId = parseInt(s); this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId) } },
         startStreaming(rq, cid, mi, t, ms) { this.activeStreaming = { isStreaming: true, requestId: rq, conversationId: cid, msgIndex: mi, conversationTitle: t || '', messages: ms || [] }; this.isLoading = true },
         stopStreaming() { this.activeStreaming = { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] }; this.isLoading = false; this.toolStatus = { active: false, tool: '', status: '', progress: null } },
-        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model && this.availableModels.some(m => m.id === a.model)) this.selectedModel = a.model; this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
+        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model) { this.selectedModel = a.model; const m = this.availableModels.find(x => x.id === a.model); if (m) this.selectedProviderId = m.provider_id; else if (a.provider_id) this.selectedProviderId = a.provider_id } this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
       };
       window.__uiStoreData__ = {
         darkMode: localStorage.getItem('darkMode') === 'true',

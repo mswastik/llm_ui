@@ -64,6 +64,17 @@ class MCPClientManager:
     - Multiple transport types (stdio, SSE, HTTP)
     """
 
+    # Browser-automation tools (browser-mcp's social_* family) perform real
+    # human-paced actions: 4-45s gaps, scroll theater, typing rhythm, dwell
+    # pauses, and post-click verification. They legitimately take minutes, so
+    # they get a generous budget instead of the per-server config timeout
+    # (default 60s), which regularly kills a LinkedIn social_post mid-action.
+    SLOW_TOOL_TIMEOUT: float = 300.0
+    SLOW_TOOL_NAMES: frozenset = frozenset({
+        "social_post", "social_comment", "social_like",
+        "social_read_feed", "social_status",
+    })
+
     def __init__(self):
         self.servers: Dict[str, MCPServerInstance] = {}
         self._initialized = False
@@ -330,7 +341,13 @@ class MCPClientManager:
                 async with instance.client:
                     return await instance.client.call_tool(tool_name, arguments)
 
-            result: CallToolResult = await asyncio.wait_for(_call(), timeout=instance.config.timeout)
+            # Slow browser-automation tools get a longer budget than the
+            # per-server config timeout so humanized pacing isn't cut off.
+            timeout = instance.config.timeout
+            if tool_name in self.SLOW_TOOL_NAMES:
+                timeout = max(timeout, self.SLOW_TOOL_TIMEOUT)
+
+            result: CallToolResult = await asyncio.wait_for(_call(), timeout=timeout)
             
             # Parse result - FastMCP returns CallToolResult with content list
             return self._parse_tool_result(result)

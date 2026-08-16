@@ -24,6 +24,9 @@ const chatComponent = () => ({
 
   // MCP server management (composer dropdown)
   mcpServers: [],
+  // Servers the user manually enabled for this session even though the
+  // selected agent doesn't allow them (one-off override; sent per request).
+  sessionMcpOverrides: [],
   mcpView: 'list', // 'list' | 'form'
   mcpForm: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60, originalName: null },
   currentConversationTitle: 'New Chat',
@@ -61,9 +64,9 @@ const chatComponent = () => ({
   // ─── Composer getters ────────────────────────────────
   get selectedModelName() {
     const m = this.availableModels.find(x => x.id === this.selectedModel)
-    const label = m ? (m.name || m.id) : 'Model'
-    if (m?.provider_name) return `${label}`
-    return label
+    if (m) return (m.name || m.id)
+    // Agent-configured model may not be in the cached model list; show it anyway.
+    return this.selectedModel || 'Model'
   },
 
   modelsByProvider(providerId) {
@@ -78,8 +81,42 @@ const chatComponent = () => ({
   get mcpSummary() {
     const n = this.mcpServers.length
     if (!n) return 'MCP'
+    if (this.agentMcpRestricted) {
+      const allowed = this.agentAllowedServerNames
+      const on = this.mcpServers.filter(s => allowed.includes(s.name) || this.sessionMcpOverrides.includes(s.name)).length
+      return on + '/' + n
+    }
     const on = this.mcpServers.filter(s => s.enabled).length
     return on + '/' + n
+  },
+
+  // Selected agent's enabled_mcp_servers, or null when nothing is restricted
+  // (empty list = allow everything, matching the backend tool filter).
+  get agentAllowedServerNames() {
+    const agent = this.availableAgents.find(a => a.id === this.selectedAgentId)
+    const allowed = agent?.enabled_mcp_servers
+    return (Array.isArray(allowed) && allowed.length > 0) ? allowed : null
+  },
+
+  get agentMcpRestricted() {
+    return !!this.agentAllowedServerNames
+  },
+
+  // Server is visible but blocked by the agent and not session-overridden.
+  isMcpBlocked(server) {
+    const allowed = this.agentAllowedServerNames
+    if (!allowed) return false
+    return !allowed.includes(server.name) && !this.sessionMcpOverrides.includes(server.name)
+  },
+
+  isMcpOverridden(server) {
+    return this.sessionMcpOverrides.includes(server.name)
+  },
+
+  toggleSessionOverride(server) {
+    const i = this.sessionMcpOverrides.indexOf(server.name)
+    if (i >= 0) this.sessionMcpOverrides.splice(i, 1)
+    else this.sessionMcpOverrides.push(server.name)
   },
 
   // ─── Getters (reactive to store) ──────────────────────
@@ -122,6 +159,12 @@ const chatComponent = () => ({
     this.selectedProviderId = this.$store.chat.selectedProviderId
     this.$store.chat.loadSavedAgent()
     this.selectedAgentId = this.$store.chat.selectedAgentId
+    if (this.selectedAgentId) {
+      // Agent config overrides chat defaults: apply its model/provider on load too.
+      this.$store.chat.applyAgentConfig()
+      this.selectedModel = this.$store.chat.selectedModel
+      this.selectedProviderId = this.$store.chat.selectedProviderId
+    }
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     await ttsService.checkAvailability()
 
@@ -442,7 +485,14 @@ const chatComponent = () => ({
     const text = this.inputMessage?.trim()
     const hasFiles = this.attachedFiles.length > 0
     if (!text && !hasFiles) return
-    if (this.isLoading || this.isUploading) return
+    if (this.isLoading || this.isUploading) {
+      // Steering: a message sent while the model is responding interrupts the
+      // current response and sends this as a follow-up instruction.
+      if (this.isLoading && !this.isUploading && this.$store.chat.activeStreaming?.isStreaming) {
+        return this.steerCurrentStream()
+      }
+      return
+    }
 
     this.inputMessage = ''
     this.isLoading = true
@@ -519,6 +569,30 @@ const chatComponent = () => ({
     }
   },
 
+  // ─── Steering ──────────────────────────────────────────
+  // Interrupt the active response with a new instruction: abort the SSE (the
+  // backend saves the partial response and the message endpoint waits for it),
+  // then send the steering text as a normal follow-up message.
+  async steerCurrentStream() {
+    const text = this.inputMessage.trim()
+    if (!text) return
+    if (!this.$store.chat.currentConversationId) {
+      this.$store.ui.showToast('No active conversation to steer', 'error')
+      return
+    }
+    this.inputMessage = ''
+    sseService.abort()
+    this.$store.chat.stopStreaming()
+    this.isLoading = false
+    this.$store.chat.isLoading = false
+    this.$store.chat.toolStatus.active = false
+    // Small settle so the backend finalizes the cancelled stream (saves the
+    // partial) before the steering message is appended.
+    await new Promise(r => setTimeout(r, 300))
+    this.inputMessage = text
+    await this.sendMessage()
+  },
+
   // ─── Stream Response ──────────────────────────────────
   async streamResponse(requestId) {
     const assistantMsg = {
@@ -543,7 +617,8 @@ const chatComponent = () => ({
       enableRag: this.isRAGActive,
       documentIds: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
       model: this.selectedModel,
-      providerId: this.selectedProviderId
+      providerId: this.selectedProviderId,
+      overrideServers: this.sessionMcpOverrides
     })
 
     handlers.onData((data) => this.processEvent(data, msgIndex))
@@ -846,7 +921,8 @@ const chatComponent = () => ({
         isRegenerate: true,
         version: data.version,
         versionGroup: data.version_group,
-        providerId: this.selectedProviderId
+        providerId: this.selectedProviderId,
+        overrideServers: this.sessionMcpOverrides
       })
       handlers.onData((d) => this.processEvent(d, newIdx))
     } catch (e) {
@@ -1081,6 +1157,7 @@ const chatComponent = () => ({
 
   selectAgent(id) {
     this.selectedAgentId = id || null
+    this.sessionMcpOverrides = []  // overrides are per-agent; clear on switch
     this.updateSelectedAgent()
   },
 
@@ -1088,6 +1165,7 @@ const chatComponent = () => ({
     this.$store.chat.setAgent(this.selectedAgentId)
     this.$store.chat.applyAgentConfig()
     this.selectedModel = this.$store.chat.selectedModel
+    this.selectedProviderId = this.$store.chat.selectedProviderId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
 
     // Update the current conversation's agent_id if one is active

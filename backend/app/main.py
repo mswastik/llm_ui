@@ -172,6 +172,17 @@ async def send_message(conversation_id: str, request: Request):
     if not user_message.strip() and not files:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    # Steering support: if a stream is active for this conversation (the model
+    # is mid-response), wait for it to finalize — the partial assistant message
+    # is saved on cancel — BEFORE appending this user message, so DB order stays
+    # correct: [user, assistant(partial), user(steering), assistant(new)].
+    for _ in range(100):  # up to ~10s; the client aborts the stream first
+        async with _streams_lock:
+            active = bool(_active_streams.get(conversation_id))
+        if not active:
+            break
+        await asyncio.sleep(0.1)
+
     # Build message content with file references included
     message_content = user_message
     
@@ -443,6 +454,70 @@ async def _stream_with_stall_timeout(generator, initial_timeout=600, stall_timeo
         print(f"[WATCHDOG] Stream stalled for {timeout}s ({which}) — no chunks received")
 
 
+# ── Active stream registry (steering support) ──────────────────────────────
+# Tracks which request_ids are streaming per conversation so a new user
+# message (steering) can wait for the active response to finalize first —
+# guaranteeing the partial assistant message is saved BEFORE the steering
+# message in the DB, keeping message order correct.
+_active_streams: Dict[str, set] = {}
+_streams_lock = asyncio.Lock()
+
+
+async def _register_stream(conversation_id: str, request_id: str) -> None:
+    try:
+        async with _streams_lock:
+            _active_streams.setdefault(conversation_id, set()).add(request_id)
+    except Exception:
+        pass
+
+
+async def _unregister_stream(conversation_id: str, request_id: str) -> None:
+    try:
+        async with _streams_lock:
+            s = _active_streams.get(conversation_id)
+            if s:
+                s.discard(request_id)
+                if not s:
+                    del _active_streams[conversation_id]
+    except Exception:
+        pass
+
+
+async def _save_assistant_message(db, conversation_id: str, assistant_message: str,
+                                  thinking_content: str, message_blocks: list,
+                                  model: Optional[str], version: int,
+                                  version_group: Optional[str]) -> bool:
+    """Persist an assistant message with consolidated blocks. Returns True if
+    anything was saved. Used by the normal completion path AND the client-cancel
+    path (so a steering message can continue from the partial response)."""
+    if not (assistant_message.strip() or thinking_content.strip() or message_blocks):
+        return False
+    # Consolidate consecutive content/thinking blocks (preserve exact formatting)
+    consolidated_blocks = []
+    for block in message_blocks:
+        btype = block.get('type')
+        if btype in ('content', 'thinking'):
+            if consolidated_blocks and consolidated_blocks[-1].get('type') == btype:
+                consolidated_blocks[-1]['content'] = (
+                    consolidated_blocks[-1].get('content', '') + block.get('content', '')
+                )
+            else:
+                consolidated_blocks.append(block)
+        else:
+            consolidated_blocks.append(block)
+    message_extra_metadata = {"model": model} if model else {}
+    await add_message(
+        db, conversation_id, "assistant", assistant_message,
+        blocks=consolidated_blocks or None,
+        extra_metadata=message_extra_metadata,
+        version=version,
+        version_group=version_group
+    )
+    # Commit immediately so the message is persisted even if client disconnects
+    await db.commit()
+    return True
+
+
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
@@ -451,7 +526,8 @@ async def _core_stream_handler(
     document_ids: Optional[list] = None,
     version: int = 1,
     version_group: Optional[str] = None,
-    provider_id: Optional[str] = None
+    provider_id: Optional[str] = None,
+    override_servers: Optional[list] = None
 ) -> AsyncGenerator[str, None]:
     """Universal SSE handler for streaming LLM responses and tool execution.
     
@@ -462,6 +538,7 @@ async def _core_stream_handler(
     """
     current_document_ids.set(document_ids)
     try:
+        await _register_stream(conversation_id, request_id)
         async with get_db() as db:
             # Get conversation to retrieve agent configuration
             from sqlalchemy import select
@@ -727,6 +804,11 @@ async def _core_stream_handler(
                 enabled_mcp_servers = agent_config["enabled_mcp_servers"]
             if enabled_mcp_servers:
                 allowed_servers = set(enabled_mcp_servers)
+                # One-off session overrides (user manually enabled a server the
+                # agent doesn't allow): union them in for this request only.
+                if override_servers:
+                    allowed_servers |= set(override_servers)
+                    print(f"[TOOLS] Session overrides: {sorted(set(override_servers))}")
                 mcp_tools = [t for t in mcp_tools if t.get("server") in allowed_servers]
                 print(f"[TOOLS] Filtered to {len(mcp_tools)} MCP tools from servers: {allowed_servers}")
 
@@ -1004,52 +1086,11 @@ async def _core_stream_handler(
             print(f"[DEBUG] Total messages in llm_messages after {tool_iteration} iterations: {len(llm_messages)}")
             
             # Save assistant message with message blocks for sequential display
-            # Always save if we have any content, thinking, or message blocks
-            assistant_saved = False
-            if assistant_message.strip() or thinking_content.strip() or message_blocks:
-                # Consolidate consecutive content blocks to avoid fragmentation
-                # But preserve newlines and formatting within each block
-                consolidated_blocks = []
-                for block in message_blocks:
-                    if block.get('type') == 'content':
-                        # Check if last block is also content - if so, merge
-                        if consolidated_blocks and consolidated_blocks[-1].get('type') == 'content':
-                            # Preserve newlines - concatenate exactly as received
-                            prev_content = consolidated_blocks[-1].get('content', '')
-                            new_content = block.get('content', '')
-                            # Don't strip or modify - preserve exact formatting
-                            consolidated_blocks[-1]['content'] = prev_content + new_content
-                        else:
-                            consolidated_blocks.append(block)
-                    elif block.get('type') == 'thinking':
-                        # Check if last block is also thinking - if so, merge
-                        if consolidated_blocks and consolidated_blocks[-1].get('type') == 'thinking':
-                            prev_content = consolidated_blocks[-1].get('content', '')
-                            new_content = block.get('content', '')
-                            consolidated_blocks[-1]['content'] = prev_content + new_content
-                        else:
-                            consolidated_blocks.append(block)
-                    else:
-                        # Tool calls are kept as-is
-                        consolidated_blocks.append(block)
-                
-                # Add model info to message metadata
-                message_extra_metadata = {"model": model} if model else {}
-                # Store consolidated_blocks in metadata['blocks'] for sequential rendering
-                print(f"[DEBUG] Saving message with {len(consolidated_blocks)} consolidated blocks")
-                for i, block in enumerate(consolidated_blocks):
-                    content_preview = block.get('content', '')[:100].replace('\n', '\\n') if block.get('content') else ''
-                    print(f"[DEBUG] Block {i}: type={block.get('type')}, content_preview='{content_preview}...'")
-                await add_message(
-                    db, conversation_id, "assistant", assistant_message,
-                    blocks=consolidated_blocks or None,
-                    extra_metadata=message_extra_metadata,
-                    version=version,
-                    version_group=version_group
-                )
-                # Commit immediately so the message is persisted even if client disconnects
-                await db.commit()
-                assistant_saved = True
+            # (also used on client-cancel so a steering message can continue)
+            assistant_saved = await _save_assistant_message(
+                db, conversation_id, assistant_message, thinking_content,
+                message_blocks, model, version, version_group
+            )
 
             # Finalize open job runs for this conversation (Phase 5).
             if assistant_saved:
@@ -1136,6 +1177,14 @@ async def _core_stream_handler(
     except asyncio.CancelledError:
         # Request was cancelled by client - this is normal, don't log as error
         print(f"Request {request_id} cancelled by client")
+        # Save the partial response so a steering message can continue from it.
+        try:
+            await _save_assistant_message(
+                db, conversation_id, assistant_message, thinking_content,
+                message_blocks, model, version, version_group
+            )
+        except Exception as e:
+            print(f"[STEER] partial save on cancel failed: {e}")
         raise  # Re-raise to properly propagate cancellation
     except Exception as e:
         print(f"Error in event generator: {e}")
@@ -1145,6 +1194,8 @@ async def _core_stream_handler(
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         except Exception:
             pass  # Client may have disconnected
+    finally:
+        await _unregister_stream(conversation_id, request_id)
 
 
 @app.get("/api/stream/{request_id}")
@@ -1154,13 +1205,15 @@ async def stream_response(
     enable_rag: bool = False,
     model: str = None,
     document_ids: str = None,
-    provider_id: str = None
+    provider_id: str = None,
+    override_servers: str = None
 ):
     """Stream LLM response with real-time tool execution updates."""
     doc_ids = document_ids.split(",") if document_ids else None
+    overrides = override_servers.split(",") if override_servers else None
     return StreamingResponse(
         _core_stream_handler(request_id, conversation_id, enable_rag, model, doc_ids,
-                             provider_id=provider_id),
+                             provider_id=provider_id, override_servers=overrides),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1177,17 +1230,19 @@ async def stream_regenerate_response(
     model: str = None,
     version: int = 1,
     version_group: str = None,
-    provider_id: str = None
+    provider_id: str = None,
+    override_servers: str = None
 ):
     """Stream regenerated LLM response using unified handler.
     Supports versioned regeneration through version/version_group params.
     """
+    overrides = override_servers.split(",") if override_servers else None
     return StreamingResponse(
         _core_stream_handler(
             request_id, conversation_id,
             enable_rag=False, model=model,
             version=version, version_group=version_group,
-            provider_id=provider_id
+            provider_id=provider_id, override_servers=overrides
         ),
         media_type="text/event-stream",
         headers={
@@ -1439,7 +1494,8 @@ async def toggle_mcp_server_endpoint(server_name: str, request: Request):
                 args=config_data.get("args", []),
                 env=config_data.get("env", {}),
                 url=config_data.get("url"),
-                headers=config_data.get("headers", {})
+                headers=config_data.get("headers", {}),
+                timeout=config_data.get("timeout", 60.0)
             )
             await mcp_manager._connect_server(config)
     else:
@@ -1940,6 +1996,7 @@ def _agent_to_dict(agent) -> Dict:
         "name": agent.name,
         "description": agent.description,
         "model": agent.model,
+        "provider_id": getattr(agent, "provider_id", None),
         "temperature": agent.temperature,
         "top_k": agent.top_k,
         "max_tokens": agent.max_tokens,
@@ -1984,6 +2041,7 @@ async def create_agent_endpoint(request: Request):
         "name": data.get("name"),
         "description": data.get("description", ""),
         "model": data.get("model", "qwen3-4b"),
+        "provider_id": data.get("provider_id"),
         "temperature": data.get("temperature", 0.7),
         "top_k": data.get("top_k", 40),
         "max_tokens": data.get("max_tokens", 16048),
@@ -2023,6 +2081,8 @@ async def update_agent_endpoint(agent_id: int, request: Request):
         update_data["description"] = data["description"]
     if "model" in data:
         update_data["model"] = data["model"]
+    if "provider_id" in data:
+        update_data["provider_id"] = data["provider_id"] or None
     if "temperature" in data:
         update_data["temperature"] = data["temperature"]
     if "top_k" in data:

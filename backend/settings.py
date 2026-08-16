@@ -73,7 +73,32 @@ DEFAULTS = {
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
     "tts_auto_read": False,
+
+    # Agent Platform: Terminal Tool Settings
+    "terminal_allowed_dirs": [".", "./uploads", "./outputs"],
+    "terminal_allowed_commands": [
+        "python3", "python", "node", "npm", "npx", "git", "curl", "wget",
+        "grep", "rg", "find", "sed", "awk", "ls", "cat", "head", "tail",
+        "mkdir", "cp", "mv", "rm", "touch", "date", "jq", "echo", "printf",
+        "wc", "sort", "uniq", "diff", "patch", "tar", "unzip", "zip",
+        "pip", "pip3", "uv", "sqlite3", "env", "pwd", "file", "stat",
+        "basename", "dirname", "xargs", "tee", "tr", "cut", "paste"
+    ],
+    "terminal_blocked_patterns": [],
+    "terminal_require_approval": True,
+    "terminal_default_timeout": 120,
+    "terminal_audit_log": "./terminal_audit.jsonl",
+
+    # Agent Platform: Skills / Jobs / Memory
+    "skills_dir": "./skills",
+    "outputs_dir": "./outputs",
+    "memory_auto_extract_interval": 3,
+    "jobs_model": "",
 }
+
+# Create agent platform directories if they don't exist
+os.makedirs(DEFAULTS["skills_dir"], exist_ok=True)
+os.makedirs(DEFAULTS["outputs_dir"], exist_ok=True)
 
 # Create upload directory if it doesn't exist
 os.makedirs(DEFAULTS["upload_dir"], exist_ok=True)
@@ -114,6 +139,16 @@ class Settings(BaseModel):
     kokoro_volume: float = DEFAULTS["kokoro_volume"]
     kokoro_speed: float = DEFAULTS["kokoro_speed"]
     tts_auto_read: bool = DEFAULTS["tts_auto_read"]
+    terminal_allowed_dirs: list = DEFAULTS["terminal_allowed_dirs"]
+    terminal_allowed_commands: list = DEFAULTS["terminal_allowed_commands"]
+    terminal_blocked_patterns: list = DEFAULTS["terminal_blocked_patterns"]
+    terminal_require_approval: bool = DEFAULTS["terminal_require_approval"]
+    terminal_default_timeout: int = DEFAULTS["terminal_default_timeout"]
+    terminal_audit_log: str = DEFAULTS["terminal_audit_log"]
+    skills_dir: str = DEFAULTS["skills_dir"]
+    outputs_dir: str = DEFAULTS["outputs_dir"]
+    memory_auto_extract_interval: int = DEFAULTS["memory_auto_extract_interval"]
+    jobs_model: str = DEFAULTS["jobs_model"]
 
 
 def _coerce_setting(key: str, value: Any) -> Any:
@@ -153,6 +188,8 @@ BACKUP_ENABLED = DEFAULTS["backup_enabled"]
 BACKUP_PATH = DEFAULTS["backup_path"]
 BACKUP_INTERVAL_HOURS = DEFAULTS["backup_interval_hours"]
 BACKUP_MAX_KEEP = DEFAULTS["backup_max_keep"]
+SKILLS_DIR = DEFAULTS["skills_dir"]
+OUTPUTS_DIR = DEFAULTS["outputs_dir"]
 
 
 # ponytail: env keys that map 1:1 with settings keys
@@ -182,6 +219,10 @@ _ENV_MAP = {
     "tts_auto_read": "TTS_AUTO_READ",
     "stt_engine": "STT_ENGINE",
     "stt_model": "STT_MODEL",
+    "terminal_require_approval": "TERMINAL_REQUIRE_APPROVAL",
+    "skills_dir": "SKILLS_DIR",
+    "outputs_dir": "OUTPUTS_DIR",
+    "jobs_model": "JOBS_MODEL",
 }
 
 

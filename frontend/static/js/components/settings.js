@@ -17,12 +17,42 @@ const settings = () => {
   backupStatus: null,
   backupFiles: [],
   backupRunning: false,
+  // Agent memory (Phase 2)
+  memoryEntries: [],
+  newMemoryContent: '',
+  memoryFilter: 'all',
+  editingMemoryId: null,
+  editMemoryContent: '',
+  // Hard-coded terminal blocklist (read-only display)
+  blockedPatterns: [],
+  // LLM providers (multi-provider support)
+  providers: [],
+  providerForm: { name: '', base_url: '', api_key: '' },
+  showProviderForm: false,
+  providerBusy: false,
+  // MCP registry browse
+  mcpRegistryView: 'configured',
+  mcpRegistryQuery: '',
+  mcpRegistryResults: [],
+  mcpRegistryLoading: false,
+  mcpRegistryError: '',
+  mcpRegistryInstalling: '',
 
   async init() {
     console.log('[settings] init() called, loading settings and MCP servers')
     await this.loadSettings()
     await this.loadMCPServers()
     await this.loadBackupStatus()
+    await this.loadMemory()
+    await this.loadBlockedPatterns()
+    await this.loadProviders()
+  },
+
+  async loadBlockedPatterns() {
+    try {
+      const data = await api.get('/api/terminal/blocked-patterns')
+      this.blockedPatterns = data.patterns || []
+    } catch (e) { console.error('[settings] blocked patterns:', e) }
   },
 
   // ─── Settings ─────────────────────────────────────────
@@ -58,6 +88,138 @@ const settings = () => {
       settings.kokoro_device = settings.kokoro_device || 'cpu'
     } else if (settings.tts_engine === 'edge-tts') {
       settings.tts_voice = 'en-IN-NeerjaNeural'
+    }
+  },
+
+  // ─── Memory (agent platform Phase 2) ─────────────────
+  async loadMemory() {
+    try {
+      const data = await api.get('/api/memory')
+      this.memoryEntries = data.entries || []
+    } catch (e) { console.error('[settings] Memory:', e) }
+  },
+  async addMemory() {
+    const content = (this.newMemoryContent || '').trim()
+    if (!content) return
+    try {
+      await api.post('/api/memory', { content, scope: 'global', tags: [] })
+      this.newMemoryContent = ''
+      await this.loadMemory()
+      this.$store.ui.showToast('Memory saved', 'success')
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+  startEditMemory(entry) {
+    this.editingMemoryId = entry.id
+    this.editMemoryContent = entry.content
+  },
+  async saveEditMemory(id) {
+    try {
+      await api.patch(`/api/memory/${id}`, { content: this.editMemoryContent })
+      this.editingMemoryId = null
+      await this.loadMemory()
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+  async deleteMemory(id) {
+    if (!confirm('Delete this memory entry?')) return
+    try {
+      await api.delete(`/api/memory/${id}`)
+      await this.loadMemory()
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+
+  // ─── LLM Providers (multi-provider) ──────────────────
+  get allModelOptions() {
+    const out = []
+    for (const p of this.providers || []) {
+      for (const m of (p.models || [])) {
+        out.push({ id: m.id, label: `${m.name || m.id} (${p.name})`, key: `${p.id}:${m.id}` })
+      }
+    }
+    return out
+  },
+
+  async loadProviders() {
+    try {
+      const data = await api.get('/api/providers')
+      this.providers = data.providers || []
+    } catch (e) { console.error('[settings] providers:', e) }
+  },
+  startAddProvider() {
+    this.showProviderForm = true
+    this.providerForm = { name: '', base_url: '', api_key: '' }
+  },
+  cancelProviderForm() { this.showProviderForm = false },
+  async saveProvider() {
+    const name = (this.providerForm.name || '').trim()
+    const base = (this.providerForm.base_url || '').trim()
+    if (!name || !base) { this.$store.ui.showToast('Name and URL are required', 'error'); return }
+    this.providerBusy = true
+    try {
+      const data = await api.post('/api/providers', this.providerForm)
+      this.showProviderForm = false
+      await this.loadProviders()
+      const msg = data.error
+        ? `Provider added, but model fetch failed: ${data.error}`
+        : `Provider added — ${data.models_fetched} models fetched`
+      this.$store.ui.showToast(msg, data.error ? 'warning' : 'success')
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+    finally { this.providerBusy = false }
+  },
+  async refreshProviderModels(p) {
+    try {
+      const data = await api.post(`/api/providers/${p.id}/refresh`)
+      await this.loadProviders()
+      this.$store.ui.showToast(`Refreshed — ${data.models_fetched} models`, data.error ? 'warning' : 'success')
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+  async setDefaultProvider(p) {
+    try {
+      await api.post(`/api/providers/${p.id}/default`)
+      await this.loadProviders()
+      this.$store.ui.showToast(`'${p.name}' is now the default provider`, 'success')
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+  async deleteProvider(p) {
+    if (!confirm(`Delete provider '${p.name}'?`)) return
+    try {
+      await api.delete(`/api/providers/${p.id}`)
+      await this.loadProviders()
+    } catch (e) { this.$store.ui.showToast('Error: ' + e.message, 'error') }
+  },
+
+  // ─── MCP Registry browse ─────────────────────────────
+  async searchMcpRegistry() {
+    this.mcpRegistryLoading = true
+    this.mcpRegistryError = ''
+    try {
+      const q = (this.mcpRegistryQuery || '').trim()
+      const data = await api.get(`/api/mcp/registry?query=${encodeURIComponent(q)}&limit=24`)
+      this.mcpRegistryResults = data.servers || []
+      this.mcpRegistryError = data.error || ''
+    } catch (e) {
+      this.mcpRegistryError = e.message
+      this.mcpRegistryResults = []
+    } finally {
+      this.mcpRegistryLoading = false
+    }
+  },
+
+  async installMcpFromRegistry(srv) {
+    if (this.mcpRegistryInstalling) return
+    this.mcpRegistryInstalling = srv.qualified_name
+    try {
+      const data = await api.post('/api/mcp/registry/install', { qualified_name: srv.qualified_name })
+      this.mcpRegistryInstalling = ''
+      const ok = data.server?.connected
+      this.$store.ui.showToast(
+        ok ? `Server '${data.server.name}' added and connected` : `Server '${data.server.name}' added, but connection failed: ${data.server.error || 'unknown error'}`,
+        ok ? 'success' : 'warning'
+      )
+      this.mcpRegistryView = 'configured'
+      await this.loadMCPServers()
+    } catch (e) {
+      this.mcpRegistryInstalling = ''
+      this.$store.ui.showToast(e.message, 'error')
     }
   },
 

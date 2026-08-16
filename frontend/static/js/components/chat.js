@@ -17,6 +17,8 @@ const chatComponent = () => ({
   editContent: '',
   inputMessage: '',
   availableModels: [],
+  availableProviders: [],
+  selectedProviderId: '',
   availableAgents: [],
   documents: [],
 
@@ -52,10 +54,20 @@ const chatComponent = () => ({
   // If false on connection close, response may be incomplete (MTP stall / timeout)
   streamEndedNormally: false,
 
+  // Context transparency panel (Phase 6) — what the model saw this turn
+  contextInfo: null,
+  contextOpen: false,
+
   // ─── Composer getters ────────────────────────────────
   get selectedModelName() {
     const m = this.availableModels.find(x => x.id === this.selectedModel)
-    return m ? (m.name || m.id) : 'Model'
+    const label = m ? (m.name || m.id) : 'Model'
+    if (m?.provider_name) return `${label}`
+    return label
+  },
+
+  modelsByProvider(providerId) {
+    return this.availableModels.filter(m => (m.provider_id || '') === providerId)
   },
 
   get selectedAgentName() {
@@ -107,6 +119,7 @@ const chatComponent = () => ({
     await Promise.all([this.loadModels(), this.loadAgents(), this.loadDocuments(), this.loadMCPServers()])
     this.$store.chat.loadSavedModel()
     this.selectedModel = this.$store.chat.selectedModel
+    this.selectedProviderId = this.$store.chat.selectedProviderId
     this.$store.chat.loadSavedAgent()
     this.selectedAgentId = this.$store.chat.selectedAgentId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
@@ -127,16 +140,24 @@ const chatComponent = () => ({
       this.selectedAgentId = e.detail.agentId
     })
 
-    // Focus input when a conversation is loaded (new chat or switching conversations)
+    // Focus the input only when the loaded conversation is new/empty (no history
+    // to read); when browsing an existing conversation, blur it so it collapses
+    // to its small height — the user clicks in to resume typing.
     window.addEventListener('conversation-loaded', () => {
       this.$nextTick(() => {
-        this.$refs?.chatInput?.focus()
+        if (this.$store.chat.messages.length === 0) {
+          this.$refs?.chatInput?.focus()
+        } else {
+          this.$refs?.chatInput?.blur()
+        }
       })
     })
 
-    // Auto-focus the chat input on init
+    // Auto-focus the chat input on init only for a fresh chat (no history)
     this.$nextTick(() => {
-      this.$refs?.chatInput?.focus()
+      if (this.$store.chat.messages.length === 0) {
+        this.$refs?.chatInput?.focus()
+      }
     })
   },
 
@@ -144,6 +165,7 @@ const chatComponent = () => ({
     this.isLoading = this.$store.chat.isLoading
     this.toolStatus = { ...this.$store.chat.toolStatus }
     this.selectedModel = this.$store.chat.selectedModel
+    this.selectedProviderId = this.$store.chat.selectedProviderId
     this.selectedAgentId = this.$store.chat.selectedAgentId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
     this.availableModels = this.$store.chat.availableModels
@@ -157,7 +179,22 @@ const chatComponent = () => ({
     try {
       const data = await api.get('/api/models')
       this.availableModels = data.models || []
+      this.availableProviders = data.providers || []
       this.$store.chat.availableModels = this.availableModels
+      this.$store.chat.availableProviders = this.availableProviders
+      // Restore provider selection or default to the default provider
+      if (!this.selectedProviderId && this.availableProviders.length) {
+        const def = this.availableProviders.find(p => p.is_default) || this.availableProviders[0]
+        this.selectedProviderId = def.id
+      }
+      if (!this.selectedModel && this.availableModels.length) {
+        const m = this.availableModels.find(x => x.provider_id === this.selectedProviderId) || this.availableModels[0]
+        if (m) {
+          this.selectedModel = m.id
+          this.selectedProviderId = m.provider_id
+        }
+      }
+      this.$store.chat.selectedProviderId = this.selectedProviderId
     } catch (e) { console.error('[chat] Models:', e) }
   },
 
@@ -468,7 +505,9 @@ const chatComponent = () => ({
           message: text, 
           enable_rag: this.isRAGActive, 
           document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
-          files: uploadedFiles
+          files: uploadedFiles,
+          model: this.selectedModel,
+          provider_id: this.selectedProviderId
         }
       )
       await this.streamResponse(data.request_id)
@@ -503,7 +542,8 @@ const chatComponent = () => ({
     const handlers = sseService.stream(requestId, this.$store.chat.currentConversationId, {
       enableRag: this.isRAGActive,
       documentIds: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
-      model: this.selectedModel
+      model: this.selectedModel,
+      providerId: this.selectedProviderId
     })
 
     handlers.onData((data) => this.processEvent(data, msgIndex))
@@ -547,6 +587,11 @@ const chatComponent = () => ({
         this.appendBlock(msg, 'thinking', data.content)
         break
 
+      case 'context_info':
+        this.contextInfo = data.context || null
+        this.$store.chat.contextInfo = this.contextInfo
+        break
+
       case 'tool_call_start':
         this.$store.chat.toolStatus = {
           active: true, tool: data.tool, status: 'Starting...', progress: null
@@ -584,6 +629,22 @@ const chatComponent = () => ({
         }
         if (data.result) {
           this.$store.chat.toolStatus.active = false
+        }
+        break
+
+      case 'tool_approval_required':
+        this.$store.chat.toolStatus = {
+          active: true, tool: data.tool || 'run_command', status: 'Awaiting approval', progress: null
+        }
+        const approvalBlock = [...msg.blocks].reverse().find(b =>
+          b.type === 'tool_call' && b.status !== 'completed' && b.status !== 'error'
+        )
+        if (approvalBlock) {
+          approvalBlock.status = 'approval'
+          approvalBlock.command = data.command || ''
+          approvalBlock.working_dir = data.working_dir || ''
+          approvalBlock.approval_reason = data.reason || ''
+          approvalBlock.approval_key = data.approval_key || null
         }
         break
 
@@ -657,6 +718,21 @@ const chatComponent = () => ({
       last.content += content
     } else {
       msg.blocks.push({ type, content })
+    }
+  },
+
+  // ─── Tool Approval ─────────────────────────────────────
+  async respondApproval(block, approved) {
+    const active = this.$store.chat.activeStreaming
+    if (!active?.requestId) return
+    try {
+      await api.post(`/api/tools/${active.requestId}/approve`, {
+        decision: approved,
+        approval_key: block.approval_key || null
+      })
+      block.status = approved ? 'approved' : 'denied'
+    } catch (e) {
+      this.$store.ui.showToast('Failed to send decision', 'error')
     }
   },
 
@@ -769,7 +845,8 @@ const chatComponent = () => ({
         model: this.selectedModel,
         isRegenerate: true,
         version: data.version,
-        versionGroup: data.version_group
+        versionGroup: data.version_group,
+        providerId: this.selectedProviderId
       })
       handlers.onData((d) => this.processEvent(d, newIdx))
     } catch (e) {
@@ -992,11 +1069,13 @@ const chatComponent = () => ({
 
   // ─── UI Handlers ──────────────────────────────────────
   updateSelectedModel() {
-    this.$store.chat.setModel(this.selectedModel)
+    this.$store.chat.setModel(this.selectedModel, this.selectedProviderId)
   },
 
-  selectModel(id) {
+  selectModel(id, providerId) {
+    const model = this.availableModels.find(m => m.id === id)
     this.selectedModel = id
+    this.selectedProviderId = providerId || model?.provider_id || this.selectedProviderId
     this.updateSelectedModel()
   },
 

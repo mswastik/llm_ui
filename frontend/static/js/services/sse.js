@@ -18,6 +18,7 @@ export class SSEService {
     const url = `/api/stream/${endpoint}${requestId}?conversation_id=${conversationId}` +
       (options.enableRag ? '&enable_rag=1' : '') +
       (options.model ? `&model=${encodeURIComponent(options.model)}` : '') +
+      (options.providerId ? `&provider_id=${encodeURIComponent(options.providerId)}` : '') +
       (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '') +
       (options.version ? `&version=${options.version}` : '') +
       (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '')

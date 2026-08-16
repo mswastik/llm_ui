@@ -27,7 +27,7 @@ console.log('[main] Alpine ESM module loaded')
 // ═══════════════════════════════════════════════════════════
 // 2. Import SSE + TTS services (no Alpine dependency)
 // ═══════════════════════════════════════════════════════════
-import { SSEService, sseService } from './services/sse.js'
+import { SSEService, sseService } from './services/sse.js?v=63'
 import { TTSService, ttsService } from './services/tts.js?v=45'
 window.sseService = sseService
 window.ttsService = ttsService
@@ -35,7 +35,7 @@ window.ttsService = ttsService
 // ═══════════════════════════════════════════════════════════
 // 3. Import utils (provides formatters, markdownUtils, helpers, api)
 // ═══════════════════════════════════════════════════════════
-import { helpers, formatters } from './utils.js'
+import { helpers, formatters } from './utils.js?v=61'
 window.helpers = helpers
 window.formatters = formatters
 
@@ -54,9 +54,12 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // ═══════════════════════════════════════════════════════════
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
-import { sidebar } from './components/sidebar.js?v=60'
-import { chatComponent } from './components/chat.js?v=60'
-import { settings } from './components/settings.js?v=60'
+import { sidebar } from './components/sidebar.js?v=63'
+import { chatComponent } from './components/chat.js?v=64'
+import { settings } from './components/settings.js?v=68'
+import { skillsPanel } from './components/skills.js?v=67'
+import { jobsModal } from './components/jobs.js?v=64'
+import { agentsPanel } from './components/agents_panel.js?v=64'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {
@@ -88,9 +91,11 @@ Alpine.data('chat', chatComponent)
 Alpine.data('settings', settings)
 Alpine.data('modalDocuments', createModal('documents', 'openDocuments', 'closeDocuments'))
 Alpine.data('modalSettings', createModal('settings', 'openSettings', 'closeSettings'))
-Alpine.data('modalAgents', createModal('agents', 'openAgents', 'closeAgents'))
 Alpine.data('modalNotes', createModal('notes', 'openNotes', 'closeNotes'))
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalAgents, modalNotes')
+Alpine.data('modalJobs', jobsModal)
+Alpine.data('agentsPanel', agentsPanel)
+Alpine.data('skillsPanel', skillsPanel)
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

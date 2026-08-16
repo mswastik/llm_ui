@@ -122,6 +122,74 @@ class Note(Base):
     message = relationship("Message")
 
 
+class MemoryEntry(Base):
+    """Persistent agent memory (agent platform, Phase 2).
+
+    scope: 'global' | 'agent:<id>' | 'conversation:<id>'
+    source: 'manual' (user/LLM explicit) | 'auto' (extracted by the app)
+    """
+    __tablename__ = "memory_entries"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    scope = Column(String, default="global", nullable=False)
+    content = Column(Text, nullable=False)
+    tags = Column(JSON, default=list)
+    source = Column(String, default="manual", nullable=False)
+    importance = Column(Float, default=0.5)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SkillRun(Base):
+    """Skill usage log (agent platform, Phase 4) — feeds the improvement loop."""
+    __tablename__ = "skill_runs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    skill_name = Column(String, nullable=False)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    success = Column(Integer, default=1)
+    user_correction = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class JobRun(Base):
+    """On-demand job execution record (agent platform, Phase 5).
+
+    A job is a skill with an input/output contract; run_job tracks one
+    execution here so the Jobs UI can show history and outputs.
+    """
+    __tablename__ = "job_runs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_name = Column(String, nullable=False)
+    params = Column(JSON, default=dict)
+    status = Column(String, default="running")  # running | completed | failed
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    output_path = Column(String, nullable=True)
+    conversation_id = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+
+
+class LLMProvider(Base):
+    """LLM provider (OpenAI-compatible endpoint) for multi-provider support.
+
+    Models are fetched from the provider's /v1/models endpoint when the
+    provider is added/refreshed and cached in the `models` JSON column.
+    """
+    __tablename__ = "llm_providers"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, unique=True, nullable=False)
+    base_url = Column(String, nullable=False)
+    api_key = Column(String, nullable=True)
+    models = Column(JSON, default=list)  # [{id, name, owned_by}]
+    enabled = Column(Integer, default=1)
+    is_default = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -131,6 +199,7 @@ class Agent(Base):
     
     # LLM Configuration
     model = Column(String(255), nullable=False)
+    provider_id = Column(String, nullable=True)  # LLMProvider id (multi-provider support)
     temperature = Column(Float, default=0.7)
     top_k = Column(Integer, default=40)
     max_tokens = Column(Integer, default=16048)
@@ -193,7 +262,19 @@ async def init_db():
     except OperationalError:
         pass
 
-    # ── Migration: add version/version_group columns to messages ────────
+    # ── Migration: add provider_id column to agents ────────────────────
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE agents ADD COLUMN provider_id VARCHAR"
+                )
+            )
+        print("[DB] Migrated agents: added provider_id column")
+    except OperationalError:
+        pass
+
+    # ── Migration: add version column to messages (if not present) ─────
     try:
         async with engine.begin() as conn:
             await conn.run_sync(

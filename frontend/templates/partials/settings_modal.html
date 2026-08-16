@@ -10,7 +10,7 @@
   class="modal-backdrop"
   @click.self="closeModal()"
 >
-  <div class="modal-content" style="max-width: 700px; width: 100%">
+  <div class="modal-content" style="width: 1100px; max-width: calc(100vw - 48px); height: min(86vh, 900px)">
     <!-- Header -->
     <div
       class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between"
@@ -35,11 +35,25 @@
           General
         </button>
         <button
-          @click="$store.ui.settingsTab = 'llm'"
+          @click="$store.ui.settingsTab = 'llm'; loadProviders()"
           class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
           :class="$store.ui.settingsTab === 'llm' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
         >
           LLM
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'agents'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'agents' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          Agents
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'skills'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'skills' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          Skills
         </button>
         <button
           @click="$store.ui.settingsTab = 'tts'"
@@ -47,6 +61,13 @@
           :class="$store.ui.settingsTab === 'tts' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
         >
           TTS
+        </button>
+        <button
+          @click="$store.ui.settingsTab = 'terminal'"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'terminal' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          Terminal
         </button>
         <button
           @click="$store.ui.settingsTab = 'mcp'"
@@ -62,24 +83,31 @@
         >
           Backup
         </button>
+        <button
+          @click="$store.ui.settingsTab = 'memory'; loadMemory()"
+          class="py-3 px-4 text-sm font-medium border-b-2 transition-colors"
+          :class="$store.ui.settingsTab === 'memory' ? 'border-[var(--accent-primary)] text-[var(--accent-primary)]' : 'border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        >
+          Memory
+        </button>
       </nav>
     </div>
 
     <!-- Body -->
-    <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 200px)">
+    <div class="p-6 overflow-y-auto flex-1 min-h-0">
       <div class="space-y-6">
         <!-- General Tab -->
         <div x-show="$store.ui.settingsTab === 'general'">
           <h3 class="font-semibold mb-4">General</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class="md:col-span-2 lg:col-span-3">
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >System Prompt</label
               >
               <textarea
                 x-model="$store.ui.settingsData.system_prompt"
-                rows="3"
+                rows="6"
                 class="input text-sm"
               ></textarea>
             </div>
@@ -116,7 +144,40 @@
                 class="input text-sm"
               />
             </div>
-            <div class="md:col-span-2">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Max Upload Size (bytes)</label
+              >
+              <input
+                type="number"
+                x-model.number="$store.ui.settingsData.max_upload_size"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Upload Directory</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.upload_dir"
+                class="input text-sm"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >CORS Origins (comma-separated)</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.cors_origins"
+                class="input text-sm"
+              />
+            </div>
+            <div class="md:col-span-2 lg:col-span-3">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -128,67 +189,84 @@
                 >
               </label>
             </div>
+            <div class="md:col-span-2 lg:col-span-3">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  x-model="$store.ui.settingsData.sqlalchemy_echo"
+                  class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                />
+                <span class="text-sm text-[var(--text-secondary)]"
+                  >SQLAlchemy Echo (verbose DB logging)</span
+                >
+              </label>
+            </div>
           </div>
         </div>
 
         <!-- LLM Tab -->
         <div x-show="$store.ui.settingsTab === 'llm'">
-          <h3 class="font-semibold mb-4">LLM Configuration</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >LLM Server URL</label
-              >
-              <input
-                type="text"
-                x-model="$store.ui.settingsData.llama_cpp_base_url"
-                class="input text-sm"
-              />
-            </div>
+          <h3 class="font-semibold mb-4">Default Model Settings</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Default Model</label
               >
-              <input
-                type="text"
+              <select
                 x-model="$store.ui.settingsData.llama_cpp_model"
                 class="input text-sm"
-              />
+              >
+                <option value="">(provider default)</option>
+                <template x-for="m in allModelOptions" :key="m.key">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
             </div>
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Query Model</label
               >
-              <input
-                type="text"
+              <select
                 x-model="$store.ui.settingsData.query_model"
                 class="input text-sm"
-              />
+              >
+                <option value="">(provider default)</option>
+                <template x-for="m in allModelOptions" :key="m.key">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
             </div>
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Embedding Model</label
               >
-              <input
-                type="text"
+              <select
                 x-model="$store.ui.settingsData.embedding_model"
                 class="input text-sm"
-              />
+              >
+                <option value="">(provider default)</option>
+                <template x-for="m in allModelOptions" :key="m.key">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
             </div>
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
                 >Reranking Model</label
               >
-              <input
-                type="text"
+              <select
                 x-model="$store.ui.settingsData.reranking_model"
                 class="input text-sm"
-              />
+              >
+                <option value="">(provider default)</option>
+                <template x-for="m in allModelOptions" :key="m.key">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
             </div>
             <div>
               <label
@@ -207,14 +285,93 @@
             <div>
               <label
                 class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Max Tokens</label
+                >Jobs Model</label
               >
-              <input
-                type="number"
-                x-model.number="$store.ui.settingsData.default_max_tokens"
+              <select
+                x-model="$store.ui.settingsData.jobs_model"
                 class="input text-sm"
-              />
+              >
+                <option value="">(auto-pick loaded model)</option>
+                <template x-for="m in allModelOptions" :key="m.key">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
             </div>
+          </div>
+          <p class="text-xs text-[var(--text-tertiary)] mt-3">
+            Options list every model on your configured providers (LLM Providers above).
+            Max tokens and the LLM server URL are managed per provider; chat uses
+            the provider's model defaults.
+          </p>
+        </div>
+
+        <!-- Providers section (merged into the LLM tab) -->
+        <div x-show="$store.ui.settingsTab === 'llm'">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold">LLM Providers</h3>
+            <button @click="startAddProvider()" class="btn btn-primary btn-sm">
+              <i class="ph ph-plus"></i> Add Provider
+            </button>
+          </div>
+          <p class="text-xs text-[var(--text-tertiary)] mb-4">
+            Providers are OpenAI-compatible endpoints. Models are fetched automatically from <code class="text-[var(--text-code)]">/v1/models</code> when a provider is added or refreshed.
+          </p>
+
+          <!-- Add form -->
+          <div x-show="showProviderForm" x-collapse class="mb-5 p-4 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)] space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Name</label>
+                <input type="text" x-model="providerForm.name" class="input text-sm" placeholder="e.g. OpenRouter" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Base URL</label>
+                <input type="text" x-model="providerForm.base_url" class="input text-sm" placeholder="https://openrouter.ai/api" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">API Key (optional)</label>
+                <input type="password" x-model="providerForm.api_key" class="input text-sm" placeholder="sk-…" />
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button @click="saveProvider()" class="btn btn-primary btn-sm" :disabled="providerBusy">
+                <i class="ph ph-lightning" :class="providerBusy ? 'ph-spinner animate-spin' : ''"></i>
+                <span x-text="providerBusy ? 'Fetching models…' : 'Add & Fetch Models'"></span>
+              </button>
+              <button @click="cancelProviderForm()" class="btn btn-secondary btn-sm">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Provider list -->
+          <div class="space-y-2">
+            <template x-for="p in providers" :key="p.id">
+              <div class="p-3 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)]">
+                <div class="flex items-center gap-2">
+                  <i class="ph ph-server text-[var(--accent-primary)]"></i>
+                  <span class="font-medium text-sm text-[var(--text-primary)]" x-text="p.name"></span>
+                  <span x-show="p.is_default" class="badge badge-primary text-[10px]">default</span>
+                  <span class="text-xs text-[var(--text-tertiary)] truncate ml-1" x-text="p.base_url"></span>
+                  <span class="text-[10px] text-[var(--text-tertiary)]" x-text="(p.models || []).length + ' models'"></span>
+                  <div class="ml-auto flex items-center gap-1.5">
+                    <button @click="refreshProviderModels(p)" class="btn btn-icon btn-ghost p-1.5" title="Refresh models">
+                      <i class="ph ph-arrows-clockwise text-sm"></i>
+                    </button>
+                    <button x-show="!p.is_default" @click="setDefaultProvider(p)" class="btn btn-secondary btn-xs" title="Make default">Set default</button>
+                    <button @click="deleteProvider(p)" class="btn btn-icon btn-ghost p-1.5 text-red-500" title="Delete">
+                      <i class="ph ph-trash text-sm"></i>
+                    </button>
+                  </div>
+                </div>
+                <template x-if="(p.models || []).length">
+                  <div class="flex flex-wrap gap-1 mt-2">
+                    <template x-for="m in p.models" :key="m.id">
+                      <span class="badge text-[10px]" x-text="m.id"></span>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <p x-show="providers.length === 0" class="text-xs text-[var(--text-tertiary)] py-4 text-center">No providers yet. Add one to fetch its models.</p>
           </div>
         </div>
 
@@ -343,6 +500,135 @@
               </label>
             </div>
           </div>
+
+          <!-- Speech-to-Text (STT) — voice input -->
+          <h3 class="font-semibold mb-3 mt-6">Speech-to-Text (voice input)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Engine</label
+              >
+              <select
+                x-model="$store.ui.settingsData.stt_engine"
+                class="input text-sm"
+              >
+                <option value="faster-whisper">faster-whisper (local)</option>
+                <option value="openai">OpenAI Whisper API</option>
+              </select>
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Model</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.stt_model"
+                class="input text-sm"
+                placeholder="tiny, base, small, medium, large-v3"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Language (optional, empty = auto-detect)</label
+              >
+              <input
+                type="text"
+                x-model="$store.ui.settingsData.stt_language"
+                class="input text-sm"
+                placeholder="e.g. en"
+              />
+            </div>
+            <div class="lg:col-span-3" x-show="$store.ui.settingsData.stt_engine === 'openai'">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >OpenAI API Key</label
+              >
+              <input
+                type="password"
+                x-model="$store.ui.settingsData.stt_openai_api_key"
+                class="input text-sm"
+                placeholder="sk-…"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal Tab (agent platform Phase 1) -->
+        <div x-show="$store.ui.settingsTab === 'terminal'">
+          <h3 class="font-semibold mb-4">Terminal (run_command)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Require approval for non-allowlisted commands</label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" x-model="$store.ui.settingsData.terminal_require_approval" class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]" />
+                <span class="text-sm text-[var(--text-secondary)]">Enabled</span>
+              </label>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Default timeout (seconds)</label>
+              <input type="number" x-model.number="$store.ui.settingsData.terminal_default_timeout" class="input text-sm" min="1" max="600" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Audit log path</label>
+              <input type="text" x-model="$store.ui.settingsData.terminal_audit_log" class="input text-sm" placeholder="./terminal_audit.jsonl" />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">Every command decision is appended here.</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Allowed directories (one per line)</label>
+              <textarea
+                class="input text-sm font-mono"
+                rows="7"
+                :value="($store.ui.settingsData.terminal_allowed_dirs || []).join('\n')"
+                @change="$store.ui.settingsData.terminal_allowed_dirs = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"
+                placeholder="./\n./uploads\n./outputs"
+              ></textarea>
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">Relative paths resolve from the project root. Commands outside these are blocked.</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Allowed commands (one per line)</label>
+              <textarea
+                class="input text-sm font-mono"
+                rows="12"
+                :value="($store.ui.settingsData.terminal_allowed_commands || []).join('\n')"
+                @change="$store.ui.settingsData.terminal_allowed_commands = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"
+                placeholder="python3&#10;node&#10;git&#10;curl"
+              ></textarea>
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">Binary names. Anything else pauses for your approval.</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Extra blocked patterns (regex, one per line)</label>
+              <textarea
+                class="input text-sm font-mono"
+                rows="7"
+                :value="($store.ui.settingsData.terminal_blocked_patterns || []).join('\n')"
+                @change="$store.ui.settingsData.terminal_blocked_patterns = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"
+                placeholder="rm -rf /home&#10;openssl enc"
+              ></textarea>
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">Merged with hard-coded patterns (below) that can never be disabled.</p>
+            </div>
+          </div>
+
+          <!-- Hard-coded blocklist (read-only) -->
+          <div class="mt-5">
+            <div class="flex items-center gap-2 mb-1">
+              <label class="block text-xs font-medium text-[var(--text-secondary)]">Hard-coded blocked patterns (always enforced)</label>
+              <span class="badge badge-error text-[10px]">cannot be disabled</span>
+            </div>
+            <div class="rounded-lg bg-[var(--bg-code)] border border-[var(--border-primary)] p-3 max-h-40 overflow-y-auto">
+              <template x-if="blockedPatterns.length === 0">
+                <p class="text-xs text-[var(--text-tertiary)]">Loading…</p>
+              </template>
+              <template x-for="(pat, i) in blockedPatterns" :key="i">
+                <code class="block text-[11px] text-[var(--text-code)] py-0.5 font-mono" x-text="pat"></code>
+              </template>
+            </div>
+            <p class="text-xs text-[var(--text-tertiary)] mt-1">Patterns like <code class="text-[var(--text-code)]">rm -rf /</code>, <code class="text-[var(--text-code)]">sudo</code>, <code class="text-[var(--text-code)]">curl | sh</code>, <code class="text-[var(--text-code)]">mkfs</code> and fork bombs are blocked before any allowlist/approval check.</p>
+          </div>
         </div>
 
         <!-- Backup Tab -->
@@ -407,10 +693,72 @@
           </template>
         </div>
 
+        <!-- Memory Tab (agent platform Phase 2) -->
+        <div x-show="$store.ui.settingsTab === 'memory'">
+          <h3 class="font-semibold mb-4">Agent Memory</h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Auto-extract facts (every N turns)</label>
+              <input type="number" x-model.number="$store.ui.settingsData.memory_auto_extract_interval" class="input text-sm" min="0" max="20" />
+              <p class="text-xs text-[var(--text-tertiary)] mt-1">0 = disabled. After every N assistant replies, the app extracts durable facts into memory.</p>
+            </div>
+          </div>
+
+          <div class="flex gap-2 mb-4">
+            <input type="text" x-model="newMemoryContent" @keydown.enter="addMemory()" class="input text-sm flex-1" placeholder="Add a memory entry… (e.g. 'User prefers X')" />
+            <button @click="addMemory()" class="btn btn-primary btn-sm">Add</button>
+          </div>
+
+          <div class="flex gap-2 mb-3">
+            <button @click="memoryFilter = 'all'" class="text-xs px-2.5 py-1 rounded transition-colors" :class="memoryFilter === 'all' ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'">All</button>
+            <button @click="memoryFilter = 'global'" class="text-xs px-2.5 py-1 rounded transition-colors" :class="memoryFilter === 'global' ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'">Global</button>
+          </div>
+
+          <div class="space-y-2 max-h-96 overflow-y-auto">
+            <template x-for="entry in memoryEntries" :key="entry.id">
+              <div x-show="memoryFilter === 'all' || entry.scope === memoryFilter" class="p-2.5 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)]">
+                <template x-if="editingMemoryId !== entry.id">
+                  <div>
+                    <p class="text-sm text-[var(--text-primary)]" x-text="entry.content"></p>
+                    <div class="flex items-center gap-2 mt-1.5">
+                      <span class="badge badge-primary text-[10px]" x-text="entry.scope"></span>
+                      <span class="badge text-[10px]" :class="entry.source === 'auto' ? 'badge-warning' : 'badge-success'" x-text="entry.source"></span>
+                      <span class="text-[10px] text-[var(--text-tertiary)] ml-auto" x-text="entry.updated_at ? new Date(entry.updated_at).toLocaleString() : ''"></span>
+                      <button @click="startEditMemory(entry)" class="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"><i class="ph ph-pencil-simple"></i></button>
+                      <button @click="deleteMemory(entry.id)" class="text-xs text-red-500 hover:text-red-400"><i class="ph ph-trash"></i></button>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="editingMemoryId === entry.id">
+                  <div>
+                    <input type="text" x-model="editMemoryContent" class="input text-sm w-full" @keydown.enter="saveEditMemory(entry.id)" />
+                    <div class="flex gap-2 mt-1.5">
+                      <button @click="saveEditMemory(entry.id)" class="btn btn-primary btn-sm">Save</button>
+                      <button @click="editingMemoryId = null" class="btn btn-secondary btn-sm">Cancel</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <p x-show="memoryEntries.length === 0" class="text-xs text-[var(--text-tertiary)] py-4 text-center">No memory entries yet.</p>
+          </div>
+        </div>
+
         <!-- MCP Tab -->
         <div
           x-show="$store.ui.settingsTab === 'mcp'"
         >
+          <div class="flex items-center gap-2 mb-4">
+            <button @click="mcpRegistryView = 'configured'" class="btn btn-sm" :class="mcpRegistryView === 'configured' ? 'btn-primary' : 'btn-secondary'">
+              <i class="ph ph-list"></i> Configured
+            </button>
+            <button @click="mcpRegistryView = 'registry'; searchMcpRegistry()" class="btn btn-sm" :class="mcpRegistryView === 'registry' ? 'btn-primary' : 'btn-secondary'">
+              <i class="ph ph-cloud-arrow-down"></i> Browse Registry
+            </button>
+          </div>
+
+          <div x-show="mcpRegistryView === 'configured'">
           <h3 class="font-semibold mb-4">Add MCP Server</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
@@ -749,6 +1097,65 @@
               </div>
             </div>
           </div>
+          </div>
+
+          <!-- MCP Registry browse view -->
+          <div x-show="mcpRegistryView === 'registry'" x-cloak class="space-y-3">
+            <div class="flex gap-2">
+              <input
+                type="text"
+                x-model="mcpRegistryQuery"
+                @keydown.enter="searchMcpRegistry()"
+                class="input text-sm flex-1"
+                placeholder="Search Smithery MCP registry… (blank = most used)"
+              />
+              <button @click="searchMcpRegistry()" class="btn btn-primary btn-sm" :disabled="mcpRegistryLoading">
+                <i class="ph ph-magnifying-glass" :class="mcpRegistryLoading ? 'ph-spinner animate-spin' : ''"></i>
+                <span x-text="mcpRegistryLoading ? 'Searching…' : 'Search'"></span>
+              </button>
+            </div>
+            <p x-show="mcpRegistryError" class="text-xs text-[var(--text-error)]" x-text="mcpRegistryError"></p>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <template x-for="srv in mcpRegistryResults" :key="srv.qualified_name">
+                <div class="card p-3 flex flex-col">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="font-medium text-sm text-[var(--text-primary)] truncate" x-text="srv.name"></div>
+                      <div class="text-[10px] text-[var(--text-tertiary)] truncate" x-text="srv.qualified_name"></div>
+                    </div>
+                    <span x-show="srv.verified" class="badge badge-primary text-[10px] whitespace-nowrap" title="Verified publisher">verified</span>
+                  </div>
+                  <p class="text-xs text-[var(--text-secondary)] mt-1.5 line-clamp-2 flex-1" x-text="srv.description || 'No description available'"></p>
+                  <div class="flex items-center gap-3 mt-2 text-[10px] text-[var(--text-tertiary)]">
+                    <span class="flex items-center gap-0.5"><i class="ph ph-users"></i> <span x-text="srv.use_count.toLocaleString()"></span></span>
+                    <span class="flex items-center gap-0.5" x-show="srv.stars != null"><i class="ph ph-star text-[var(--text-warning)]"></i> <span x-text="Number(srv.stars).toLocaleString()"></span></span>
+                    <a x-show="srv.repo_url" :href="srv.repo_url" target="_blank" class="flex items-center gap-0.5 ml-auto hover:text-[var(--text-link)]" title="GitHub repository">
+                      <i class="ph ph-github-logo"></i> GitHub
+                    </a>
+                    <button @click="installMcpFromRegistry(srv)" class="btn btn-primary btn-xs whitespace-nowrap" :disabled="mcpRegistryInstalling === srv.qualified_name">
+                      <i class="ph ph-download" :class="mcpRegistryInstalling === srv.qualified_name ? 'ph-spinner animate-spin' : ''"></i>
+                      <span x-text="mcpRegistryInstalling === srv.qualified_name ? 'Installing…' : 'Install'"></span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <p x-show="!mcpRegistryLoading && mcpRegistryResults.length === 0 && !mcpRegistryError" class="text-xs text-[var(--text-tertiary)] py-4 text-center">
+              Search the registry to find installable MCP servers.
+            </p>
+          </div>
+        </div>
+
+        <!-- Agents Tab (persona configuration, moved from sidebar modal) -->
+        <div x-show="$store.ui.settingsTab === 'agents'">
+          <h3 class="font-semibold mb-4">AI Agents</h3>
+          {% include "partials/agents_panel.html" %}
+        </div>
+
+        <!-- Skills Tab (capability library, moved from sidebar modal) -->
+        <div x-show="$store.ui.settingsTab === 'skills'">
+          <h3 class="font-semibold mb-4">Skills</h3>
+          {% include "partials/skills_panel.html" %}
         </div>
       </div>
     </div>

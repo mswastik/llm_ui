@@ -23,7 +23,7 @@
 
   <!-- Messages Container -->
   <div id="messages-container" class="flex-1 overflow-y-auto">
-    <div class="mx-auto w-full px-4">
+    <div class="mx-auto w-full px-3">
       <!-- Conversation Title (inline, subtle) -->
       <div class="pt-4 pb-1">
         <input
@@ -32,6 +32,48 @@
           class="w-full text-center text-[0.8rem] font-medium text-[var(--text-tertiary)] bg-transparent border-none outline-none hover:text-[var(--text-secondary)] focus:text-[var(--text-primary)] transition-colors"
           placeholder="Untitled conversation"
         />
+      </div>
+
+      <!-- Context transparency panel (Phase 6) -->
+      <div class="flex justify-center pb-1">
+        <button
+          @click="contextOpen = !contextOpen"
+          class="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full transition-colors"
+          :class="contextOpen ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+          title="What the model sees this turn"
+        >
+          <i class="ph ph-eye text-xs"></i>
+          <span x-text="contextOpen ? 'Hide context' : 'What the model sees'"></span>
+        </button>
+      </div>
+      <div x-show="contextOpen" x-cloak x-collapse class="mb-2">
+        <div class="rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)] p-3 space-y-2 text-xs">
+          <template x-if="!contextInfo">
+            <p class="text-[var(--text-tertiary)]">No context info yet — send a message first.</p>
+          </template>
+          <template x-if="contextInfo">
+            <div class="space-y-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium text-[var(--text-secondary)]">Model:</span>
+                <span class="text-[var(--text-primary)]" x-text="contextInfo.model"></span>
+                <span class="ml-auto text-[var(--text-tertiary)]">
+                  <span x-text="contextInfo.message_count"></span> messages · <span x-text="contextInfo.tool_count"></span> tools
+                </span>
+              </div>
+              <template x-if="contextInfo.tools?.length">
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="t in contextInfo.tools" :key="t">
+                    <span class="badge badge-primary text-[10px]" x-text="t"></span>
+                  </template>
+                </div>
+              </template>
+              <div>
+                <div class="font-medium text-[var(--text-secondary)] mb-1">System prompt (what the model sees)</div>
+                <pre class="bg-[var(--bg-code)] rounded-md p-2 text-[11px] text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto" x-text="contextInfo.system_prompt"></pre>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- Messages -->
@@ -240,6 +282,12 @@
                                   >Running</span
                                 >
                               </template>
+                              <template x-if="block.status === 'approval'">
+                                <span
+                                  class="badge badge-warning text-xs animate-pulse"
+                                  >Needs approval</span
+                                >
+                              </template>
                             </div>
                             <div
                               x-show="isExpanded('tool-' + message.id + '-' + blockIdx)"
@@ -260,6 +308,50 @@
                                       class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto"
                                       x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"
                                     ></pre>
+                                  </div>
+                                </template>
+
+                                <!-- Command Approval (run_command) -->
+                                <template x-if="block.status === 'approval'">
+                                  <div class="space-y-2">
+                                    <div
+                                      class="text-xs text-[var(--text-tertiary)]"
+                                    >
+                                      Command
+                                    </div>
+                                    <pre
+                                      class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap"
+                                      x-text="block.command"
+                                    ></pre>
+                                    <template x-if="block.working_dir">
+                                      <div
+                                        class="text-xs text-[var(--text-tertiary)]"
+                                      >
+                                        Working dir: <span x-text="block.working_dir"></span>
+                                      </div>
+                                    </template>
+                                    <template x-if="block.approval_reason">
+                                      <div
+                                        class="text-xs text-[var(--text-secondary)]"
+                                        x-text="block.approval_reason"
+                                      ></div>
+                                    </template>
+                                    <div class="flex gap-2">
+                                      <button
+                                        type="button"
+                                        @click="respondApproval(block, true)"
+                                        class="btn btn-primary btn-sm"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        @click="respondApproval(block, false)"
+                                        class="btn btn-secondary btn-sm"
+                                      >
+                                        Deny
+                                      </button>
+                                    </div>
                                   </div>
                                 </template>
 
@@ -777,18 +869,26 @@
                 <span class="max-w-[130px] truncate" x-text="selectedModelName"></span>
                 <i class="ph ph-caret-down text-xs"></i>
               </button>
-              <div x-show="open" x-cloak class="dropdown-panel min-w-[220px]">
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[240px]">
                 <div class="max-h-[40vh] overflow-y-auto py-1">
-                  <template x-for="model in availableModels" :key="model.id">
-                    <button
-                      type="button"
-                      @click="selectModel(model.id)"
-                      class="dropdown-item"
-                      :class="selectedModel === model.id ? 'dropdown-item-active' : ''"
-                    >
-                      <i class="ph ph-check text-xs" x-show="selectedModel === model.id"></i>
-                      <span class="truncate" x-text="model.name || model.id"></span>
-                    </button>
+                  <template x-for="prov in availableProviders" :key="prov.id">
+                    <div>
+                      <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] flex items-center gap-1.5">
+                        <span class="truncate" x-text="prov.name"></span>
+                        <span x-show="prov.is_default" class="badge badge-primary text-[9px]">default</span>
+                      </div>
+                      <template x-for="model in modelsByProvider(prov.id)" :key="model.id">
+                        <button
+                          type="button"
+                          @click="selectModel(model.id, prov.id)"
+                          class="dropdown-item"
+                          :class="selectedModel === model.id && selectedProviderId === prov.id ? 'dropdown-item-active' : ''"
+                        >
+                          <i class="ph ph-check text-xs" x-show="selectedModel === model.id && selectedProviderId === prov.id"></i>
+                          <span class="truncate" x-text="model.name || model.id"></span>
+                        </button>
+                      </template>
+                    </div>
                   </template>
                   <div x-show="availableModels.length === 0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">
                     No models available

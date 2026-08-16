@@ -44,7 +44,9 @@ class LLMClient:
         max_retries: int = 3,
         retry_delay: float = 2.0,
         chat_template_kwargs: dict = None,
-        tool_choice: str = None
+        tool_choice: str = None,
+        base_url: str = None,
+        api_key: str = None
     ) -> AsyncGenerator[Dict, None]:
         """
         Stream chat completion from llama.cpp with retry logic.
@@ -97,7 +99,10 @@ class LLMClient:
 
             try:
                 # Get current base URL from settings (allows dynamic updates)
-                current_base_url = self._get_current_base_url()
+                current_base_url = base_url or self._get_current_base_url()
+                request_headers = {"Content-Type": "application/json"}
+                if api_key:
+                    request_headers["Authorization"] = f"Bearer {api_key}"
                 
                 # Increased timeout for long-running requests with web search context
                 timeout = aiohttp.ClientTimeout(total=1200, sock_connect=100, sock_read=420)
@@ -106,7 +111,7 @@ class LLMClient:
                     async with session.post(
                         f"{current_base_url}/v1/chat/completions",
                         json=payload,
-                        headers={"Content-Type": "application/json"},
+                        headers=request_headers,
                         timeout=360
                     ) as response:
                         if response.status == 500:
@@ -165,8 +170,9 @@ class LLMClient:
 
                                     try:
                                         chunk_data = json.loads(data)
-                                        delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-                                        finish_reason = chunk_data.get("choices", [{}])[0].get("finish_reason")
+                                        choices = chunk_data.get("choices") or [{}]
+                                        delta = choices[0].get("delta", {})
+                                        finish_reason = choices[0].get("finish_reason")
 
                                         # Handle thinking content (for thinking models like DeepSeek)
                                         # Check multiple field names that llama.cpp might use

@@ -11,10 +11,42 @@ from typing import Dict, Any, AsyncGenerator, List
 
 from tools.rag_service import RAGService, RAG_TOOL_DEFINITION
 from tools.tts_service import TTSService, TTSConfig, TTS_TOOL_DEFINITION
+from tools.terminal_tool import TerminalTool, TERMINAL_TOOL_DEFINITION
+from tools.memory_tool import MemoryTool, MEMORY_TOOL_DEFINITIONS
+from tools.admin_tool import AdminTool, ADMIN_TOOL_DEFINITIONS
+from tools.skills_tool import (
+    SKILL_TOOL_DEFINITIONS, get_skill, write_skill, skill_index,
+    MAX_SKILL_CONTENT_CHARS, list_skills,
+)
+from database.models import get_db
+from database.job_crud import create_job_run
 from tools.base import current_document_ids
 from settings import settings_manager
 
 logger = logging.getLogger(__name__)
+
+
+RUN_JOB_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "run_job",
+        "description": (
+            "Run an on-demand job. A job is a skill with an input/output "
+            "contract (e.g. 'news-fetch'). Use when the user asks to run a "
+            "job. Loads the job's instructions, starts a tracked job run, "
+            "then execute the instructions using other tools and deliver "
+            "the output."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job": {"type": "string", "description": "Job (skill) name to run"},
+                "params": {"type": "object", "description": "Job parameters (optional)"}
+            },
+            "required": ["job"]
+        }
+    }
+}
 
 
 class ToolExecutor:
@@ -25,6 +57,12 @@ class ToolExecutor:
         self.rag_service = RAGService()
         # Create TTS service from saved settings (engine, voice, kokoro device, ...)
         self.tts_service = TTSService(TTSConfig.from_settings(settings_manager.get_settings()))
+        # Agent terminal tool (run_command) with layered safety
+        self.terminal_tool = TerminalTool()
+        # Agent memory tools (memory_write/read/search/delete)
+        self.memory_tool = MemoryTool(rag_service=self.rag_service)
+        # App-administration tools (agents, MCP servers, providers, skill registry)
+        self.admin_tool = AdminTool(mcp_manager=mcp_manager)
 
     def get_tool_definitions(
         self,
@@ -46,6 +84,19 @@ class ToolExecutor:
             tools.append(rag_def)
         if TTS_TOOL_DEFINITION.get("function", {}).get("name") not in exclude_tools:
             tools.append(TTS_TOOL_DEFINITION)
+        if TERMINAL_TOOL_DEFINITION.get("function", {}).get("name") not in exclude_tools:
+            tools.append(TERMINAL_TOOL_DEFINITION)
+        for memory_def in MEMORY_TOOL_DEFINITIONS:
+            if memory_def.get("function", {}).get("name") not in exclude_tools:
+                tools.append(memory_def)
+        for skill_def in SKILL_TOOL_DEFINITIONS:
+            if skill_def.get("function", {}).get("name") not in exclude_tools:
+                tools.append(skill_def)
+        for admin_def in ADMIN_TOOL_DEFINITIONS:
+            if admin_def.get("function", {}).get("name") not in exclude_tools:
+                tools.append(admin_def)
+        if RUN_JOB_DEFINITION.get("function", {}).get("name") not in exclude_tools:
+            tools.append(RUN_JOB_DEFINITION)
 
         if mcp_tools:
             for tool in mcp_tools:
@@ -61,7 +112,7 @@ class ToolExecutor:
 
         return tools
 
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], request_id: str) -> AsyncGenerator[Dict, None]:
+    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], request_id: str, call_key: str = None, conversation_id: str = None) -> AsyncGenerator[Dict, None]:
         """Execute a tool and yield progress updates."""
         try:
             if tool_name == "query_documents":
@@ -70,6 +121,50 @@ class ToolExecutor:
             elif tool_name == "generate_speech":
                 async for p in self._generate_speech_with_progress(arguments, request_id):
                     yield p
+            elif tool_name == "run_command":
+                async for p in self.terminal_tool.execute(arguments, request_id, call_key):
+                    yield p
+            elif tool_name in ("memory_write", "memory_read", "memory_search", "memory_delete"):
+                async for p in self.memory_tool.execute(tool_name, arguments):
+                    yield p
+            elif tool_name == "run_job":
+                async for p in self._run_job(arguments, conversation_id):
+                    yield p
+            elif tool_name in (
+                "list_agents", "create_agent", "delete_agent",
+                "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
+                "list_providers", "add_provider",
+                "search_skills", "install_skill",
+            ):
+                async for p in self.admin_tool.execute(tool_name, arguments):
+                    yield p
+            elif tool_name == "load_skill":
+                name = str(arguments.get("name", "")).strip()
+                skill = get_skill(name)
+                if not skill:
+                    yield {"type": "tool_error", "tool": tool_name, "error": f"Skill '{name}' not found"}
+                else:
+                    result = {
+                        "name": skill["name"],
+                        "description": skill["description"],
+                        "instructions": skill["body"][:MAX_SKILL_CONTENT_CHARS],
+                        "files": skill["manifest"],
+                    }
+                    yield {"type": "tool_progress", "tool": tool_name, "status": f"Loaded skill: {skill['name']}",
+                           "progress": 100, "result": result}
+            elif tool_name == "create_skill":
+                name = str(arguments.get("name", "")).strip()
+                description = str(arguments.get("description", "")).strip()
+                instructions = str(arguments.get("instructions", "")).strip()
+                if not name or not instructions:
+                    yield {"type": "tool_error", "tool": tool_name, "error": "name and instructions are required"}
+                else:
+                    skill = write_skill(name, description or name, instructions)
+                    yield {"type": "tool_progress", "tool": tool_name,
+                           "status": f"Created skill: {skill['name']} (now in the skills index)",
+                           "progress": 100,
+                           "result": {"name": skill["name"], "description": skill["description"],
+                                      "skill_available": True}}
             else:
                 # MCP tool execution
                 yield {"type": "tool_progress", "tool": tool_name, "status": f"Starting {tool_name}...", "progress": 0}
@@ -149,6 +244,41 @@ class ToolExecutor:
         result = await self.tts_service.generate_speech(text=text, voice=voice)
 
         yield {"type": "tool_progress", "tool": "generate_speech", "status": "Speech generated", "progress": 100, "result": result}
+
+    # --- Job execution (Phase 5) ---
+
+    async def _run_job(self, arguments: Dict[str, Any], conversation_id: str = None) -> AsyncGenerator[Dict, None]:
+        job_name = str(arguments.get("job") or arguments.get("name") or "").strip()
+        params = arguments.get("params") or {}
+        if not job_name:
+            yield {"type": "tool_error", "tool": "run_job", "error": "Missing 'job' name"}
+            return
+        skill = get_skill(job_name)
+        if not skill:
+            available = ", ".join(s["name"] for s in list_skills()) or "none"
+            yield {"type": "tool_error", "tool": "run_job",
+                   "error": f"Job/skill '{job_name}' not found. Available jobs: {available}"}
+            return
+        try:
+            async with get_db() as db:
+                run = await create_job_run(db, job_name, params=params, conversation_id=conversation_id)
+        except Exception as e:
+            print(f"[JOBS] run record failed: {e}")
+            run = {"id": "untracked"}
+        yield {
+            "type": "tool_progress",
+            "tool": "run_job",
+            "status": f"Job '{job_name}' started (run {str(run['id'])[:8]})",
+            "progress": 25,
+            "result": {
+                "run_id": run["id"],
+                "job": job_name,
+                "description": skill["description"],
+                "instructions": skill["body"][:MAX_SKILL_CONTENT_CHARS],
+                "params": params,
+                "note": "Execute the instructions now using the available tools, then deliver the output.",
+            },
+        }
 
     async def process_document_for_rag(self, document_id: str, filepath: str, file_type: str, progress_callback=None) -> Dict:
         return await self.rag_service.process_document(document_id=document_id, filepath=filepath, file_type=file_type, progress_callback=progress_callback)

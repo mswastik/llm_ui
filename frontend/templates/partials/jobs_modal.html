@@ -1,0 +1,83 @@
+<!-- Jobs Modal (agent platform Phase 5) -->
+<div
+  x-data="modalJobs"
+  x-show="open"
+  x-cloak
+  @open-jobs.window="open = true; load()"
+  @keydown.escape.window="closeModal()"
+  class="modal-backdrop"
+  @click.self="closeModal()"
+>
+  <div class="modal-content max-w-3xl">
+    <!-- Header -->
+    <div class="px-6 py-4 border-b flex items-center justify-between">
+      <h2 class="text-lg font-semibold">Jobs</h2>
+      <button @click="closeModal()" class="btn btn-icon btn-ghost">
+        <i class="ph ph-x text-lg"></i>
+      </button>
+    </div>
+
+    <!-- Body -->
+    <div class="p-6 overflow-y-auto max-h-[70vh]">
+      <p class="text-xs text-[var(--text-tertiary)] mb-4">
+        Jobs are skills with an input/output contract. Runs execute while the
+        app is running and write their output to <code class="text-[var(--text-code)]">outputs/jobs/</code>.
+      </p>
+
+      <!-- Run form -->
+      <div class="p-4 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)] space-y-3 mb-5">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Job</label>
+            <select x-model="selectedJob" class="input text-sm w-full">
+              <option value="">— select a job —</option>
+              <template x-for="job in jobs" :key="job.name">
+                <option :value="job.name" x-text="job.name + (job.description ? ' — ' + job.description : '')"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Params (JSON)</label>
+            <textarea x-model="paramsText" rows="2" class="input text-sm w-full font-mono" placeholder='{ "topic": "AI" }'></textarea>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button @click="runJob()" class="btn btn-primary btn-sm" :disabled="running || !selectedJob">
+            <i class="ph ph-play" :class="running ? 'ph-spinner animate-spin' : ''"></i>
+            <span x-text="running ? 'Running…' : 'Run Job'"></span>
+          </button>
+          <template x-if="lastRun">
+            <span class="text-xs" :class="lastRun.status === 'completed' ? 'text-[var(--text-success)]' : 'text-[var(--text-error)]'">
+              <span x-text="lastRun.status"></span>
+              <template x-if="lastRun.output_path">
+                · <a :href="outputUrl(lastRun)" target="_blank" class="underline text-[var(--text-link)]">view output</a>
+              </template>
+            </span>
+          </template>
+        </div>
+      </div>
+
+      <!-- History -->
+      <h4 class="text-sm font-medium mb-2">Run History</h4>
+      <div class="space-y-2">
+        <template x-for="run in runs" :key="run.id">
+          <div class="p-3 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-primary)] flex items-center gap-3">
+            <span class="badge text-[10px]" :class="statusBadge(run.status)" x-text="run.status"></span>
+            <span class="font-medium text-sm text-[var(--text-primary)]" x-text="run.job_name"></span>
+            <span class="text-xs text-[var(--text-tertiary)] hidden md:inline" x-text="run.started_at ? new Date(run.started_at).toLocaleString() : ''"></span>
+            <span class="text-[10px] text-[var(--text-tertiary)] truncate max-w-[180px] hidden lg:inline" x-text="JSON.stringify(run.params || {})"></span>
+            <div class="ml-auto flex items-center gap-2">
+              <template x-if="run.output_path">
+                <a :href="outputUrl(run)" target="_blank" class="text-xs text-[var(--text-link)] hover:underline">output</a>
+              </template>
+              <button @click="rerun(run)" class="btn btn-secondary btn-xs" title="Re-run with same params">
+                <i class="ph ph-arrow-clockwise"></i> Re-run
+              </button>
+            </div>
+          </div>
+        </template>
+        <p x-show="runs.length === 0" class="text-xs text-[var(--text-tertiary)] py-4 text-center">No job runs yet.</p>
+      </div>
+    </div>
+  </div>
+</div>

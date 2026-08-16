@@ -13,7 +13,7 @@ from typing import AsyncGenerator, Dict, List, Optional
 
 from tools.base import current_document_ids
 
-from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR
+from settings import APP_HOST, APP_PORT, DEBUG, MAX_UPLOAD_SIZE, UPLOAD_DIR, OUTPUTS_DIR
 from database.models import init_db, get_db, shutdown_db
 from database.crud import (
     create_conversation, get_conversation, get_all_conversations,
@@ -38,10 +38,38 @@ from backend.database.backup import backup_scheduler
 # Initialize MCP client manager
 mcp_manager = MCPClientManager()
 
+
+async def _bootstrap_default_provider():
+    """On first run, seed a default LLM provider from the legacy settings
+    (llama_cpp_base_url) so existing installs keep working unchanged."""
+    try:
+        from database.provider_crud import list_providers, create_provider
+        from tools.provider_service import fetch_models
+        async with get_db() as db:
+            providers = await list_providers(db)
+            if providers:
+                return
+            base_url = settings_manager.get_settings().get("llama_cpp_base_url", "http://localhost:8080")
+            try:
+                models = await fetch_models(base_url, None, timeout=15)
+                print(f"[PROVIDER] bootstrapped default provider with {len(models)} models")
+            except Exception as e:
+                models = []
+                print(f"[PROVIDER] bootstrap fetch failed (models will be empty): {e}")
+            await create_provider(
+                db, "llama.cpp", base_url.rstrip("/"), api_key=None,
+                models=models, is_default=1, enabled=1
+            )
+            await db.commit()
+    except Exception as e:
+        print(f"[PROVIDER] bootstrap failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
+    await _bootstrap_default_provider()
     await mcp_manager.initialize()
     backup_scheduler.start()
     yield
@@ -57,6 +85,8 @@ app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 # Mount uploads directory so uploaded files are publicly accessible
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+# Mount outputs directory (agent platform: job outputs, generated files)
+app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 templates = Jinja2Templates(directory="frontend/templates")
 
 # Initialize components
@@ -154,7 +184,8 @@ async def send_message(conversation_id: str, request: Request):
             "status": "processing",
             "enable_rag": enable_rag,
             "document_ids": document_ids,
-            "files": files
+            "files": files,
+            "provider_id": data.get("provider_id")
         }
 
 
@@ -165,7 +196,10 @@ async def _generate_title_with_model(
     assistant_message: str,
     llm_client,
     tools: list = None,
-    model: str = None
+    model: str = None,
+    base_url: str = None,
+    api_key: str = None,
+    thinking_content: str = None
 ) -> str:
     """
     Generate a title by appending to the existing conversation messages.
@@ -175,7 +209,10 @@ async def _generate_title_with_model(
     original is untouched and future requests can still reuse the KV cache.
     """
     title_messages = list(llm_messages)
-    title_messages.append({"role": "assistant", "content": assistant_message})
+    title_assistant = {"role": "assistant", "content": assistant_message}
+    if thinking_content:
+        title_assistant["reasoning_content"] = thinking_content
+    title_messages.append(title_assistant)
     title_messages.append({"role": "user", "content": "Generate a title (3-6 words) for this conversation. No reasoning. Just output the title."})
 
     title = ""
@@ -187,7 +224,9 @@ async def _generate_title_with_model(
             temperature=0.0,
             max_tokens=1024,
             tools=tools,
-            tool_choice="none"
+            tool_choice="none",
+            base_url=base_url,
+            api_key=api_key
         ):
             chunk_type = chunk.get("type")
             if chunk_type == "content":
@@ -215,6 +254,155 @@ async def _generate_title_with_model(
         return ""
     title = ' '.join(words[:6]).strip().rstrip('.,;:!?\\-"\'')
     return title[:60]
+
+
+async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client, model=None,
+                                           base_url=None, api_key=None):
+    """Self-improvement loop (Phase 4): propose a skill draft after a
+    multi-tool task.
+
+    Runs on the same cadence as memory extraction (every N assistant turns),
+    only for turns that used tools. Output is always a DRAFT under
+    skills/_drafts/ — the user accepts or rejects it in the Skills modal.
+    Never writes live skills silently.
+    """
+    try:
+        from settings import settings_manager
+        interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
+        if interval <= 0:
+            return
+        msgs = await get_conversation_messages(db, conversation_id)
+        assistant_count = len([m for m in msgs if m["role"] == "assistant"])
+        if assistant_count % interval != 0:
+            return
+        last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
+        last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
+        if not last_user or not last_assistant:
+            return
+        # Only reflect when tools were used in the last assistant message.
+        last_msg = msgs[-1]
+        blocks = (last_msg.get("metadata") or {}).get("blocks") or []
+        tool_names = [b.get("name") for b in blocks if b.get("type") == "tool_call"]
+        if not tool_names:
+            return
+        prompt = (
+            "You are a skill-builder for an AI assistant. Decide whether this task is worth "
+            "turning into a reusable skill.\n\n"
+            f"USER: {last_user[:1500]}\n\nASSISTANT: {last_assistant[:1500]}\n\n"
+            f"TOOLS USED: {', '.join(tool_names[:10])}\n\n"
+            "Rules:\n"
+            "- CREATE a skill when the task was a repeatable, multi-step procedure "
+            "(at least 2 concrete steps).\n"
+            "- IMPROVE an existing skill only when load_skill was used and the run "
+            "seems to have gone wrong or could clearly be better.\n"
+            "- Otherwise output none.\n"
+            'Output ONLY a JSON object: {"action": "create"|"improve"|"none", '
+            '"name": "short-slug", "description": "one line", '
+            '"instructions": "numbered steps", "reason": "short justification"}'
+        )
+        raw = ""
+        async for chunk in llm_client.stream_chat(
+            [{"role": "user", "content": prompt}],
+            model=model, temperature=0.0, max_tokens=700, tools=None,
+            base_url=base_url, api_key=api_key
+        ):
+            if chunk.get("type") == "content":
+                raw += chunk.get("content", "")
+        import re as _re
+        import json as _json
+        m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+        if not m:
+            print("[SKILLS] reflection: no JSON in model output")
+            return
+        try:
+            decision = _json.loads(m.group(0))
+        except _json.JSONDecodeError as e:
+            print(f"[SKILLS] reflection: unparseable JSON: {e}")
+            return
+        action = str(decision.get("action") or "none").strip().lower()
+        if action not in ("create", "improve"):
+            print(f"[SKILLS] reflection: action={action} — no draft")
+            return
+        name = str(decision.get("name") or "").strip()
+        description = str(decision.get("description") or "").strip()
+        instructions = str(decision.get("instructions") or "").strip()
+        reason = str(decision.get("reason") or "").strip()
+        if not name or not instructions:
+            print("[SKILLS] reflection: missing name/instructions")
+            return
+        from tools.skills_tool import write_skill, get_skill
+        if action == "improve" and not get_skill(name):
+            print(f"[SKILLS] reflection: improve target '{name}' does not exist — skipping")
+            return
+        body = instructions
+        if reason:
+            body = f"<!-- reflection reason: {reason} -->\n\n" + body
+        skill = write_skill(name, description or name, body, draft=True)
+        print(f"[SKILLS] reflection: draft proposed: {name} ({action}) — review in Skills modal")
+    except Exception as e:
+        print(f"[SKILLS] reflection failed: {e}")
+
+
+async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, agent_id=None, model=None,
+                                        base_url=None, api_key=None):
+    """Auto-extract durable facts from the last user↔assistant exchange (Phase 2).
+
+    Runs every `memory_auto_extract_interval` assistant turns. Uses a fast,
+    low-max-token completion; failures are logged, never propagated.
+    """
+    try:
+        from settings import settings_manager
+        interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
+        if interval <= 0:
+            return
+        msgs = await get_conversation_messages(db, conversation_id)
+        assistant_count = len([m for m in msgs if m["role"] == "assistant"])
+        if assistant_count % interval != 0:
+            return
+        last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
+        last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
+        if not last_user or not last_assistant:
+            return
+        prompt = (
+            "Extract durable, reusable facts or user preferences from this conversation exchange. "
+            'Output ONLY a JSON array of strings. Each string must be a concise, standalone fact '
+            "(max ~120 chars) that would still be useful in future sessions. If nothing durable, output [].\n\n"
+            f"User: {last_user[:1500]}\n\nAssistant: {last_assistant[:1500]}"
+        )
+        parts = []
+        async for chunk in llm_client.stream_chat(
+            [{"role": "user", "content": prompt}],
+            model=model, temperature=0.0, max_tokens=512, tools=None,
+            base_url=base_url, api_key=api_key
+        ):
+            if chunk.get("type") == "content":
+                parts.append(chunk.get("content", ""))
+        raw = "".join(parts)
+        import re
+        import json as _json
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if m:
+            try:
+                parsed = _json.loads(m.group(0))
+                items = [str(x).strip() for x in parsed if str(x).strip()]
+            except _json.JSONDecodeError:
+                items = [l.strip("- ").strip() for l in raw.splitlines() if l.strip().startswith("-")]
+        else:
+            items = [l.strip("- ").strip() for l in raw.splitlines()
+                     if l.strip() and len(l.strip()) > 5 and not l.strip().startswith("```")]
+        if not items:
+            return
+        from database.memory_crud import create_memory_entry
+        scope = f"agent:{agent_id}" if agent_id is not None else "global"
+        added = 0
+        for item in items[:10]:
+            await create_memory_entry(db, item, scope=scope, source="auto")
+            added += 1
+        if added:
+            await db.commit()
+            print(f"[MEMORY] auto-extracted {added} fact(s) (scope={scope})")
+    except Exception as e:
+        print(f"[MEMORY] extraction failed: {e}")
 
 
 async def _stream_with_stall_timeout(generator, initial_timeout=600, stall_timeout=60):
@@ -262,13 +450,15 @@ async def _core_stream_handler(
     model: Optional[str] = None,
     document_ids: Optional[list] = None,
     version: int = 1,
-    version_group: Optional[str] = None
+    version_group: Optional[str] = None,
+    provider_id: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """Universal SSE handler for streaming LLM responses and tool execution.
     
     Args:
         version: Version number for regenerated responses
         version_group: UUID shared by all versions of the same response
+        provider_id: LLM provider to use (falls back to the default provider)
     """
     current_document_ids.set(document_ids)
     try:
@@ -289,6 +479,7 @@ async def _core_stream_handler(
                         agent_config = {
                             "system_prompt": agent.system_prompt,
                             "model": agent.model,
+                            "provider_id": getattr(agent, "provider_id", None),
                             "temperature": agent.temperature,
                             "top_k": agent.top_k,
                             "max_tokens": agent.max_tokens,
@@ -296,6 +487,26 @@ async def _core_stream_handler(
                             "enabled_tools": agent.enabled_tools or [],
                             "enabled_mcp_servers": agent.enabled_mcp_servers or []
                         }
+
+            # Resolve LLM provider: agent's provider > requested provider > default.
+            from database.provider_crud import get_provider as _get_provider, get_default_provider
+            resolved_provider_id = None
+            if agent_config and agent_config.get("provider_id"):
+                resolved_provider_id = agent_config["provider_id"]
+            elif provider_id:
+                resolved_provider_id = provider_id
+            provider = None
+            try:
+                if resolved_provider_id:
+                    provider = await _get_provider(db, resolved_provider_id, include_api_key=True)
+                if provider is None:
+                    provider = await get_default_provider(db, include_api_key=True)
+            except Exception as e:
+                print(f"[PROVIDER] resolution failed: {e}")
+            provider_base_url = provider.get("base_url") if provider else None
+            provider_api_key = provider.get("api_key") if provider else None
+            if provider:
+                print(f"[PROVIDER] using '{provider['name']}' ({provider_base_url}) model={model}")
             
             # Get current date for system prompt
             from datetime import datetime
@@ -309,6 +520,32 @@ async def _core_stream_handler(
             else:
                 # Default minimal system prompt with current date
                 system_prompt_content = f"You are a helpful AI assistant. Current date: {current_date}"
+
+            # Inject persistent agent memory (Phase 2)
+            try:
+                from database.memory_crud import get_memory_for_injection
+                memory_block = await get_memory_for_injection(
+                    db,
+                    agent_id=conversation.agent_id if conversation else None,
+                    conversation_id=conversation_id
+                )
+                if memory_block:
+                    system_prompt_content += "\n\n" + memory_block
+            except Exception as e:
+                print(f"[MEMORY] injection failed: {e}")
+
+            # Inject skills index (Phase 3) — compact, one line per skill.
+            try:
+                from tools.skills_tool import skill_index
+                idx = skill_index()
+                if idx:
+                    system_prompt_content += (
+                        "\n\n### Available skills\n"
+                        "Call load_skill(name) to load a skill's full instructions "
+                        "when it is relevant to the current task.\n" + idx
+                    )
+            except Exception as e:
+                print(f"[SKILLS] index injection failed: {e}")
             
             messages = await get_conversation_messages(db, conversation_id)
             # Build LLM messages — convert user messages with file attachments to multimodal format
@@ -445,7 +682,12 @@ async def _core_stream_handler(
                                 content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
                     llm_messages.append({"role": role, "content": content_parts})
                 else:
-                    llm_messages.append({"role": role, "content": content})
+                    llm_msg = {"role": role, "content": content}
+                    # Strict reasoning providers require the original reasoning
+                    # (thinking mode) to be echoed back with assistant messages.
+                    if role == "assistant" and msg.get("thinking"):
+                        llm_msg["reasoning_content"] = msg["thinking"]
+                    llm_messages.append(llm_msg)
             
             # Prepend system prompt to messages
             if system_prompt_content:
@@ -487,8 +729,16 @@ async def _core_stream_handler(
                 enabled_custom = set(agent_config["enabled_tools"])
                 if "query_documents" not in enabled_custom:
                     effective_enable_rag = False
-                if "generate_speech" not in enabled_custom:
-                    exclude_tools.append("generate_speech")
+                for custom_tool in (
+                    "generate_speech", "run_command",
+                    "memory_write", "memory_read", "memory_search", "memory_delete",
+                    "load_skill", "create_skill", "run_job",
+                    "list_agents", "create_agent", "delete_agent",
+                    "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
+                    "list_providers", "add_provider", "search_skills", "install_skill",
+                ):
+                    if custom_tool not in enabled_custom:
+                        exclude_tools.append(custom_tool)
             elif agent_config is not None:
                 # No specific tools restriction — use agent's enable_rag setting
                 if agent_config.get("enable_rag"):
@@ -512,6 +762,18 @@ async def _core_stream_handler(
             if mcp_tools:
                 for tool in mcp_tools:
                     print(f"  - MCP: {tool['name']} from {tool['server']}")
+
+            # Context transparency event (Phase 6) — what the model sees this turn.
+            try:
+                yield f"data: {json.dumps({'type': 'context_info', 'context': {
+                    'model': model or 'default',
+                    'system_prompt': system_prompt_content,
+                    'message_count': len(llm_messages),
+                    'tool_count': len(all_tools),
+                    'tools': [t.get('function', {}).get('name', '?') for t in all_tools],
+                }})}\n\n"
+            except Exception as e:
+                print(f"[CONTEXT] event failed: {e}")
             
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 35  # Prevent infinite loops
@@ -530,7 +792,8 @@ async def _core_stream_handler(
                 # inter-chunk stalls. Continues indefinitely while chunks arrive.
                 try:
                     async for chunk in _stream_with_stall_timeout(
-                        llm_client.stream_chat(llm_messages, model=model, tools=all_tools),
+                        llm_client.stream_chat(llm_messages, model=model, tools=all_tools,
+                                               base_url=provider_base_url, api_key=provider_api_key),
                         initial_timeout=600,
                         stall_timeout=60
                     ):
@@ -595,6 +858,14 @@ async def _core_stream_handler(
                                 })
                                 yield f"data: {json.dumps({'type': 'tool_error', 'tool': tool_name, 'error': error_msg})}\n\n"
 
+                            elif chunk_type == "error":
+                                # LLM request failure (connection, auth, invalid model...) —
+                                # surface it instead of silently ending with an empty reply.
+                                error_msg = chunk.get("error", "LLM request failed")
+                                print(f"[LLM ERROR] {error_msg}")
+                                yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+                                break
+
                         except Exception as e:
                             print(f"[DEBUG] Error processing chunk: {e}")
                             print(f"[DEBUG] Chunk data: {chunk}")
@@ -609,6 +880,29 @@ async def _core_stream_handler(
 
                 # If we have pending tool calls, execute them and continue the loop
                 if pending_tool_calls:
+                    # The OpenAI-compatible protocol requires a role='tool' message to be
+                    # the response to a preceding assistant message carrying tool_calls.
+                    # Some backends (llama.cpp proxying to strict upstream providers)
+                    # reject the request with HTTP 400 if this pairing is missing.
+                    assistant_tool_calls = []
+                    for i, tc in enumerate(pending_tool_calls):
+                        assistant_tool_calls.append({
+                            "id": f"{tc['name']}_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"]) if isinstance(tc["arguments"], dict) else str(tc.get("arguments") or "{}"),
+                            },
+                        })
+                    assistant_tc_msg = {"role": "assistant", "tool_calls": assistant_tool_calls}
+                    if assistant_message.strip():
+                        assistant_tc_msg["content"] = assistant_message
+                    # Strict reasoning providers require the original reasoning
+                    # (thinking mode) to be echoed back with the assistant message.
+                    if thinking_content:
+                        assistant_tc_msg["reasoning_content"] = thinking_content
+                    llm_messages.append(assistant_tc_msg)
+
                     for i, pending_tool_call in enumerate(pending_tool_calls):
                         print(f"Executing tool {i+1}/{len(pending_tool_calls)}: {pending_tool_call['name']}")
 
@@ -621,7 +915,9 @@ async def _core_stream_handler(
                         async for progress_event in tool_executor.execute_tool(
                             pending_tool_call['name'],
                             pending_tool_call['arguments'],
-                            request_id
+                            request_id,
+                            call_key=pending_tool_call.get('key'),
+                            conversation_id=conversation_id
                         ):
                             # Forward the progress event
                             yield f"data: {json.dumps(progress_event)}\n\n"
@@ -669,6 +965,20 @@ async def _core_stream_handler(
                         })
 
                     print(f"[DEBUG] All {len(pending_tool_calls)} tools executed, continuing conversation with results")
+                    # Record skill usage (Phase 4) for the improvement loop.
+                    try:
+                        from database.skill_crud import record_skill_run
+                        for tc in pending_tool_calls:
+                            if tc.get("name") == "load_skill":
+                                skill_name = str((tc.get("arguments") or {}).get("name", "")).strip()
+                                if skill_name:
+                                    await record_skill_run(
+                                        db, skill_name, conversation_id,
+                                        success=tc.get("status") not in ("error",)
+                                    )
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[SKILLS] run-log failed: {e}")
                     # Continue the while loop to get LLM's response to the tool result
                     # (LLM may respond with content, thinking, or another tool call)
 
@@ -728,6 +1038,65 @@ async def _core_stream_handler(
                 await db.commit()
                 assistant_saved = True
 
+            # Finalize open job runs for this conversation (Phase 5).
+            if assistant_saved:
+                try:
+                    from database.job_crud import list_job_runs, finish_job_run
+                    import os as _os
+                    from settings import OUTPUTS_DIR
+                    runs = await list_job_runs(db, limit=200)
+                    open_runs = [r for r in runs
+                                 if r["conversation_id"] == conversation_id and r["status"] == "running"]
+                    if open_runs:
+                        jobs_dir = _os.path.join(OUTPUTS_DIR, "jobs")
+                        _os.makedirs(jobs_dir, exist_ok=True)
+                        for run in open_runs:
+                            if assistant_message.strip():
+                                output_path = _os.path.join(jobs_dir, f"{run['id']}.md")
+                                try:
+                                    with open(output_path, "w", encoding="utf-8") as f:
+                                        f.write(f"# Job: {run['job_name']}\n\n{assistant_message}")
+                                except Exception as e:
+                                    print(f"[JOBS] output write failed: {e}")
+                                    output_path = None
+                                await finish_job_run(db, run["id"], "completed", output_path=output_path)
+                            else:
+                                await finish_job_run(db, run["id"], "failed",
+                                                     error="No assistant output produced")
+                        await db.commit()
+                        print(f"[JOBS] finalized {len(open_runs)} run(s) for conversation {conversation_id[:8]}")
+                except Exception as e:
+                    print(f"[JOBS] finalize failed: {e}")
+
+            # Auto memory extraction (Phase 2) — every N assistant turns.
+            if assistant_saved:
+                try:
+                    await asyncio.wait_for(
+                        _extract_memory_from_exchange(
+                            db, conversation_id, llm_client,
+                            agent_id=conversation.agent_id if conversation else None,
+                            model=model,
+                            base_url=provider_base_url, api_key=provider_api_key
+                        ),
+                        timeout=90
+                    )
+                except asyncio.TimeoutError:
+                    print("[MEMORY] extraction timed out")
+                except Exception as e:
+                    print(f"[MEMORY] extraction error: {e}")
+
+                # Self-improvement reflection (Phase 4) — proposes skill drafts.
+                try:
+                    await asyncio.wait_for(
+                        _maybe_reflect_and_propose_skill(db, conversation_id, llm_client, model=model,
+                                                         base_url=provider_base_url, api_key=provider_api_key),
+                        timeout=90
+                    )
+                except asyncio.TimeoutError:
+                    print("[SKILLS] reflection timed out")
+                except Exception as e:
+                    print(f"[SKILLS] reflection error: {e}")
+
             # Generate title using model (reuses KV cache via cache_prompt: true)
             # Skip if the conversation already has a meaningful title (not the default)
             existing_title = conversation.title if conversation else None
@@ -739,7 +1108,9 @@ async def _core_stream_handler(
 
                 if user_count == 1 and assistant_count == 1:
                     title = await _generate_title_with_model(
-                        llm_messages, assistant_message, llm_client, tools=all_tools, model=model
+                        llm_messages, assistant_message, llm_client, tools=all_tools, model=model,
+                        base_url=provider_base_url, api_key=provider_api_key,
+                        thinking_content=thinking_content
                     )
                     if title:
                         await update_conversation_title(db, conversation_id, title)
@@ -769,12 +1140,14 @@ async def stream_response(
     conversation_id: str,
     enable_rag: bool = False,
     model: str = None,
-    document_ids: str = None
+    document_ids: str = None,
+    provider_id: str = None
 ):
     """Stream LLM response with real-time tool execution updates."""
     doc_ids = document_ids.split(",") if document_ids else None
     return StreamingResponse(
-        _core_stream_handler(request_id, conversation_id, enable_rag, model, doc_ids),
+        _core_stream_handler(request_id, conversation_id, enable_rag, model, doc_ids,
+                             provider_id=provider_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -790,7 +1163,8 @@ async def stream_regenerate_response(
     conversation_id: str,
     model: str = None,
     version: int = 1,
-    version_group: str = None
+    version_group: str = None,
+    provider_id: str = None
 ):
     """Stream regenerated LLM response using unified handler.
     Supports versioned regeneration through version/version_group params.
@@ -799,7 +1173,8 @@ async def stream_regenerate_response(
         _core_stream_handler(
             request_id, conversation_id,
             enable_rag=False, model=model,
-            version=version, version_group=version_group
+            version=version, version_group=version_group,
+            provider_id=provider_id
         ),
         media_type="text/event-stream",
         headers={
@@ -808,6 +1183,38 @@ async def stream_regenerate_response(
             "X-Accel-Buffering": "no",
         }
     )
+
+
+# MCP Registry Endpoints
+@app.get("/api/mcp/registry")
+async def search_mcp_registry(query: str = "", limit: int = 24):
+    """Search installable MCP servers on the Smithery registry. Blank = most used."""
+    from tools.mcp_registry import search_mcp_registry, enrich_mcp_servers
+    try:
+        servers = await search_mcp_registry(query, limit)
+        servers = await enrich_mcp_servers(servers)
+        return {"servers": servers, "error": None}
+    except Exception as e:
+        print(f"[MCP REGISTRY] search failed: {e}")
+        return {"servers": [], "error": str(e)[:300]}
+
+
+@app.post("/api/mcp/registry/install")
+async def install_mcp_registry_server(request: Request):
+    """Install an MCP server from the registry by its qualified name."""
+    from tools.mcp_registry import install_mcp_from_registry
+    data = await request.json()
+    qualified_name = (data.get("qualified_name") or data.get("id") or "").strip()
+    if not qualified_name:
+        raise HTTPException(status_code=400, detail="Missing server id")
+    try:
+        result = await install_mcp_from_registry(qualified_name, mcp_manager)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[MCP REGISTRY] install failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Install failed: {str(e)[:300]}")
+    return {"server": result}
 
 
 # MCP Server Management
@@ -1465,9 +1872,25 @@ async def list_available_tools():
 
 @app.get("/api/models")
 async def list_available_models():
-    """List all available models from the LLM server"""
-    models = await llm_client.list_models()
-    return {"models": models}
+    """List models across all enabled LLM providers (cached at connect/refresh)."""
+    from database.provider_crud import list_providers
+    async with get_db() as db:
+        providers = await list_providers(db)
+    models = []
+    provider_list = []
+    for p in providers:
+        if not p.get("enabled"):
+            continue
+        provider_list.append({"id": p["id"], "name": p["name"], "is_default": p.get("is_default", 0)})
+        for m in (p.get("models") or []):
+            models.append({
+                "id": m.get("id"),
+                "name": m.get("name") or m.get("id"),
+                "owned_by": m.get("owned_by") or p.get("name"),
+                "provider_id": p.get("id"),
+                "provider_name": p.get("name"),
+            })
+    return {"models": models, "providers": provider_list}
 
 
 @app.post("/api/rag/query")
@@ -1744,6 +2167,429 @@ async def get_tts_status():
         "kokoro": kokoro_available,
         "engine": tool_executor.tts_service.config.engine
     }
+
+
+# Memory Endpoints (agent platform Phase 2)
+@app.get("/api/memory")
+async def list_memory(scope: str = None, limit: int = 200):
+    """List persistent memory entries (optional scope filter)."""
+    from database.memory_crud import list_memory_entries
+    async with get_db() as db:
+        entries = await list_memory_entries(db, scope=scope, limit=limit)
+    return {"entries": entries}
+
+
+@app.post("/api/memory")
+async def add_memory(request: Request):
+    """Create a memory entry."""
+    from database.memory_crud import create_memory_entry
+    data = await request.json()
+    content = (data.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Content required")
+    scope = data.get("scope") or "global"
+    async with get_db() as db:
+        entry = await create_memory_entry(db, content, scope=scope,
+                                          tags=data.get("tags") or [], source="manual")
+    return {"entry": entry}
+
+
+@app.patch("/api/memory/{entry_id}")
+async def edit_memory(entry_id: str, request: Request):
+    """Update a memory entry's content."""
+    from database.memory_crud import update_memory_entry
+    data = await request.json()
+    async with get_db() as db:
+        entry = await update_memory_entry(db, entry_id, content=data.get("content"))
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"entry": entry}
+
+
+@app.delete("/api/memory/{entry_id}")
+async def remove_memory(entry_id: str):
+    """Delete a memory entry."""
+    from database.memory_crud import delete_memory_entry
+    async with get_db() as db:
+        deleted = await delete_memory_entry(db, entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"status": "ok"}
+
+
+# Skill Registry Endpoints (Phase 4.5)
+@app.get("/api/skills/registry")
+async def search_skill_registry(query: str = "", limit: int = 25):
+    """Search installable skills on the skills.sh registry. Blank query = most popular."""
+    from tools.skill_registry import search_registry, popular_registry, enrich_registry
+    try:
+        q = (query or "").strip()
+        skills = await (popular_registry(limit) if len(q) < 2 else search_registry(q, limit))
+        skills = await enrich_registry(skills)
+        return {"skills": skills, "error": None}
+    except Exception as e:
+        print(f"[REGISTRY] search failed: {e}")
+        return {"skills": [], "error": str(e)[:300]}
+
+
+@app.post("/api/skills/install")
+async def install_registry_skill(request: Request):
+    """Install a registry skill (skills.sh id, e.g. 'owner/repo/path') locally."""
+    from tools.skill_registry import install_registry_skill
+    data = await request.json()
+    skill_id = (data.get("id") or data.get("skill_id") or "").strip()
+    if not skill_id:
+        raise HTTPException(status_code=400, detail="Missing skill id")
+    try:
+        result = await install_registry_skill(skill_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        print(f"[REGISTRY] install failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Install failed: {str(e)[:300]}")
+    return {"skill": result}
+
+
+# Skills Endpoints (agent platform Phase 3/4)
+@app.get("/api/skills")
+async def list_skills_api(include_drafts: bool = False):
+    """List installed skills (optionally including _drafts)."""
+    from tools.skills_tool import list_skills
+    return {"skills": list_skills(include_drafts=include_drafts)}
+
+
+@app.get("/api/skills/{name}")
+async def get_skill_api(name: str):
+    """Get a skill's SKILL.md content + file manifest."""
+    from tools.skills_tool import get_skill
+    skill = get_skill(name)
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return {"skill": skill}
+
+
+@app.post("/api/skills")
+async def create_skill_api(request: Request):
+    """Create a skill."""
+    from tools.skills_tool import write_skill
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    description = (data.get("description") or "").strip()
+    instructions = (data.get("instructions") or "").strip()
+    if not name or not instructions:
+        raise HTTPException(status_code=400, detail="name and instructions are required")
+    skill = write_skill(name, description or name, instructions)
+    return {"skill": skill}
+
+
+@app.put("/api/skills/{name}")
+async def update_skill_api(name: str, request: Request):
+    """Update a skill's description/instructions."""
+    from tools.skills_tool import write_skill
+    data = await request.json()
+    description = (data.get("description") or "").strip()
+    instructions = (data.get("instructions") or "").strip()
+    if not instructions:
+        raise HTTPException(status_code=400, detail="instructions are required")
+    skill = write_skill(name, description or name, instructions)
+    return {"skill": skill}
+
+
+@app.delete("/api/skills/{name}")
+async def delete_skill_api(name: str):
+    """Delete a skill."""
+    from tools.skills_tool import delete_skill
+    if not delete_skill(name):
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return {"status": "ok"}
+
+
+@app.post("/api/skills/drafts/{name}/accept")
+async def accept_skill_draft_api(name: str):
+    """Accept a self-improvement draft: move it into the live skills dir."""
+    from tools.skills_tool import accept_draft
+    skill = accept_draft(name)
+    if not skill:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"skill": skill}
+
+
+@app.delete("/api/skills/drafts/{name}")
+async def reject_skill_draft_api(name: str):
+    """Reject a self-improvement draft: delete it."""
+    from tools.skills_tool import delete_skill
+    if not delete_skill(name, draft=True):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"status": "ok"}
+
+
+# LLM Provider Endpoints (multi-provider support)
+@app.get("/api/providers")
+async def list_llm_providers():
+    """List LLM providers (with cached models)."""
+    from database.provider_crud import list_providers
+    async with get_db() as db:
+        providers = await list_providers(db)
+    return {"providers": providers}
+
+
+@app.post("/api/providers")
+async def add_llm_provider(request: Request):
+    """Add a provider and auto-fetch its models from /v1/models."""
+    from database.provider_crud import create_provider, get_provider_by_name
+    from tools.provider_service import fetch_models
+    data = await request.json()
+    name = (data.get("name") or "").strip()
+    base_url = (data.get("base_url") or "").strip().rstrip("/")
+    api_key = (data.get("api_key") or "").strip() or None
+    if not name or not base_url:
+        raise HTTPException(status_code=400, detail="name and base_url are required")
+    async with get_db() as db:
+        existing = await get_provider_by_name(db, name)
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Provider '{name}' already exists")
+        # First provider becomes the default.
+        from database.provider_crud import list_providers as _lp
+        existing_count = len(await _lp(db))
+        try:
+            models = await fetch_models(base_url, api_key)
+            error = None
+        except Exception as e:
+            models = []
+            error = str(e)[:300]
+        provider = await create_provider(
+            db, name, base_url, api_key=api_key, models=models,
+            is_default=1 if existing_count == 0 else 0
+        )
+        await db.commit()
+    return {"provider": provider, "models_fetched": len(models), "error": error}
+
+
+@app.post("/api/providers/{provider_id}/refresh")
+async def refresh_llm_provider_models(provider_id: str):
+    """Re-fetch models from a provider."""
+    from database.provider_crud import get_provider, update_provider
+    from tools.provider_service import fetch_models
+    async with get_db() as db:
+        provider = await get_provider(db, provider_id, include_api_key=True)
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        try:
+            models = await fetch_models(provider["base_url"], provider.get("api_key"))
+            error = None
+        except Exception as e:
+            models = provider.get("models") or []
+            error = str(e)[:300]
+        updated = await update_provider(db, provider_id, models=models)
+        await db.commit()
+    return {"provider": updated, "models_fetched": len(models), "error": error}
+
+
+@app.post("/api/providers/{provider_id}/default")
+async def set_default_llm_provider(provider_id: str):
+    """Make a provider the default for conversations/agents without one."""
+    from database.provider_crud import set_default_provider
+    async with get_db() as db:
+        provider = await set_default_provider(db, provider_id)
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        await db.commit()
+    return {"provider": provider}
+
+
+@app.put("/api/providers/{provider_id}")
+async def update_llm_provider(provider_id: str, request: Request):
+    """Update provider details and re-fetch models."""
+    from database.provider_crud import get_provider, update_provider
+    from tools.provider_service import fetch_models
+    data = await request.json()
+    async with get_db() as db:
+        provider = await get_provider(db, provider_id, include_api_key=True)
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        fields = {}
+        if "name" in data and str(data.get("name") or "").strip():
+            fields["name"] = str(data["name"]).strip()
+        if "base_url" in data and str(data.get("base_url") or "").strip():
+            fields["base_url"] = str(data["base_url"]).strip().rstrip("/")
+        if "api_key" in data:
+            fields["api_key"] = str(data["api_key"]).strip() or None
+        if "enabled" in data:
+            fields["enabled"] = 1 if data["enabled"] else 0
+        if fields.get("base_url") and fields["base_url"] != provider["base_url"]:
+            try:
+                fields["models"] = await fetch_models(fields["base_url"], fields.get("api_key", provider.get("api_key")))
+            except Exception as e:
+                fields["models"] = []
+                fields["fetch_error"] = str(e)[:300]
+        updated = await update_provider(db, provider_id, **fields)
+        await db.commit()
+    return {"provider": updated}
+
+
+@app.delete("/api/providers/{provider_id}")
+async def delete_llm_provider(provider_id: str):
+    """Delete a provider."""
+    from database.provider_crud import delete_provider, get_default_provider, set_default_provider, list_providers
+    async with get_db() as db:
+        provider = await delete_provider(db, provider_id)
+        if not provider:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        # If we deleted the default, promote the first remaining provider.
+        remaining = await list_providers(db)
+        if remaining and not any(p.get("is_default") for p in remaining):
+            await set_default_provider(db, remaining[0]["id"])
+        await db.commit()
+    return {"status": "ok"}
+
+
+# Terminal Endpoints
+@app.get("/api/terminal/blocked-patterns")
+async def get_terminal_blocked_patterns():
+    """List the hard-coded dangerous command patterns (read-only, cannot be disabled)."""
+    from tools.terminal_tool import HARD_BLOCKED_PATTERNS
+    return {"patterns": HARD_BLOCKED_PATTERNS}
+
+
+# Jobs Endpoints (agent platform Phase 5)
+@app.get("/api/jobs")
+async def list_jobs_api(limit: int = 50):
+    """List recent job runs."""
+    from database.job_crud import list_job_runs
+    async with get_db() as db:
+        runs = await list_job_runs(db, limit=limit)
+    return {"runs": runs}
+
+
+async def _pick_jobs_model() -> Optional[str]:
+    """jobs_model setting, else the default provider's first loaded model."""
+    from settings import settings_manager
+    m = (settings_manager.get_settings().get("jobs_model") or "").strip()
+    if m:
+        return m
+    try:
+        from database.provider_crud import get_default_provider
+        async with get_db() as db:
+            provider = await get_default_provider(db)
+        if not provider:
+            return None
+        cached = provider.get("models") or []
+        base = provider.get("base_url")
+        import aiohttp
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(f"{base}/v1/models") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    for mod in data.get("data", []):
+                        if mod.get("status", {}).get("value") == "loaded":
+                            return mod["id"]
+        if cached:
+            return cached[0]["id"]
+    except Exception as e:
+        print(f"[JOBS] model pick failed: {e}")
+    return None
+
+
+@app.post("/api/jobs/run")
+async def run_job_now(request: Request):
+    """Run an on-demand job to completion (inline) and write its output.
+
+    Body: {job: <skill name>, params?: {...}, agent_id?: int}
+    Returns the job run record. This endpoint is the future cron hook —
+    jobs only run while the app process is up.
+    """
+    import uuid as _uuid
+    from database.job_crud import create_job_run, finish_job_run, get_job_run
+    from database.crud import create_conversation, add_message
+    from tools.skills_tool import get_skill
+    data = await request.json()
+    job_name = (data.get("job") or data.get("name") or "").strip()
+    params = data.get("params") or {}
+    agent_id = data.get("agent_id")
+
+    skill = get_skill(job_name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Job/skill '{job_name}' not found")
+
+    model = None
+    if agent_id is not None:
+        async with get_db() as db:
+            agent = await get_agent(db, agent_id)
+            if agent:
+                model = agent.model
+    if not model:
+        model = await _pick_jobs_model()
+    if not model:
+        raise HTTPException(status_code=500, detail="No model available for the job run")
+
+    async with get_db() as db:
+        conversation = await create_conversation(db, title=f"Job: {job_name}", agent_id=agent_id)
+        conversation_id = conversation["id"]
+        run = await create_job_run(db, job_name, params=params, conversation_id=conversation_id)
+        user_message = (
+            f"Run the job '{job_name}' now. Follow the job instructions exactly "
+            f"and deliver the output. Job parameters: {json.dumps(params)}"
+        )
+        await add_message(db, conversation_id, "user", user_message)
+        await db.commit()
+
+    request_id = str(_uuid.uuid4())
+    assistant_parts = []
+    try:
+        async for event in _core_stream_handler(request_id, conversation_id, model=model):
+            line = event.strip()
+            if line.startswith("data: "):
+                try:
+                    ev = json.loads(line[6:])
+                    if ev.get("type") == "content":
+                        assistant_parts.append(ev.get("content", ""))
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[JOBS] run failed: {e}")
+        async with get_db() as db:
+            await finish_job_run(db, run["id"], "failed", error=str(e))
+            await db.commit()
+        raise HTTPException(status_code=500, detail=f"Job run failed: {e}")
+
+    assistant_text = "".join(assistant_parts).strip()
+    output_path = None
+    async with get_db() as db:
+        if assistant_text:
+            import os as _os
+            from settings import OUTPUTS_DIR
+            jobs_dir = _os.path.join(OUTPUTS_DIR, "jobs")
+            _os.makedirs(jobs_dir, exist_ok=True)
+            output_path = _os.path.join(jobs_dir, f"{run['id']}.md")
+            try:
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(f"# Job: {job_name}\n\n{assistant_text}")
+            except Exception as e:
+                print(f"[JOBS] output write failed: {e}")
+                output_path = None
+            await finish_job_run(db, run["id"], "completed", output_path=output_path)
+        else:
+            await finish_job_run(db, run["id"], "failed", error="No assistant output produced")
+        await db.commit()
+        final = await get_job_run(db, run["id"])
+    return {"run": final, "output": assistant_text[:2000]}
+
+
+# Tool Approval Endpoints
+@app.post("/api/tools/{request_id}/approve")
+async def approve_tool_request(request_id: str, payload: dict = None):
+    """Approve or deny a pending tool execution (e.g. a run_command request).
+
+    The terminal tool yields a `tool_approval_required` SSE event and pauses;
+    the frontend calls this endpoint to resolve it.
+    """
+    from tools.terminal_tool import approval_manager
+    payload = payload or {}
+    approval_key = payload.get("approval_key") or f"{request_id}:0"
+    approved = bool(payload.get("decision", True))
+    if not approval_manager.decide(approval_key, approved):
+        raise HTTPException(status_code=404, detail="No pending approval found for this request")
+    return {"status": "ok", "decision": approved}
 
 
 # STT Endpoints

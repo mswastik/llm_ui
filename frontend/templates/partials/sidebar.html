@@ -289,18 +289,18 @@
         <span>Notes</span>
       </button>
       <button
+        @click="$dispatch('open-jobs'); $store.ui.openJobs()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-play text-base"></i>
+        <span>Jobs</span>
+      </button>
+      <button
         @click="$dispatch('open-settings'); $store.ui.openSettings()"
         class="sidebar-item"
       >
         <i class="ph ph-gear text-base"></i>
         <span>Settings</span>
-      </button>
-      <button
-        @click="$dispatch('open-agents'); $store.ui.openAgents()"
-        class="sidebar-item"
-      >
-        <i class="ph ph-users text-base"></i>
-        <span>AI Agents</span>
       </button>
     </div>
 
@@ -329,13 +329,6 @@
         title="Settings"
       >
         <i class="ph ph-gear text-lg"></i>
-      </button>
-      <button
-        @click="$dispatch('open-agents'); $store.ui.openAgents()"
-        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        title="AI Agents"
-      >
-        <i class="ph ph-users text-lg"></i>
       </button>
     </div>
   </aside>

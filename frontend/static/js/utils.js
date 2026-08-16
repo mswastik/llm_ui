@@ -30,6 +30,15 @@ export const api = {
     if (!res.ok) throw new Error('API Error')
     return res.json()
   },
+  async patch(endpoint, data) {
+    const res = await fetch(endpoint, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    if (!res.ok) throw new Error('API Error')
+    return res.json()
+  },
   async delete(endpoint) {
     const res = await fetch(endpoint, { method: 'DELETE' })
     if (!res.ok) throw new Error('API Error')

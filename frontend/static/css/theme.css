@@ -104,8 +104,8 @@
   --bg-input: #18181b;
   --bg-overlay: rgba(0, 0, 0, 0.6);
   --bg-glass: rgba(24, 24, 27, 0.85);
-  --bg-code: #09090b;
-  --bg-code-header: #18181b;
+  --bg-code: #18181b;
+  --bg-code-header: #27272a;
   --bg-card: #18181b;
   --bg-card-hover: #1f1f23;
   --bg-badge: #1e3a8a;
@@ -598,6 +598,7 @@ h4 { font-size: 1rem; font-weight: 600; }
 /* ---------- Code Block ---------- */
 .code-block {
   background: var(--bg-code);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   overflow: hidden;
   margin: 8px 0;
@@ -619,6 +620,48 @@ h4 { font-size: 1rem; font-weight: 600; }
   font-size: 0.82rem;
   line-height: 1.6;
   color: var(--text-code);
+}
+.code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+.code-copy-btn:hover {
+  color: var(--text-primary);
+  background: rgba(128, 128, 128, 0.14);
+}
+.code-preview-btn.code-preview-active {
+  color: var(--accent-primary);
+}
+.code-html-preview {
+  width: 100%;
+  border: none;
+  border-top: 1px solid rgba(128, 128, 128, 0.2);
+  height: 320px;
+  background: var(--bg-tertiary);
+}
+
+/* Inline code inside prose messages (themed via CSS vars for light + dark) */
+.prose code:not(pre code) {
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--bg-code);
+  color: var(--text-code);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}
+.prose pre { margin: 8px 0; }
+.prose pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
 }
 
 /* ---------- Empty State ---------- */

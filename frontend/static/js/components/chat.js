@@ -1136,7 +1136,26 @@ const chatComponent = () => ({
   extractSources: (blocks) => markdownUtils.extractSources(blocks),
   formatToolResult: (r) => helpers.formatToolResult(r),
   parseEscapes: (t) => helpers.parseEscapes(t),
+  smartText: (t) => helpers.smartText(t),
+  toolResultView: (r) => helpers.toolResultView(r),
+  assetPreviews: (t) => helpers.assetPreviews(t),
   formatDate: (s) => formatters.formatDate(s),
+
+  // Arguments preview: pretty JSON with real line breaks, collapsed when huge
+  // (e.g. write_file with an entire file body as content).
+  argsText(args, key) {
+    const raw = typeof args === 'object' ? JSON.stringify(args, null, 2) : String(args ?? '')
+    const text = helpers.parseEscapes(raw)
+    if (!this.isExpanded(key) && text.length > 2000) {
+      return text.slice(0, 2000) + '\n… (truncated — click "Show full" to expand)'
+    }
+    return text
+  },
+
+  async copyText(text) {
+    const success = await helpers.copyToClipboard(text)
+    this.$store.ui.showToast(success ? 'Copied!' : 'Copy failed', success ? 'success' : 'error')
+  },
 
   async copyMessage(msg) {
     const success = await helpers.copyToClipboard(msg.content)

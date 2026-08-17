@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import json
+import time
 from typing import List, Dict, AsyncGenerator, Any, Optional
 
 from settings import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
@@ -137,6 +138,21 @@ class LLMClient:
                         # Track whether native thinking field has been seen (persistent across chunks)
                         _skip_think_yield = False
 
+                        # Track what this stream produced so we can detect premature
+                        # end-of-stream after reasoning (MTP speculative decoding).
+                        saw_thinking = False
+                        saw_content = False
+                        saw_tool_call = False
+
+                        # Heartbeat for long tool call argument streaming (e.g. write_file
+                        # with a large file body). The backend stall watchdog only sees
+                        # yields from this generator, so emit a lightweight progress event
+                        # periodically while a tool call is accumulating — otherwise a
+                        # healthy multi-minute tool call looks like a 60s stall and gets
+                        # killed.
+                        TOOL_PROGRESS_INTERVAL = 10  # seconds
+                        last_tool_progress_yield = time.monotonic()
+
                         async for chunk in response.content.iter_any():
                             # Decode chunk and add to buffer
                             text = chunk.decode('utf-8')
@@ -191,6 +207,7 @@ class LLMClient:
                                                     tc_parsed = json.loads(stripped_tc)
                                                     if isinstance(tc_parsed, dict) and "name" in tc_parsed and "arguments" in tc_parsed:
                                                         tc_args = tc_parsed["arguments"] if isinstance(tc_parsed["arguments"], dict) else {}
+                                                        saw_tool_call = True
                                                         yield {
                                                             "type": "tool_call",
                                                             "tool_call": {
@@ -203,12 +220,14 @@ class LLMClient:
                                                         # (continue to content processing below)
                                                 except json.JSONDecodeError:
                                                     # Partial JSON spanning multiple chunks — treat as thinking for now
+                                                    saw_thinking = True
                                                     yield {
                                                         "type": "thinking",
                                                         "content": thinking_content
                                                     }
                                                     await asyncio.sleep(0)
                                             else:
+                                                saw_thinking = True
                                                 yield {
                                                     "type": "thinking",
                                                     "content": thinking_content
@@ -236,6 +255,7 @@ class LLMClient:
                                                     # Yield content before thinking tag
                                                     before_think = content[:think_start]
                                                     if before_think:
+                                                        saw_content = True
                                                         yield {
                                                             "type": "content",
                                                             "content": before_think
@@ -251,6 +271,7 @@ class LLMClient:
                                                         # Skip yield if native thinking field already provided it
                                                         if not _skip_think_yield:
                                                             thinking = after_start[:think_end]
+                                                            saw_thinking = True
                                                             yield {
                                                                 "type": "thinking",
                                                                 "content": thinking
@@ -262,6 +283,7 @@ class LLMClient:
                                                         # Start streaming thinking - yield content as it arrives
                                                         thinking_buffer = after_start
                                                         if thinking_buffer and not _skip_think_yield:
+                                                            saw_thinking = True
                                                             yield {
                                                                 "type": "thinking",
                                                                 "content": thinking_buffer
@@ -273,6 +295,7 @@ class LLMClient:
                                                     if thinking_buffer is not None:
                                                         thinking_buffer += content
                                                         if not _skip_think_yield:
+                                                            saw_thinking = True
                                                             yield {
                                                                 "type": "thinking",
                                                                 "content": content
@@ -285,6 +308,7 @@ class LLMClient:
                                                         content = ''
                                                     else:
                                                         # No thinking tag, yield as regular content
+                                                        saw_content = True
                                                         yield {
                                                             "type": "content",
                                                             "content": content
@@ -321,11 +345,23 @@ class LLMClient:
 
                                                     # Try to parse accumulated arguments if we have a tool name
                                                     if streaming_tool_call and streaming_tool_call.get("name"):
+                                                        # Heartbeat: keep the stall watchdog alive while a large
+                                                        # tool call argument is still streaming.
+                                                        now = time.monotonic()
+                                                        if now - last_tool_progress_yield >= TOOL_PROGRESS_INTERVAL:
+                                                            last_tool_progress_yield = now
+                                                            yield {
+                                                                "type": "tool_call_progress",
+                                                                "tool": streaming_tool_call["name"],
+                                                                "args_length": len(streaming_tool_call["arguments_str"])
+                                                            }
+                                                            await asyncio.sleep(0)
                                                         try:
                                                             parsed_args = json.loads(streaming_tool_call["arguments_str"])
                                                             print(f"[DEBUG] Successfully parsed tool arguments: {parsed_args}")
 
                                                             # Yield complete tool call
+                                                            saw_tool_call = True
                                                             yield {
                                                                 "type": "tool_call",
                                                                 "tool_call": {
@@ -395,6 +431,26 @@ class LLMClient:
                                             }
                                     # Successfully completed streaming - mark as completed
                                     request_completed = True
+
+                        # Premature-EOS guard: with MTP speculative decoding, llama.cpp's
+                        # draft model can predict EOS right after the reasoning phase,
+                        # ending the stream with thinking but zero content (and no tool
+                        # call). Retry — the failure is sampling-dependent, so a retry
+                        # usually produces the full response.
+                        if request_completed and saw_thinking and not saw_content and not saw_tool_call:
+                            request_completed = False
+                            if attempt < max_retries - 1:
+                                print(f"[DEBUG] Premature EOS after thinking (no content) — retrying (attempt {attempt + 2}/{max_retries})")
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            else:
+                                print("[LLM ERROR] Model stopped after reasoning without producing a response (premature EOS)")
+                                yield {
+                                    "type": "error",
+                                    "error": ("The model stopped after reasoning without producing a response "
+                                              "(premature end-of-stream, likely MTP speculative decoding). "
+                                              "Please try again.")
+                                }
             except Exception as e:
                 # Handle exceptions that occur before/during request setup
                 # Only retry if request didn't complete successfully

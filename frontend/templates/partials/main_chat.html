@@ -300,13 +300,28 @@
                                 >
                                   <div>
                                     <div
-                                      class="text-xs text-[var(--text-tertiary)] mb-1"
+                                      class="flex items-center justify-between mb-1"
                                     >
-                                      Arguments
+                                      <span
+                                        class="text-xs text-[var(--text-tertiary)]"
+                                        >Arguments</span
+                                      >
+                                      <template
+                                        x-if="argsText(block.arguments, 'args-' + message.id + '-' + blockIdx).length > 2000"
+                                      >
+                                        <button
+                                          @click="toggleBlock('args-' + message.id + '-' + blockIdx)"
+                                          class="text-xs text-[var(--accent-primary)] hover:underline"
+                                        >
+                                          <span
+                                            x-text="isExpanded('args-' + message.id + '-' + blockIdx) ? 'Collapse' : 'Show full'"
+                                          ></span>
+                                        </button>
+                                      </template>
                                     </div>
                                     <pre
-                                      class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto"
-                                      x-text="typeof block.arguments === 'object' ? JSON.stringify(block.arguments, null, 2) : block.arguments"
+                                      class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap"
+                                      x-text="argsText(block.arguments, 'args-' + message.id + '-' + blockIdx)"
                                     ></pre>
                                   </div>
                                 </template>
@@ -415,9 +430,23 @@
                                 <template x-if="block.result">
                                   <div>
                                     <div
-                                      class="font-medium text-sm text-[var(--success)] mb-2 flex items-center gap-1.5"
+                                      class="font-medium text-sm mb-2 flex items-center justify-between gap-1.5"
+                                      :class="(block.status === 'error' || (toolResultView(block.result).kind === 'command' && !toolResultView(block.result).ok)) ? 'text-[var(--error)]' : 'text-[var(--success)]'"
                                     >
-                                      <i class="ph ph-check-circle"></i> Result
+                                      <span class="flex items-center gap-1.5">
+                                        <i
+                                          class="ph"
+                                          :class="(block.status === 'error' || (toolResultView(block.result).kind === 'command' && !toolResultView(block.result).ok)) ? 'ph-x-circle' : 'ph-check-circle'"
+                                        ></i>
+                                        Result
+                                      </span>
+                                      <button
+                                        @click="copyText((toolResultView(block.result).stdout || toolResultView(block.result).stderr || toolResultView(block.result).body))"
+                                        class="text-xs font-normal text-[var(--text-tertiary)] hover:text-[var(--text-primary)] flex items-center gap-1"
+                                        title="Copy output"
+                                      >
+                                        <i class="ph ph-copy"></i> Copy
+                                      </button>
                                     </div>
 
                                     <!-- Search Web Result -->
@@ -485,13 +514,102 @@
                                     <template
                                       x-if="!['search_web', 'query_documents'].includes(block.name)"
                                     >
-                                      <div
-                                        class="bg-[var(--bg-tertiary)] border border-[var(--tool-border)] rounded-md p-2.5"
-                                      >
-                                        <div
-                                          class="text-[var(--text-primary)] text-xs whitespace-pre-wrap font-mono"
-                                          x-text="formatToolResult(block.result)"
-                                        ></div>
+                                      <div class="space-y-2">
+                                        <!-- Asset preview (files written to outputs/ or uploads/) -->
+                                        <template
+                                          x-if="assetPreviews(toolResultView(block.result).body || toolResultView(block.result).stdout).length > 0"
+                                        >
+                                          <div class="flex flex-wrap gap-2">
+                                            <template
+                                              x-for="(asset, ai) in assetPreviews(toolResultView(block.result).body || toolResultView(block.result).stdout)"
+                                              :key="ai"
+                                            >
+                                              <a
+                                                :href="asset.src"
+                                                target="_blank"
+                                                rel="noopener"
+                                                class="block"
+                                              >
+                                                <img
+                                                  :src="asset.src"
+                                                  :alt="asset.src"
+                                                  class="max-h-56 rounded-md border border-[var(--tool-border)]"
+                                                />
+                                              </a>
+                                            </template>
+                                          </div>
+                                        </template>
+
+                                        <!-- Status line (run_command: exit code + duration) -->
+                                        <template
+                                          x-if="toolResultView(block.result).summary"
+                                        >
+                                          <span
+                                            class="badge text-xs"
+                                            :class="toolResultView(block.result).ok ? 'badge-success' : 'badge-error'"
+                                            x-text="toolResultView(block.result).summary"
+                                          ></span>
+                                        </template>
+
+                                        <!-- Command (run_command) -->
+                                        <template
+                                          x-if="toolResultView(block.result).kind === 'command' && block.arguments?.command"
+                                        >
+                                          <div>
+                                            <div
+                                              class="text-xs text-[var(--text-tertiary)] mb-1"
+                                            >
+                                              Command
+                                            </div>
+                                            <pre
+                                              class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap font-mono"
+                                            ><span class="text-[var(--accent-primary)] font-semibold">$ </span><span x-text="block.arguments.command"></span></pre>
+                                          </div>
+                                        </template>
+
+                                        <!-- stdout -->
+                                        <template
+                                          x-if="toolResultView(block.result).stdout"
+                                        >
+                                          <div>
+                                            <div
+                                              class="text-xs text-[var(--text-tertiary)] mb-1"
+                                            >
+                                              Output
+                                            </div>
+                                            <pre
+                                              class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap font-mono"
+                                              x-html="smartText(toolResultView(block.result).stdout)"
+                                            ></pre>
+                                          </div>
+                                        </template>
+
+                                        <!-- stderr -->
+                                        <template
+                                          x-if="toolResultView(block.result).stderr"
+                                        >
+                                          <div>
+                                            <div
+                                              class="text-xs text-[var(--error)] mb-1"
+                                            >
+                                              stderr
+                                            </div>
+                                            <pre
+                                              class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--error)] overflow-x-auto whitespace-pre-wrap font-mono"
+                                              x-html="smartText(toolResultView(block.result).stderr)"
+                                            ></pre>
+                                          </div>
+                                        </template>
+
+                                        <!-- Body (MCP text / plain text / pretty JSON) -->
+                                        <template
+                                          x-if="toolResultView(block.result).body"
+                                        >
+                                          <pre
+                                            class="bg-[var(--bg-code)] rounded-md p-2 text-xs text-[var(--text-code)] overflow-x-auto whitespace-pre-wrap font-mono"
+                                            x-html="smartText(toolResultView(block.result).body)"
+                                          ></pre>
+                                        </template>
                                       </div>
                                     </template>
                                   </div>

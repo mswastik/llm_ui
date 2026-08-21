@@ -84,6 +84,17 @@ ADMIN_TOOL_DEFINITIONS = [
          "'owner/repo/skill-name' from search_skills). Installs into skills/ "
          "and it becomes available to all agents.",
          {"id": {"type": "string", "description": "Registry skill id"}}, ["id"]),
+    _def("list_conversations",
+         "List recent conversations in this app (llm_ui). Returns id, title, agent, tags, updated_at. Use before searching, tagging, or deleting similar chats.",
+         {"limit": {"type": "integer", "description": "Max conversations (default 50)"},
+          "search": {"type": "string", "description": "Optional title substring filter"}}),
+    _def("delete_conversation", "Delete a conversation by its id in this app.",
+         {"conversation_id": {"type": "string", "description": "Conversation id from list_conversations"}}, ["conversation_id"]),
+    _def("fetch_conversation",
+         "Fetch the full content and quality metrics of a single conversation by its id, including every user/assistant message (text, thinking tokens, tool calls) plus depth metrics (assistant_chars, tool_call_count, turns, models_used). Useful for comparing duplicate chats before deleting. Set preview_chars high (e.g. 100000) to disable per-message truncation.",
+         {"conversation_id": {"type": "string", "description": "Conversation id from list_conversations"},
+          "preview_chars": {"type": "integer", "description": "Max characters shown per message (default 1500). Use a large value for full content."}},
+         ["conversation_id"]),
 ]
 
 
@@ -113,6 +124,12 @@ class AdminTool:
                 yield await self._search_skills(arguments)
             elif tool_name == "install_skill":
                 yield await self._install_skill(arguments)
+            elif tool_name == "list_conversations":
+                yield await self._list_conversations(arguments)
+            elif tool_name == "delete_conversation":
+                yield await self._delete_conversation(arguments)
+            elif tool_name == "fetch_conversation":
+                yield await self._fetch_conversation(arguments)
             else:
                 yield {"type": "tool_error", "tool": tool_name, "error": f"Unknown admin tool: {tool_name}"}
         except Exception as e:
@@ -302,4 +319,160 @@ class AdminTool:
             "type": "tool_progress", "tool": "install_skill",
             "status": f"Installed skill '{result['name']}' ({len(result['files'])} files)",
             "progress": 100, "result": result,
+        }
+
+    # ── Conversations (this app: llm_ui) ───────────────────
+    async def _list_conversations(self, arguments: Dict) -> Dict:
+        from database.crud import get_all_conversations
+        limit = int(arguments.get("limit") or 50)
+        search = str(arguments.get("search") or "").strip().lower()
+        async with get_db() as db:
+            convs = await get_all_conversations(db)
+        if search:
+            convs = [c for c in convs if search in (c.get("title") or "").lower()]
+        convs = convs[: max(1, min(limit, 100))]
+        return {
+            "type": "tool_progress", "tool": "list_conversations",
+            "status": f"{len(convs)} conversation(s)", "progress": 100,
+            "result": {"conversations": [
+                {"id": c["id"], "title": c["title"], "agent_id": c.get("agent_id"),
+                 "tags": c.get("tags") or [], "updated_at": c.get("updated_at"),
+                 "created_at": c.get("created_at")} for c in convs
+            ]},
+        }
+
+    async def _delete_conversation(self, arguments: Dict) -> Dict:
+        from database.crud import delete_conversation as _del
+        conv_id = str(arguments.get("conversation_id", "")).strip()
+        if not conv_id:
+            raise ValueError("conversation_id is required")
+        async with get_db() as db:
+            await _del(db, conv_id)
+            await db.commit()
+        return {"type": "tool_progress", "tool": "delete_conversation",
+                "status": f"Deleted {conv_id}", "progress": 100,
+                "result": {"deleted": True, "id": conv_id}}
+
+    async def _fetch_conversation(self, arguments: Dict) -> Dict:
+        """Fetch full content + quality metrics for one conversation.
+
+        Reads raw rows from `messages` (content/thinking/tool_calls/metadata),
+        which the ORM crud helpers don't expose. Metrics (assistant_chars,
+        tool_call_count, turns, models_used) let callers judge depth/quality
+        when comparing duplicates instead of relying on timestamps.
+        """
+        import json as _json
+        from sqlalchemy import text
+
+        conv_id = str(arguments.get("conversation_id", "")).strip()
+        if not conv_id:
+            raise ValueError("conversation_id is required")
+
+        preview_chars = arguments.get("preview_chars")
+        preview_chars = int(preview_chars) if preview_chars is not None else 1500
+
+        def _to_json(v):
+            if v is None:
+                return None
+            if isinstance(v, (dict, list)):
+                return v
+            try:
+                return _json.loads(v)
+            except Exception:
+                return None
+
+        async with get_db() as db:
+            # Accept either a full UUID or the 8-char prefix shown by
+            # list_conversations (ids are stored as full UUIDs in the DB).
+            conv_lookup = await db.execute(
+                text("SELECT id, title, agent_id, tags, created_at, updated_at "
+                     "FROM conversations WHERE id = :cid OR id LIKE :cid || '%'"),
+                {"cid": conv_id},
+            )
+            conv = conv_lookup.mappings().first()
+            if not conv:
+                raise ValueError(
+                    f"No conversation found with id '{conv_id}'. "
+                    f"Use list_conversations to find valid ids (8-char prefix or full UUID)."
+                )
+            # Use the resolved full UUID for message lookups.
+            conv_id = str(conv["id"])
+
+            msg_rows = await db.execute(
+                text("SELECT role, content, thinking, tool_calls, metadata, "
+                     "created_at FROM messages WHERE conversation_id = :cid "
+                     "ORDER BY rowid"),
+                {"cid": conv_id},
+            )
+            rows = msg_rows.mappings().all()
+
+        messages = []
+        assistant_chars = 0
+        user_turns = 0
+        tool_call_count = 0
+        thinking_chars = 0
+        models_used = set()
+
+        for r in rows:
+            role = r["role"]
+            content = r["content"] or ""
+            if role == "user":
+                user_turns += 1
+            else:
+                assistant_chars += len(content)
+                meta = _to_json(r.get("metadata"))
+                if isinstance(meta, dict):
+                    info = meta.get("info") or {}
+                    model = info.get("model") if isinstance(info, dict) else None
+                    if not model:
+                        model = meta.get("model")
+                    if model:
+                        models_used.add(model)
+
+            thinking = r.get("thinking")
+            if thinking:
+                thinking_chars += len(thinking)
+
+            tc = _to_json(r.get("tool_calls"))
+            if isinstance(tc, list):
+                tool_call_count += len(tc)
+
+            truncated = (len(content) > preview_chars and preview_chars > 0)
+            shown = content[:preview_chars] + "..." if truncated else content
+            messages.append({
+                "role": role,
+                "created_at": str(r.get("created_at")),
+                "content_len": len(content),
+                "content": shown,
+                "thinking_chars": len(thinking) if thinking else 0,
+                "tool_calls": tc if isinstance(tc, list) else None,
+            })
+
+        result = {
+            "conversation": {
+                "id": conv["id"],
+                "title": conv["title"],
+                "agent_id": conv.get("agent_id"),
+                "tags": _to_json(conv.get("tags")) or [],
+                "created_at": str(conv.get("created_at")),
+                "updated_at": str(conv.get("updated_at")),
+            },
+            "metrics": {
+                "total_messages": len(rows),
+                "user_turns": user_turns,
+                "assistant_turns": len(rows) - user_turns,
+                "assistant_chars": assistant_chars,
+                "thinking_chars": thinking_chars,
+                "tool_call_count": tool_call_count,
+                "models_used": sorted(models_used),
+            },
+            "messages": messages,
+        }
+
+        return {
+            "type": "tool_progress", "tool": "fetch_conversation",
+            "status": (f"{len(rows)} message(s); {assistant_chars} chars, "
+                       f"{tool_call_count} tool calls"),
+            "progress": 100,
+            "result": result,
         }

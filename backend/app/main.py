@@ -65,11 +65,36 @@ async def _bootstrap_default_provider():
         print(f"[PROVIDER] bootstrap failed: {e}")
 
 
+async def _bootstrap_default_agent():
+    """Seed a Default agent so the Agents tab always has something to edit.
+    Ensures a 'Default' entry exists even if user already created custom agents."""
+    try:
+        from database.crud import get_all_agents, create_agent
+        async with get_db() as db:
+            agents = await get_all_agents(db)
+            if any(a.name == "Default" for a in agents):
+                return
+            default_prompt = settings_manager.get_settings().get("system_prompt") or "You are a helpful AI assistant."
+            await create_agent(db, {
+                "name": "Default",
+                "description": "Default agent — fallback persona when no agent selected (empty enabled lists = all tools)",
+                "system_prompt": default_prompt,
+                "model": settings_manager.get_settings().get("llama_cpp_model") or "",
+                "temperature": settings_manager.get_settings().get("default_temperature", 0.7),
+                "max_tokens": settings_manager.get_settings().get("default_max_tokens", 4096),
+            })
+            await db.commit()
+            print("[AGENT] bootstrapped Default agent")
+    except Exception as e:
+        print(f"[AGENT] bootstrap Default failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
     await _bootstrap_default_provider()
+    await _bootstrap_default_agent()
     await mcp_manager.initialize()
     backup_scheduler.start()
     yield
@@ -158,6 +183,123 @@ async def get_conversation_detail(conversation_id: str):
             "conversation": conversation,
             "messages": messages
         }
+
+
+@app.get("/api/conversations/{conversation_id}/context")
+async def get_conversation_context(conversation_id: str):
+    """Preview what the model will see on the next turn for this conversation.
+    Recomputes system prompt + tools + counts without calling the LLM — so past
+    chats show a useful preview instead of 'No context yet'."""
+    async with get_db() as db:
+        conversation = await get_conversation(db, conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        agent_config = None
+        if conversation.get("agent_id") is not None:
+            agent = await get_agent(db, conversation["agent_id"])
+            if agent:
+                agent_config = {
+                    "system_prompt": agent.system_prompt,
+                    "model": agent.model,
+                    "provider_id": getattr(agent, "provider_id", None),
+                    "temperature": agent.temperature,
+                    "top_k": agent.top_k,
+                    "max_tokens": agent.max_tokens,
+                    "enable_rag": bool(agent.enable_rag),
+                    "enabled_tools": agent.enabled_tools or [],
+                    "enabled_mcp_servers": agent.enabled_mcp_servers or [],
+                    "enabled_skills": agent.enabled_skills or []
+                }
+        from datetime import datetime
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app."
+        system_prompt_content = agent_config["system_prompt"] if agent_config and agent_config.get("system_prompt") else ""
+        if system_prompt_content:
+            system_prompt_content = f"{system_prompt_content}\n\n{identity_hint}\n\nCurrent date: {current_date}"
+        else:
+            system_prompt_content = f"You are a helpful AI assistant. {identity_hint} Current date: {current_date}"
+        try:
+            from database.memory_crud import get_memory_for_injection
+            memory_block = await get_memory_for_injection(
+                db,
+                agent_id=conversation.get("agent_id"),
+                conversation_id=conversation_id
+            )
+            if memory_block:
+                system_prompt_content += "\n\n" + memory_block
+        except Exception as e:
+            print(f"[MEMORY] context preview failed: {e}")
+        try:
+            from tools.skills_tool import skill_index
+            idx = skill_index()
+            if idx:
+                enabled_skills = set()
+                if agent_config and agent_config.get("enabled_skills"):
+                    enabled_skills = set(agent_config["enabled_skills"])
+                if enabled_skills:
+                    idx = "\n".join(
+                        line for line in idx.splitlines()
+                        if line.startswith("- ")
+                        and line[2:].split(":", 1)[0].strip() in enabled_skills
+                    )
+                if idx:
+                    system_prompt_content += (
+                        "\n\n### Available skills\n"
+                        "Call load_skill(name) to load a skill's full instructions "
+                        "when it is relevant to the current task.\n" + idx
+                    )
+        except Exception as e:
+            print(f"[SKILLS] context preview failed: {e}")
+        # messages + tools count preview
+        try:
+            messages = await get_conversation_messages(db, conversation_id)
+            llm_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
+            if system_prompt_content:
+                llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
+            mcp_tools = []
+            if mcp_manager:
+                try:
+                    mcp_tools = await mcp_manager.list_all_tools(include_disabled=False)
+                except Exception:
+                    mcp_tools = []
+            enabled_mcp_servers = agent_config.get("enabled_mcp_servers") if agent_config else []
+            if enabled_mcp_servers:
+                allowed = set(enabled_mcp_servers)
+                mcp_tools = [t for t in mcp_tools if t.get("server") in allowed]
+            exclude_tools = []
+            effective_enable_rag = False
+            if agent_config and agent_config.get("enabled_tools"):
+                enabled_custom = set(agent_config["enabled_tools"])
+                if "query_documents" not in enabled_custom:
+                    effective_enable_rag = False
+                for ct in (
+                    "generate_speech", "run_command",
+                    "memory_write", "memory_read", "memory_search", "memory_delete",
+                    "load_skill", "create_skill", "run_job",
+                    "list_agents", "create_agent", "delete_agent",
+                    "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
+                    "list_providers", "add_provider", "search_skills", "install_skill",
+                    "list_conversations", "delete_conversation", "fetch_conversation",
+                ):
+                    if ct not in enabled_custom:
+                        exclude_tools.append(ct)
+            all_tools = tool_executor.get_tool_definitions(
+                exclude_tools=exclude_tools,
+                mcp_tools=mcp_tools,
+                enable_rag=effective_enable_rag
+            )
+        except Exception as e:
+            print(f"[CONTEXT] preview tools failed: {e}")
+            llm_messages = []
+            all_tools = []
+        model_preview = (agent_config.get("model") if agent_config and agent_config.get("model") else "default")
+        return {"context": {
+            "model": model_preview,
+            "system_prompt": system_prompt_content,
+            "message_count": len(llm_messages),
+            "tool_count": len(all_tools),
+            "tools": [t.get("function", {}).get("name", "?") for t in all_tools],
+        }}
 
 
 @app.post("/api/conversations/{conversation_id}/messages")
@@ -486,12 +628,10 @@ async def _unregister_stream(conversation_id: str, request_id: str) -> None:
 async def _save_assistant_message(db, conversation_id: str, assistant_message: str,
                                   thinking_content: str, message_blocks: list,
                                   model: Optional[str], version: int,
-                                  version_group: Optional[str]) -> bool:
-    """Persist an assistant message with consolidated blocks. Returns True if
-    anything was saved. Used by the normal completion path AND the client-cancel
-    path (so a steering message can continue from the partial response)."""
+                                  version_group: Optional[str]):
+    """Persist an assistant message. Returns saved message dict or None."""
     if not (assistant_message.strip() or thinking_content.strip() or message_blocks):
-        return False
+        return None
     # Consolidate consecutive content/thinking blocks (preserve exact formatting)
     consolidated_blocks = []
     for block in message_blocks:
@@ -506,7 +646,7 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
         else:
             consolidated_blocks.append(block)
     message_extra_metadata = {"model": model} if model else {}
-    await add_message(
+    saved = await add_message(
         db, conversation_id, "assistant", assistant_message,
         blocks=consolidated_blocks or None,
         extra_metadata=message_extra_metadata,
@@ -515,7 +655,7 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
     )
     # Commit immediately so the message is persisted even if client disconnects
     await db.commit()
-    return True
+    return saved
 
 
 async def _core_stream_handler(
@@ -590,14 +730,13 @@ async def _core_stream_handler(
             from datetime import datetime
             current_date = datetime.now().strftime("%Y-%m-%d")
             
-            # Build system prompt with current date
+            # Build system prompt with current date + app identity (local llm_ui)
+            identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app."
             system_prompt_content = agent_config["system_prompt"] if agent_config and agent_config.get("system_prompt") else ""
             if system_prompt_content:
-                # Add current date to system prompt
-                system_prompt_content = f"{system_prompt_content}\n\nCurrent date: {current_date}"
+                system_prompt_content = f"{system_prompt_content}\n\n{identity_hint}\n\nCurrent date: {current_date}"
             else:
-                # Default minimal system prompt with current date
-                system_prompt_content = f"You are a helpful AI assistant. Current date: {current_date}"
+                system_prompt_content = f"You are a helpful AI assistant. {identity_hint} Current date: {current_date}"
 
             # Inject persistent agent memory (Phase 2)
             try:
@@ -772,11 +911,49 @@ async def _core_stream_handler(
                     llm_messages.append({"role": role, "content": content_parts})
                 else:
                     llm_msg = {"role": role, "content": content}
+                    # Replay tool_calls verbatim — required for KV cache hit
+                    # Without this, next turn's prefix diverges at assistant{tool_calls}
+                    if role == "assistant" and msg.get("tool_calls"):
+                        tcs = []
+                        for idx, tc in enumerate(msg["tool_calls"] or []):
+                            try:
+                                args = tc.get("arguments") or {}
+                                if not isinstance(args, dict):
+                                    args = {}
+                            except Exception:
+                                args = {}
+                            tcs.append({
+                                "id": f"{tc.get('name','tool')}_{idx}",
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("name","unknown"),
+                                    "arguments": __import__("json").dumps(args),
+                                },
+                            })
+                        if tcs:
+                            llm_msg["tool_calls"] = tcs
                     # Strict reasoning providers require the original reasoning
                     # (thinking mode) to be echoed back with assistant messages.
                     if role == "assistant" and msg.get("thinking"):
                         llm_msg["reasoning_content"] = msg["thinking"]
                     llm_messages.append(llm_msg)
+                    # Replay tool results from blocks as role=tool messages
+                    # This restores the exact assistant->tool->assistant chain that was cached
+                    if role == "assistant":
+                        blocks = (metadata.get("blocks") or []) if isinstance(metadata, dict) else []
+                        tool_blocks = [b for b in blocks if b.get("type") == "tool_call"]
+                        for idx, b in enumerate(tool_blocks):
+                            result = b.get("result")
+                            # Normalize result to string as done in the live loop
+                            try:
+                                tool_result_str = __import__("json").dumps(result, default=str) if result is not None else "No result"
+                            except Exception:
+                                tool_result_str = str(result) if result is not None else "No result"
+                            llm_messages.append({
+                                "role": "tool",
+                                "content": tool_result_str,
+                                "tool_call_id": f"{b.get('name','tool')}_{idx}"
+                            })
             
             # Prepend system prompt to messages
             if system_prompt_content:
@@ -830,6 +1007,7 @@ async def _core_stream_handler(
                     "list_agents", "create_agent", "delete_agent",
                     "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
                     "list_providers", "add_provider", "search_skills", "install_skill",
+                    "list_conversations", "delete_conversation", "fetch_conversation",
                 ):
                     if custom_tool not in enabled_custom:
                         exclude_tools.append(custom_tool)
@@ -1016,7 +1194,31 @@ async def _core_stream_handler(
                         ):
                             # Forward the progress event
                             yield f"data: {json.dumps(progress_event)}\n\n"
-                            if progress_event.get("type") == "tool_progress":
+                            if progress_event.get("type") == "tool_approval_required":
+                                # Persist approval state immediately so refresh/disconnect can resume
+                                pending_tool_call["status"] = "approval"
+                                pending_tool_call["command"] = progress_event.get("command", "")
+                                pending_tool_call["working_dir"] = progress_event.get("working_dir", "")
+                                pending_tool_call["approval_key"] = progress_event.get("approval_key")
+                                pending_tool_call["approval_reason"] = progress_event.get("reason", "")
+                                # Create provisional block for save-on-cancel
+                                provisional = {
+                                    "type": "tool_call",
+                                    "name": pending_tool_call['name'],
+                                    "arguments": pending_tool_call['arguments'],
+                                    "status": "approval",
+                                    "command": progress_event.get("command", ""),
+                                    "working_dir": progress_event.get("working_dir", ""),
+                                    "approval_key": progress_event.get("approval_key"),
+                                    "approval_reason": progress_event.get("reason", ""),
+                                    "result": None,
+                                    "progress_history": pending_tool_call["progress_history"][:],
+                                }
+                                # Append or update provisional in message_blocks
+                                # (so CancelledError save includes it)
+                                if not any(b.get("type")=="tool_call" and b.get("name")==pending_tool_call['name'] and b.get("status")=="approval" for b in message_blocks):
+                                    message_blocks.append(provisional)
+                            elif progress_event.get("type") == "tool_progress":
                                 pending_tool_call["status"] = progress_event.get("status", "running")
                                 pending_tool_call["progress"] = progress_event.get("progress", 0)
                                 pending_tool_call["progress_history"].append(progress_event)
@@ -1032,8 +1234,21 @@ async def _core_stream_handler(
                                 pending_tool_call["status"] = "error"
                                 pending_tool_call["result"] = {"error": progress_event.get("error")}
                                 tool_result = {"error": progress_event.get("error")}
+                                # If this was an approval timeout/deny, update provisional block if present
+                                for b in message_blocks:
+                                    if b.get("type")=="tool_call" and b.get("status")=="approval" and b.get("name")==pending_tool_call['name']:
+                                        b["status"] = "error"
+                                        b["result"] = {"error": progress_event.get("error")}
+                                        break
 
                         # Add tool call block to message blocks for sequential display
+                        # If a provisional approval block was already appended (for save-on-cancel),
+                        # update it in place instead of duplicating.
+                        provisional_idx = None
+                        for idx, b in enumerate(message_blocks):
+                            if b.get("type")=="tool_call" and b.get("name")==pending_tool_call['name'] and b.get("status")=="approval":
+                                provisional_idx = idx
+                                break
                         tool_call_block = {
                             "type": "tool_call",
                             "name": pending_tool_call['name'],
@@ -1042,12 +1257,22 @@ async def _core_stream_handler(
                             "result": pending_tool_call['result'],
                             "progress_history": pending_tool_call['progress_history']
                         }
+                        # Preserve command/approval fields if this was an approval flow
+                        if pending_tool_call.get("command"):
+                            tool_call_block["command"] = pending_tool_call["command"]
+                            tool_call_block["working_dir"] = pending_tool_call.get("working_dir", "")
+                            tool_call_block["approval_key"] = pending_tool_call.get("approval_key")
+                            tool_call_block["approval_reason"] = pending_tool_call.get("approval_reason", "")
                         # Extract sources from result for bottom-of-chat display
                         if pending_tool_call['result'] and isinstance(pending_tool_call['result'], dict):
                             sources = pending_tool_call['result'].get('sources', [])
                             if sources:
                                 tool_call_block['sources'] = sources
-                        message_blocks.append(tool_call_block)
+                        if provisional_idx is not None:
+                            # Replace provisional with final status (error/completed)
+                            message_blocks[provisional_idx] = tool_call_block
+                        else:
+                            message_blocks.append(tool_call_block)
 
                         # Add tool result to conversation for LLM to continue
                         # Format for llama.cpp: role=tool with content as string
@@ -1091,6 +1316,8 @@ async def _core_stream_handler(
                 db, conversation_id, assistant_message, thinking_content,
                 message_blocks, model, version, version_group
             )
+            saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else None
+            saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
 
             # Finalize open job runs for this conversation (Phase 5).
             if assistant_saved:
@@ -1171,18 +1398,20 @@ async def _core_stream_handler(
                         await db.commit()
                         yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
 
-            # Yield done event
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            # Yield done event (include real ids so frontend can fix placeholder after regenerate)
+            yield f"data: {json.dumps({'type': 'done', 'message_id': saved_msg_id, 'version_group': saved_version_group, 'version': version})}\n\n"
 
     except asyncio.CancelledError:
         # Request was cancelled by client - this is normal, don't log as error
         print(f"Request {request_id} cancelled by client")
         # Save the partial response so a steering message can continue from it.
+        # Use a fresh DB session — the original `db` from `async with` is already closed.
         try:
-            await _save_assistant_message(
-                db, conversation_id, assistant_message, thinking_content,
-                message_blocks, model, version, version_group
-            )
+            async with get_db() as cancel_db:
+                await _save_assistant_message(
+                    cancel_db, conversation_id, assistant_message, thinking_content,
+                    message_blocks, model, version, version_group
+                )
         except Exception as e:
             print(f"[STEER] partial save on cancel failed: {e}")
         raise  # Re-raise to properly propagate cancellation

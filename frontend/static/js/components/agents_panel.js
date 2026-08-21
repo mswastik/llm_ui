@@ -146,20 +146,31 @@ const agentsPanel = () => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.formData)
       })
+      const text = await res.text()
+      let d
+      try { d = text ? JSON.parse(text) : {} } catch { d = { detail: text } }
       if (res.ok) {
-        const d = await res.json()
+        const agentData = d.agent || d
         if (this.editing) {
           const idx = this.agents.findIndex(a => a.id === this.editing.id)
-          if (idx !== -1) this.agents[idx] = d.agent
+          if (idx !== -1) this.agents[idx] = agentData
         } else {
-          this.agents.unshift(d.agent)
+          this.agents.unshift(agentData)
         }
         this.showCreate = false
+        this.editing = null
         this.$store.ui.showToast(this.editing ? 'Agent updated' : 'Agent created', 'success')
+        // refresh chat's agent list
+        window.dispatchEvent(new CustomEvent('agents-updated'))
       } else {
-        this.$store.ui.showToast('Failed to save agent', 'error')
+        const msg = d.detail || d.message || text || 'Failed to save agent'
+        console.error('[agents] save failed', res.status, msg)
+        this.$store.ui.showToast(msg, 'error')
       }
-    } catch (e) { this.$store.ui.showToast('Failed to save agent', 'error') }
+    } catch (e) {
+      console.error('[agents] save exception', e)
+      this.$store.ui.showToast('Failed to save agent: ' + (e.message || e), 'error')
+    }
   },
 
   async deleteAgent(id) {

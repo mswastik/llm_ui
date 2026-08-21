@@ -77,15 +77,8 @@ async def delete_memory_entry(db, entry_id: str) -> bool:
     return True
 
 
-async def get_memory_for_injection(
-    db, agent_id: Optional[int] = None, conversation_id: Optional[str] = None,
-    max_chars: int = MAX_INJECTION_CHARS
-) -> str:
-    """Build the memory block injected into the system prompt.
-
-    Order of precedence: conversation-scoped, then agent-scoped, then global.
-    Scopes with no entries are skipped; total output is capped at max_chars.
-    """
+async def get_memory_tags(db, agent_id: Optional[int] = None, conversation_id: Optional[str] = None) -> List[str]:
+    """Return distinct tags in use (for injection as lightweight index)."""
     from sqlalchemy import select
     scopes = []
     if conversation_id:
@@ -93,28 +86,69 @@ async def get_memory_for_injection(
     if agent_id is not None:
         scopes.append(f"agent:{agent_id}")
     scopes.append("global")
-
-    chunks = []
-    used = 0
+    tags: set = set()
     for scope in scopes:
-        stmt = (
+        result = await db.execute(select(MemoryEntry).where(MemoryEntry.scope == scope))
+        for e in result.scalars().all():
+            for t in (e.tags or []):
+                if isinstance(t, str) and t.strip():
+                    tags.add(t.strip())
+    return sorted(tags)
+
+
+async def get_memory_for_injection(
+    db, agent_id: Optional[int] = None, conversation_id: Optional[str] = None,
+    max_chars: int = MAX_INJECTION_CHARS
+) -> str:
+    """Build the compact memory block injected into the system prompt.
+
+    For local single-user use we DO NOT dump full memory every turn (token waste
+    + context bloat). Instead:
+      - conversation-scoped entries are injected verbatim (short, task-relevant)
+      - for agent/global: inject only a tag index + usage hint, model pulls
+        via memory_search(query, tags=[...]) or memory_read when relevant.
+    """
+    from sqlalchemy import select
+    chunks = []
+    # 1. Conversation scope: small, directly relevant — keep verbatim (capped 800 chars)
+    if conversation_id:
+        result = await db.execute(
             select(MemoryEntry)
-            .where(MemoryEntry.scope == scope)
+            .where(MemoryEntry.scope == f"conversation:{conversation_id}")
             .order_by(MemoryEntry.importance.desc(), MemoryEntry.updated_at.desc())
         )
-        result = await db.execute(stmt)
         entries = result.scalars().all()
-        if not entries:
-            continue
-        lines = [f"- {e.content}" for e in entries]
-        block = f"### Memory ({scope}):\n" + "\n".join(lines)
-        if used + len(block) > max_chars:
-            room = max_chars - used
-            if room > 80:
-                chunks.append(block[:room])
-            used = max_chars
-            break
-        chunks.append(block)
-        used += len(block)
+        if entries:
+            lines = [f"- {e.content}" for e in entries]
+            block = "### Memory (this conversation):\n" + "\n".join(lines)
+            # cap conversation block separately
+            if len(block) > 800:
+                block = block[:800] + " …"
+            chunks.append(block)
+
+    # 2. Global/agent: expose tag index, not full dump
+    tags = await get_memory_tags(db, agent_id=agent_id, conversation_id=None)
+    # count per scope for hint
+    counts = {}
+    for scope in ([f"agent:{agent_id}"] if agent_id is not None else []) + ["global"]:
+        r = await db.execute(select(MemoryEntry).where(MemoryEntry.scope == scope))
+        counts[scope] = len(r.scalars().all())
+    total = sum(counts.values())
+    if total > 0:
+        tag_line = ", ".join(f"`{t}`" for t in tags[:20]) if tags else "(no tags yet)"
+        if len(tags) > 20:
+            tag_line += f" +{len(tags)-20} more"
+        scope_detail = f" ({counts.get('global',0)} global"
+        if agent_id is not None:
+            scope_detail += f", {counts.get(f'agent:{agent_id}',0)} for this agent"
+        scope_detail += ")"
+        hint = (
+            f"### Persistent memory: {total} entries{scope_detail}\n"
+            + f"Tags in use: {tag_line}\n"
+            + "Use memory_search(query, top_k=5) for semantic search. "
+            + "You can also call memory_read(scope=\"global\", limit=20) and filter by tags. "
+            + "Call memory_search whenever the user references a past preference, project, or person."
+        )
+        chunks.append(hint)
 
     return "\n\n".join(chunks) if chunks else ""

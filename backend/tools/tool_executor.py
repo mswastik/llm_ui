@@ -139,6 +139,7 @@ class ToolExecutor:
                 "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
                 "list_providers", "add_provider",
                 "search_skills", "install_skill",
+                "list_conversations", "delete_conversation", "fetch_conversation",
             ):
                 async for p in self.admin_tool.execute(tool_name, arguments):
                     yield p

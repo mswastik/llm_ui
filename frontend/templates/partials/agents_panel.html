@@ -277,6 +277,12 @@
       </div>
     </div>
   </div>
+  <!-- Add Agent action -->
+  <div class="flex items-center justify-end mb-4" x-show="!loading && agents.length > 0 && !showCreate">
+    <button @click="newAgent()" class="btn btn-primary btn-sm">
+      <i class="ph ph-plus"></i> Add Agent
+    </button>
+  </div>
 
   <!-- Agent List -->
   <template x-if="loading">
@@ -355,24 +361,24 @@
               ><i class="ph ph-books text-xs"></i> RAG</span
             >
           </template>
-          <template x-if="agent.enabled_tools?.length">
-            <span
-              class="badge badge-primary text-xs"
-              x-text="agent.enabled_tools.length + ' tools'"
-            ></span>
-          </template>
-          <template x-if="agent.enabled_mcp_servers?.length">
-            <span
-              class="badge badge-primary text-xs"
-              x-text="agent.enabled_mcp_servers.length + ' MCP'"
-            ></span>
-          </template>
-          <template x-if="agent.enabled_skills?.length">
-            <span
-              class="badge badge-primary text-xs"
-              x-text="agent.enabled_skills.length + ' skills'"
-            ></span>
-          </template>
+          <span
+            class="badge text-xs"
+            :class="agent.enabled_tools?.length ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] border border-dashed border-[var(--border-primary)]'"
+            x-text="agent.enabled_tools?.length ? agent.enabled_tools.length + ' tools' : 'All tools'"
+            title="Empty = all built-in tools enabled for this agent"
+          ></span>
+          <span
+            class="badge text-xs"
+            :class="agent.enabled_mcp_servers?.length ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] border border-dashed border-[var(--border-primary)]'"
+            x-text="agent.enabled_mcp_servers?.length ? agent.enabled_mcp_servers.length + ' MCP' : 'All MCP'"
+            title="Empty = all connected MCP servers visible"
+          ></span>
+          <span
+            class="badge text-xs"
+            :class="agent.enabled_skills?.length ? 'badge-primary' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] border border-dashed border-[var(--border-primary)]'"
+            x-text="agent.enabled_skills?.length ? agent.enabled_skills.length + ' skills' : 'All skills'"
+            title="Empty = all skills available via load_skill"
+          ></span>
           <span
             class="badge badge-default text-xs"
             x-text="'Temp: ' + agent.temperature"

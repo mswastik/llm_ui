@@ -183,10 +183,31 @@ const chatComponent = () => ({
       this.selectedAgentId = e.detail.agentId
     })
 
-    // Focus the input only when the loaded conversation is new/empty (no history
-    // to read); when browsing an existing conversation, blur it so it collapses
-    // to its small height — the user clicks in to resume typing.
-    window.addEventListener('conversation-loaded', () => {
+    window.addEventListener('conversation-loaded', async () => {
+      // Show what the model WILL see on next turn — fetch preview for past chats
+      // (previously cleared to "No context yet", confusing for old threads).
+      const cid = this.$store.chat.currentConversationId
+      if (cid) {
+        try {
+          const data = await api.get(`/api/conversations/${encodeURIComponent(cid)}/context`)
+          this.contextInfo = data.context || null
+          this.$store.chat.contextInfo = this.contextInfo
+        } catch (e) {
+          console.warn('[chat] context preview failed', e)
+          this.contextInfo = null
+          this.$store.chat.contextInfo = null
+        }
+      } else {
+        this.contextInfo = null
+        this.$store.chat.contextInfo = null
+      }
+      // Fix G: don't leak attached files across threads
+      if (this.attachedFiles.length) {
+        this.attachedFiles.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview) })
+        this.attachedFiles = []
+      }
+      // Fix E: session overrides are per-thread; clear on switch
+      this.sessionMcpOverrides = []
       this.$nextTick(() => {
         if (this.$store.chat.messages.length === 0) {
           this.$refs?.chatInput?.focus()
@@ -194,13 +215,6 @@ const chatComponent = () => ({
           this.$refs?.chatInput?.blur()
         }
       })
-    })
-
-    // Auto-focus the chat input on init only for a fresh chat (no history)
-    this.$nextTick(() => {
-      if (this.$store.chat.messages.length === 0) {
-        this.$refs?.chatInput?.focus()
-      }
     })
   },
 
@@ -727,12 +741,22 @@ const chatComponent = () => ({
         this.$store.chat.toolStatus = {
           active: false, tool: data.tool, status: 'Error', progress: null
         }
-        msg.blocks.push({
-          type: 'tool_call', name: data.tool, arguments: {},
-          status: 'error', progress: 0, result: {error: data.error},
-          sources: [], progress_history: []
-        })
-        this.$store.ui.showToast(`Tool call incomplete: ${data.tool}`, 'warning')
+        // Update the pending Running block (from tool_call_start) instead of pushing a second one
+        const errBlock = [...msg.blocks].reverse().find(b =>
+          b.type === 'tool_call' && b.status !== 'completed' && b.status !== 'error'
+        )
+        if (errBlock) {
+          errBlock.status = 'error'
+          errBlock.result = { error: data.error }
+          errBlock.progress = 0
+        } else {
+          msg.blocks.push({
+            type: 'tool_call', name: data.tool, arguments: {},
+            status: 'error', progress: 0, result: {error: data.error},
+            sources: [], progress_history: []
+          })
+        }
+        this.$store.ui.showToast(`Tool error: ${data.tool} — ${data.error}`, 'warning')
         break
 
       case 'error':
@@ -750,6 +774,16 @@ const chatComponent = () => ({
         break
 
       case 'done':
+        // Fix B: backend now sends real message_id / version_group so the
+        // placeholder created with a fake helpers.generateId() gets patched
+        // with the DB id — second regenerate works without refresh.
+        if (data.message_id && msg) {
+          msg.id = data.message_id
+        }
+        if (data.version_group && msg) {
+          msg.version_group = data.version_group
+          msg.version = data.version || msg.version
+        }
         this.streamEndedNormally = true
         this.pendingTitleTimeout = setTimeout(() => sseService.close(), 5000)
         this.isLoading = false
@@ -798,8 +832,17 @@ const chatComponent = () => ({
 
   // ─── Tool Approval ─────────────────────────────────────
   async respondApproval(block, approved) {
+    if (block._approving) return
+    block._approving = true
     const active = this.$store.chat.activeStreaming
-    if (!active?.requestId) return
+    if (!active?.requestId) {
+      block._approving = false
+      this.$store.ui.showToast('No active request — page was refreshed. The partial response was saved; send a follow-up to retry.', 'warning')
+      block.status = 'error'
+      block.result = { error: 'Approval expired due to page reload. Send a message like "retry" or "approve and continue" to retry.' }
+      this.messages = [...this.$store.chat.messages]
+      return
+    }
     try {
       await api.post(`/api/tools/${active.requestId}/approve`, {
         decision: approved,
@@ -807,22 +850,45 @@ const chatComponent = () => ({
       })
       block.status = approved ? 'approved' : 'denied'
     } catch (e) {
-      this.$store.ui.showToast('Failed to send decision', 'error')
+      const msg = (e && e.message) ? e.message : String(e)
+      if (msg.includes('404') || msg.includes('No pending')) {
+        this.$store.ui.showToast('Approval window expired (15 min) or already handled — send a follow-up message to retry.', 'warning')
+        block.status = 'error'
+        block.result = { error: 'Approval expired — no pending gate. The previous response was saved; send a follow-up to retry the command.' }
+        this.messages = [...this.$store.chat.messages]
+      } else {
+        this.$store.ui.showToast('Failed to send decision: ' + msg, 'error')
+      }
+    } finally {
+      block._approving = false
     }
   },
 
-  // ─── Message Actions ──────────────────────────────────
   async deleteMessage(id, e) {
     e?.stopPropagation()
+    const target = this.messages.find(m => m.id === id) || this.$store.chat.messages.find(m => m.id === id)
+    const vg = target?.version_group || null
     if (!confirm('Delete this message?')) return
     try {
       await api.delete(`/api/messages/${id}`)
+      // Optimistically remove
       this.$store.chat.removeMessage(id)
+      // If versioned, reload conversation to show previous version in-place (avoid blank)
+      if (vg) {
+        try {
+          const cid = this.$store.chat.currentConversationId
+          if (cid) {
+            const data = await api.get(`/api/conversations/${encodeURIComponent(cid)}`)
+            this.$store.chat.messages = data.messages || []
+          }
+        } catch (err) {
+          console.warn('[chat] reload after delete failed', err)
+        }
+      }
     } catch (e) {
       this.$store.ui.showToast('Failed to delete', 'error')
     }
   },
-
   startEdit(id, content) {
     this.editingMessageId = id
     this.editContent = content
@@ -913,7 +979,8 @@ const chatComponent = () => ({
         max_version: data.version || 1  // Total version count (all pills shown up to this)
       }
       this.$store.chat.addMessage(newMsg)
-      const newIdx = this.messages.length - 1
+      // Use store length (not stale this.messages) — addMessage just pushed to store
+      const newIdx = this.$store.chat.messages.length - 1
 
       // Pass version info to SSE stream for backend to save correctly
       const handlers = sseService.stream(data.request_id, this.$store.chat.currentConversationId, {
@@ -925,6 +992,23 @@ const chatComponent = () => ({
         overrideServers: this.sessionMcpOverrides
       })
       handlers.onData((d) => this.processEvent(d, newIdx))
+
+      handlers.onError((error) => {
+        console.error('[chat] Regenerate stream error:', error)
+        this.$store.chat.stopStreaming()
+        const msg = this.messages[newIdx]
+        if (msg) msg.content += `\n\n❌ Error: ${error.message}`
+        this.$store.ui.showToast(`Stream error: ${error.message}`, 'error')
+      })
+
+      handlers.onComplete(() => {
+        if (!this.streamEndedNormally) {
+          console.warn('[chat] Regenerate stream ended without done event — response may be incomplete')
+          this.$store.ui.showToast('Response may be incomplete (stream interrupted)', 'warning')
+        }
+        this.streamEndedNormally = false
+        this.$store.chat.stopStreaming()
+      })
     } catch (e) {
       console.error('[chat] Regenerate:', e)
       this.isLoading = false

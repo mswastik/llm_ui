@@ -56,7 +56,7 @@ TERMINAL_TOOL_DEFINITION = {
 }
 
 MAX_OUTPUT_CHARS = 100_000
-APPROVAL_TIMEOUT_SECONDS = 300
+APPROVAL_TIMEOUT_SECONDS = 900  # 15 min for local use — long enough to step away, short enough to not leak forever
 
 # Hard-coded dangerous patterns — merged with settings, never removable.
 HARD_BLOCKED_PATTERNS = [
@@ -281,11 +281,16 @@ class TerminalTool:
                 "approval_key": approval_key,
             }
             approved = await approval_manager.wait_gate(gate, approval_key)
-            self._audit({**audit_base, "verdict": "approved" if approved else "denied",
+            is_timeout = not gate.event.is_set()
+            self._audit({**audit_base, "verdict": "timeout" if is_timeout else ("approved" if approved else "denied"),
                          "binary": binary})
             if not approved:
-                yield {"type": "tool_error", "tool": "run_command",
-                       "error": "Command denied by user"}
+                if is_timeout:
+                    yield {"type": "tool_error", "tool": "run_command",
+                           "error": "Approval timed out after 15 minutes (no response) — command was not executed. Send a follow-up message to retry or approve again."}
+                else:
+                    yield {"type": "tool_error", "tool": "run_command",
+                           "error": "Command denied by user"}
                 return
 
         yield {"type": "tool_progress", "tool": "run_command",

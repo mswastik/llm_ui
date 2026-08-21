@@ -61,15 +61,16 @@ MEMORY_SEARCH_DEFINITION = {
     "function": {
         "name": "memory_search",
         "description": (
-            "Semantic search over long-term memory entries. Use when you need "
-            "to recall something specific from past sessions. Returns the most "
-            "relevant entries with their IDs."
+            "Semantic search over long-term memory. Tags shown in system prompt "
+            "(e.g. `project-x`, `preference`) narrow the search when provided. "
+            "Use query for meaning, tags for explicit label filter."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to look for"},
-                "top_k": {"type": "integer", "description": "Max results (default 5)"}
+                "top_k": {"type": "integer", "description": "Max results (default 5)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tag filter — only entries containing at least one tag are returned"}
             },
             "required": ["query"]
         }
@@ -111,9 +112,14 @@ class MemoryTool:
             print(f"[MEMORY] embedding failed: {e}")
             return None
 
-    async def _search(self, query: str, top_k: int = 5, limit: int = 200) -> List[Dict]:
+    async def _search(self, query: str, top_k: int = 5, limit: int = 200, tags: Optional[List[str]] = None) -> List[Dict]:
         async with get_db() as db:
             entries = await list_memory_entries(db, limit=limit)
+        # Tag pre-filter (if provided)
+        if tags:
+            tag_set = set(t.strip() for t in tags if t.strip())
+            if tag_set:
+                entries = [e for e in entries if tag_set & set(e.get("tags") or [])]
         query_emb = await self._embed(query)
 
         if query_emb is not None:
@@ -178,15 +184,16 @@ class MemoryTool:
             elif tool_name == "memory_search":
                 query = str(arguments.get("query", "")).strip()
                 top_k = int(arguments.get("top_k") or 5)
+                tags = arguments.get("tags") or None
                 if not query:
                     yield {"type": "tool_error", "tool": tool_name, "error": "Empty query"}
                     return
-                entries = await self._search(query, top_k=top_k)
+                entries = await self._search(query, top_k=top_k, tags=tags)
                 result = {
                     "query": query,
                     "count": len(entries),
                     "entries": [{"id": e["id"], "scope": e["scope"], "content": e["content"],
-                                 "source": e["source"]} for e in entries]
+                                 "source": e["source"], "tags": e["tags"]} for e in entries]
                 }
                 yield {"type": "tool_progress", "tool": tool_name, "status": f"{len(entries)} matches",
                        "progress": 100, "result": result}

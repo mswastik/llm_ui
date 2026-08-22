@@ -1,7 +1,7 @@
 /**
  * Chat Component — Messages, streaming, tools, TTS
  */
-import { sseService } from '../services/sse.js'
+import { sseService } from '../services/sse.js?v=64'
 import { ttsService } from '../services/tts.js?v=45'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
@@ -600,12 +600,11 @@ const chatComponent = () => ({
         }
       )
       await this.streamResponse(data.request_id)
+    } catch (e) {
+      console.error('[chat] Send error:', e)
       this.isLoading = false
       this.$store.chat.isLoading = false
       this.$store.ui.showToast('Failed to send message', 'error')
-    }
-    catch (e) {
-      console.error('[chat] Error sending message:', e)
     }
   },
 
@@ -661,10 +660,9 @@ const chatComponent = () => ({
       overrideServers: this.sessionMcpOverrides,
       thinkingMode: this.thinkingMode || 'auto'
     })
+    handlers.onData((data) => this.processEvent(data, msgIndex))
 
     handlers.onError((error) => {
-      console.error('[chat] Stream error:', error)
-      this.$store.chat.stopStreaming()
       const msg = this.messages[msgIndex]
       if (msg) msg.content += `\n\n❌ Error: ${error.message}`
       this.$store.ui.showToast(`Stream error: ${error.message}`, 'error')

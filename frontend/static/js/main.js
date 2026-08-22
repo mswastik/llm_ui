@@ -27,7 +27,7 @@ console.log('[main] Alpine ESM module loaded')
 // ═══════════════════════════════════════════════════════════
 // 2. Import SSE + TTS services (no Alpine dependency)
 // ═══════════════════════════════════════════════════════════
-import { SSEService, sseService } from './services/sse.js?v=63'
+import { SSEService, sseService } from './services/sse.js?v=64'
 import { TTSService, ttsService } from './services/tts.js?v=45'
 window.sseService = sseService
 window.ttsService = ttsService
@@ -55,7 +55,7 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
 import { sidebar } from './components/sidebar.js?v=63'
-import { chatComponent } from './components/chat.js?v=66'
+import { chatComponent } from './components/chat.js?v=70'
 import { settings } from './components/settings.js?v=68'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'

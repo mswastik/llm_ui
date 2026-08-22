@@ -8,3 +8,5 @@ graphify-out/
 .vscode/
 models/
 llm_ui.db.pre-migrate
+llm_ui.db-shm
+llm_ui.db-wal

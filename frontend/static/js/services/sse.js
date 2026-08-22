@@ -22,8 +22,8 @@ export class SSEService {
       (options.overrideServers?.length ? `&override_servers=${encodeURIComponent(options.overrideServers.join(','))}` : '') +
       (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '') +
       (options.version ? `&version=${options.version}` : '') +
-      (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '')
-
+      (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '') +
+      (options.thinkingMode && options.thinkingMode !== 'auto' ? `&thinking_mode=${encodeURIComponent(options.thinkingMode)}` : '')
     fetch(url, { signal: this.controller.signal })
       .then(response => {
         const reader = response.body.getReader()

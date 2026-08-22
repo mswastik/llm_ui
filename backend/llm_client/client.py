@@ -47,7 +47,8 @@ class LLMClient:
         chat_template_kwargs: dict = None,
         tool_choice: str = None,
         base_url: str = None,
-        api_key: str = None
+        api_key: str = None,
+        thinking_mode: str = None
     ) -> AsyncGenerator[Dict, None]:
         """
         Stream chat completion from llama.cpp with retry logic.
@@ -74,22 +75,48 @@ class LLMClient:
             "model": active_model,
             "messages": messages,
             "stream": True,
+            "stream_options": {"include_usage": True},
             "temperature": active_temperature,
             "max_tokens": active_max_tokens,
             "cache_prompt": True,  # Reuse KV cache from previous request when prompt prefix matches
         }
-
         # Add chat_template_kwargs if provided (for thinking suppression on models that support it)
         if chat_template_kwargs:
             payload["chat_template_kwargs"] = chat_template_kwargs
 
-        # Add tool definitions if available
+        # Map thinking_mode to provider-agnostic payload fields
+        # - llama.cpp: chat_template_kwargs.enable_thinking
+        # - OpenAI o-series: reasoning_effort (low|medium|high|none)
+        # - Anthropic: thinking.budget (handled via reasoning_effort fallback)
+        if thinking_mode and thinking_mode != "auto":
+            # Normalize
+            tm = thinking_mode.strip().lower()
+            # Preserve any existing chat_template_kwargs and inject enable_thinking
+            ct = dict(payload.get("chat_template_kwargs") or {})
+            if tm == "off":
+                ct["enable_thinking"] = False
+                payload["chat_template_kwargs"] = ct
+                # Signal disabled reasoning for OpenAI-compatible providers
+                payload["reasoning_effort"] = "none"
+            elif tm == "on":
+                ct["enable_thinking"] = True
+                payload["chat_template_kwargs"] = ct
+            elif tm in ("low", "medium", "high"):
+                ct["enable_thinking"] = True
+                payload["chat_template_kwargs"] = ct
+                payload["reasoning_effort"] = tm
+                # Anthropic-style alias (ignored by OpenAI/llama.cpp, used by proxies)
+                # Provide budget hint for providers that expect `thinking`
+                budget_map = {"low": 1024, "medium": 4096, "high": 8192}
+                payload["thinking"] = {"type": "enabled", "budget_tokens": budget_map[tm]}
+            else:
+                # Unknown mode — treat as auto (no-op)
+                pass
         active_tools = tools
         if active_tools:
             payload["tools"] = active_tools
             if tool_choice:
                 payload["tool_choice"] = tool_choice
-
         # Retry logic for transient server errors
         last_error = None
         request_completed = False  # Track if request completed successfully
@@ -113,18 +140,27 @@ class LLMClient:
                         f"{current_base_url}/v1/chat/completions",
                         json=payload,
                         headers=request_headers,
-                        timeout=360
+                        timeout=1260
                     ) as response:
                         if response.status == 500:
                             # Server error - likely temporary overload, retry
                             error_text = await response.text()
                             raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
                         elif response.status != 200:
-                            # Other errors - don't retry
                             error_text = await response.text()
+                            # Graceful fallback: some strict proxies reject unknown fields
+                            if response.status == 400:
+                                lower = error_text.lower()
+                                popped = False
+                                for key in ("stream_options", "reasoning_effort", "chat_template_kwargs", "thinking"):
+                                    if key in lower and key in payload:
+                                        print(f"[DEBUG] Provider rejected {key}, retrying without it")
+                                        payload.pop(key, None)
+                                        popped = True
+                                if popped:
+                                    await response.release()
+                                    continue
                             raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
-
-                        print(f"[DEBUG] LLM request successful, streaming response")
                         
                         # Stream content more immediately
                         buffer = ""
@@ -153,6 +189,11 @@ class LLMClient:
                         TOOL_PROGRESS_INTERVAL = 10  # seconds
                         last_tool_progress_yield = time.monotonic()
 
+                        # Performance metrics: wall-clock + server-provided usage/timings
+                        t0 = time.monotonic()
+                        ttft_ms = None
+                        last_usage = None
+                        last_timings = None
                         async for chunk in response.content.iter_any():
                             # Decode chunk and add to buffer
                             text = chunk.decode('utf-8')
@@ -186,10 +227,19 @@ class LLMClient:
 
                                     try:
                                         chunk_data = json.loads(data)
+                                        # Capture server-provided metrics (present on final chunk)
+                                        if chunk_data.get("usage"):
+                                            last_usage = chunk_data["usage"]
+                                        if chunk_data.get("timings"):
+                                            last_timings = chunk_data["timings"]
+                                        # Some providers nest timings under usage; handle too
+                                        # OpenAI-compatible final chunk may have usage with prompt_tokens_details
                                         choices = chunk_data.get("choices") or [{}]
                                         delta = choices[0].get("delta", {})
                                         finish_reason = choices[0].get("finish_reason")
-
+                                        # TTFT: first content/thinking/tool token
+                                        if ttft_ms is None and (delta.get("content") or delta.get("thinking") or delta.get("reasoning_content") or delta.get("tool_calls")):
+                                            ttft_ms = int((time.monotonic() - t0) * 1000)
                                         # Handle thinking content (for thinking models like DeepSeek)
                                         # Check multiple field names that llama.cpp might use
                                         thinking_content = delta.get("thinking") or delta.get("reasoning_content")
@@ -429,8 +479,56 @@ class LLMClient:
                                                 "type": "error",
                                                 "error": str(e)
                                             }
-                                    # Successfully completed streaming - mark as completed
-                                    request_completed = True
+                        # Successfully completed streaming — mark completed and emit metrics
+                        request_completed = True
+                        try:
+                            total_duration_ms = int((time.monotonic() - t0) * 1000)
+                            prompt_tokens = None
+                            completion_tokens = None
+                            total_tokens = None
+                            cached_tokens = None
+                            if last_usage:
+                                prompt_tokens = last_usage.get("prompt_tokens")
+                                completion_tokens = last_usage.get("completion_tokens")
+                                total_tokens = last_usage.get("total_tokens")
+                                pd = last_usage.get("prompt_tokens_details") or {}
+                                if isinstance(pd, dict) and pd.get("cached_tokens") is not None:
+                                    cached_tokens = pd.get("cached_tokens")
+                            if last_timings:
+                                if prompt_tokens is None:
+                                    prompt_tokens = last_timings.get("prompt_n")
+                                if completion_tokens is None:
+                                    completion_tokens = last_timings.get("predicted_n")
+                                if cached_tokens is None and last_timings.get("cache_n") is not None:
+                                    cached_tokens = last_timings.get("cache_n")
+                                if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+                                    total_tokens = prompt_tokens + completion_tokens
+                            tps = None
+                            prompt_tps = None
+                            if last_timings:
+                                tps = last_timings.get("predicted_per_second")
+                                prompt_tps = last_timings.get("prompt_per_second")
+                            if tps is None and completion_tokens and total_duration_ms:
+                                gen_ms = (total_duration_ms - (ttft_ms or 0)) if ttft_ms else total_duration_ms
+                                if gen_ms > 0:
+                                    tps = round(completion_tokens / (gen_ms / 1000), 2)
+                            metrics = {
+                                "ttft_ms": ttft_ms,
+                                "total_duration_ms": total_duration_ms,
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": total_tokens,
+                                "cached_tokens": cached_tokens,
+                                "tokens_per_second": tps,
+                                "prompt_per_second": prompt_tps,
+                            }
+                            if last_usage is not None:
+                                metrics["usage"] = last_usage
+                            if last_timings is not None:
+                                metrics["timings"] = last_timings
+                            yield {"type": "metrics", "metrics": metrics}
+                        except Exception as _e:
+                            print(f"[METRICS] failed to emit: {_e}")
 
                         # Premature-EOS guard: with MTP speculative decoding, llama.cpp's
                         # draft model can predict EOS right after the reasoning phase,

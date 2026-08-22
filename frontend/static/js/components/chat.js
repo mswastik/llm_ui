@@ -21,7 +21,7 @@ const chatComponent = () => ({
   selectedProviderId: '',
   availableAgents: [],
   documents: [],
-
+  thinkingMode: 'auto',
   // MCP server management (composer dropdown)
   mcpServers: [],
   // Servers the user manually enabled for this session even though the
@@ -78,8 +78,30 @@ const chatComponent = () => ({
     return a ? a.name : 'Agent'
   },
 
+  // ─── Thinking modes ───────────────────────────────
+  thinkingModes: [
+    { id: 'auto', label: 'Auto', icon: 'ph-brain', desc: 'Model default' },
+    { id: 'off', label: 'Off', icon: 'ph-prohibit', desc: 'No reasoning' },
+    { id: 'on', label: 'On', icon: 'ph-brain', desc: 'Thinking on' },
+    { id: 'low', label: 'Low', icon: 'ph-lightning', desc: 'Quick reasoning' },
+    { id: 'medium', label: 'Med', icon: 'ph-lightning', desc: 'Balanced' },
+    { id: 'high', label: 'High', icon: 'ph-lightning', desc: 'Deep reasoning' },
+  ],
+  get thinkingModeLabel() {
+    const m = this.thinkingModes.find(x => x.id === this.thinkingMode)
+    return m ? m.label : 'Auto'
+  },
+  get thinkingModeIcon() {
+    const m = this.thinkingModes.find(x => x.id === this.thinkingMode)
+    return m ? m.icon : 'ph-brain'
+  },
+  selectThinkingMode(mode) {
+    this.thinkingMode = mode || 'auto'
+    this.$store.chat.thinkingMode = this.thinkingMode
+    this.$store.chat.setThinkingMode(this.thinkingMode)
+  },
+
   get mcpSummary() {
-    const n = this.mcpServers.length
     if (!n) return 'MCP'
     if (this.agentMcpRestricted) {
       const allowed = this.agentAllowedServerNames
@@ -159,6 +181,8 @@ const chatComponent = () => ({
     this.selectedProviderId = this.$store.chat.selectedProviderId
     this.$store.chat.loadSavedAgent()
     this.selectedAgentId = this.$store.chat.selectedAgentId
+    if (typeof this.$store.chat.loadSavedThinkingMode === 'function') this.$store.chat.loadSavedThinkingMode()
+    this.thinkingMode = this.$store.chat.thinkingMode || 'auto'
     if (this.selectedAgentId) {
       // Agent config overrides chat defaults: apply its model/provider on load too.
       this.$store.chat.applyAgentConfig()
@@ -229,8 +253,8 @@ const chatComponent = () => ({
     this.availableAgents = this.$store.chat.availableAgents
     this.currentConversationTitle = this.$store.chat.currentConversationTitle
     this.documents = this.$store.ui.documents || []
+    this.thinkingMode = this.$store.chat.thinkingMode || 'auto'
   },
-
   // ─── Data Loading ─────────────────────────────────────
   async loadModels() {
     try {
@@ -571,15 +595,17 @@ const chatComponent = () => ({
           document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
           files: uploadedFiles,
           model: this.selectedModel,
-          provider_id: this.selectedProviderId
+          provider_id: this.selectedProviderId,
+          thinking_mode: this.thinkingMode || 'auto'
         }
       )
       await this.streamResponse(data.request_id)
-    } catch (e) {
-      console.error('[chat] Send error:', e)
       this.isLoading = false
       this.$store.chat.isLoading = false
       this.$store.ui.showToast('Failed to send message', 'error')
+    }
+    catch (e) {
+      console.error('[chat] Error sending message:', e)
     }
   },
 
@@ -632,10 +658,9 @@ const chatComponent = () => ({
       documentIds: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
       model: this.selectedModel,
       providerId: this.selectedProviderId,
-      overrideServers: this.sessionMcpOverrides
+      overrideServers: this.sessionMcpOverrides,
+      thinkingMode: this.thinkingMode || 'auto'
     })
-
-    handlers.onData((data) => this.processEvent(data, msgIndex))
 
     handlers.onError((error) => {
       console.error('[chat] Stream error:', error)
@@ -749,7 +774,6 @@ const chatComponent = () => ({
           errBlock.status = 'error'
           errBlock.result = { error: data.error }
           errBlock.progress = 0
-        } else {
           msg.blocks.push({
             type: 'tool_call', name: data.tool, arguments: {},
             status: 'error', progress: 0, result: {error: data.error},
@@ -757,6 +781,52 @@ const chatComponent = () => ({
           })
         }
         this.$store.ui.showToast(`Tool error: ${data.tool} — ${data.error}`, 'warning')
+        break
+
+      case 'auto_action':
+        // Autonomous post-response actions: memory extraction, skill reflection, title, jobs
+        // Show live in-thread and persist as blocks (backend also saves to DB)
+        {
+          const action = data.action || 'unknown'
+          const status = data.status || 'running'
+          const detail = data.detail || {}
+          // Find existing running block for same action to update, otherwise push
+          let aaBlock = null
+          if (status === 'running') {
+            msg.blocks.push({
+              type: 'auto_action',
+              action,
+              status,
+              detail,
+              ts: Date.now()
+            })
+          } else {
+            // completed / skipped / error -> update the last running block for this action
+            aaBlock = [...msg.blocks].reverse().find(b => b.type === 'auto_action' && b.action === action && b.status === 'running')
+            if (aaBlock) {
+              aaBlock.status = status
+              aaBlock.detail = detail
+              aaBlock.ts = Date.now()
+            } else {
+              // No running placeholder (e.g. reload case or skipped immediately) -> push final
+              msg.blocks.push({
+                type: 'auto_action',
+                action,
+                status,
+                detail,
+                ts: Date.now()
+              })
+            }
+            // Toast for interesting completions (not for every skipped)
+            if (status === 'completed' && action === 'memory' && detail.count) {
+              this.$store.ui.showToast(`Saved ${detail.count} memory fact(s)`, 'success')
+            } else if (status === 'completed' && action === 'skill' && detail.skill) {
+              this.$store.ui.showToast(`Skill draft: ${detail.skill}`, 'success')
+            } else if (status === 'error') {
+              console.warn(`[auto_action] ${action} error:`, detail.reason)
+            }
+          }
+        }
         break
 
       case 'error':
@@ -773,8 +843,23 @@ const chatComponent = () => ({
         if (ci !== -1) this.$store.chat.conversations[ci].title = data.title
         break
 
+      case 'metrics':
+        {
+          const m = data.metrics || {}
+          msg.metadata = msg.metadata || {}
+          // Merge — aggregated final overwrites per-iteration partials
+          msg.metadata.metrics = m
+          // Keep a direct reference for simpler template access and reactivity
+          msg._metrics = m
+          // Ensure model badge exists for live streaming (not yet persisted)
+          if (!msg.metadata.model) {
+            const fallbackModel = this.contextInfo?.model || this.selectedModel || ''
+            if (fallbackModel) msg.metadata.model = fallbackModel
+          }
+        }
+        break
+
       case 'done':
-        // Fix B: backend now sends real message_id / version_group so the
         // placeholder created with a fake helpers.generateId() gets patched
         // with the DB id — second regenerate works without refresh.
         if (data.message_id && msg) {
@@ -813,7 +898,6 @@ const chatComponent = () => ({
 
     // Force reactivity
     this.messages = [...this.$store.chat.messages]
-
     // Scroll to bottom
     //this.$nextTick(() => {
     //  const el = document.getElementById('messages-container')
@@ -828,6 +912,42 @@ const chatComponent = () => ({
     } else {
       msg.blocks.push({ type, content })
     }
+  },
+
+  // ─── Metrics helpers ───────────────────────────────
+  getMetrics(message) {
+    return message?.metadata?.metrics || message?._metrics || null
+  },
+  formatTps(m) {
+    const v = m?.tokens_per_second
+    if (v == null) return null
+    return (v >= 10 ? Math.round(v) : v.toFixed(1)) + ' tok/s'
+  },
+  formatDuration(ms) {
+    if (ms == null) return null
+    if (ms < 1000) return ms + ' ms'
+    return (ms / 1000).toFixed(1) + ' s'
+  },
+  metricsShortLabel(message) {
+    const m = this.getMetrics(message)
+    if (!m) return ''
+    const parts = []
+    const tps = this.formatTps(m)
+    if (tps) parts.push(tps)
+    if (m.ttft_ms != null) parts.push('TTFT ' + this.formatDuration(m.ttft_ms))
+    return parts.join(' · ')
+  },
+  metricsTooltip(message) {
+    const m = this.getMetrics(message)
+    if (!m) return ''
+    const lines = []
+    if (m.prompt_tokens != null) lines.push('Prompt: ' + m.prompt_tokens + (m.cached_tokens ? ' (' + m.cached_tokens + ' cached)' : '') + ' tok')
+    if (m.completion_tokens != null) lines.push('Completion: ' + m.completion_tokens + ' tok')
+    if (m.total_tokens != null) lines.push('Total: ' + m.total_tokens + ' tok')
+    if (m.tokens_per_second != null) lines.push('Speed: ' + this.formatTps(m) + (m.prompt_per_second ? ' (prompt ' + (m.prompt_per_second >= 10 ? Math.round(m.prompt_per_second) : m.prompt_per_second.toFixed(1)) + ' tok/s)' : ''))
+    if (m.ttft_ms != null) lines.push('TTFT: ' + this.formatDuration(m.ttft_ms))
+    if (m.total_duration_ms != null) lines.push('Duration: ' + this.formatDuration(m.total_duration_ms))
+    return lines.join('\n')
   },
 
   // ─── Tool Approval ─────────────────────────────────────
@@ -989,9 +1109,9 @@ const chatComponent = () => ({
         version: data.version,
         versionGroup: data.version_group,
         providerId: this.selectedProviderId,
-        overrideServers: this.sessionMcpOverrides
+        overrideServers: this.sessionMcpOverrides,
+        thinkingMode: this.thinkingMode || 'auto'
       })
-      handlers.onData((d) => this.processEvent(d, newIdx))
 
       handlers.onError((error) => {
         console.error('[chat] Regenerate stream error:', error)
@@ -1039,7 +1159,8 @@ const chatComponent = () => ({
       msg.blocks = targetVersion.blocks || []
       msg.tool_calls = targetVersion.tool_calls
       msg.thinking = targetVersion.thinking
-
+      msg.metadata = targetVersion.metadata || msg.metadata
+      msg._metrics = targetVersion.metadata?.metrics || null
       // Force reactivity
       this.messages = [...this.$store.chat.messages]
     } catch (e) {

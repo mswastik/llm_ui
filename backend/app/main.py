@@ -418,26 +418,29 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
     only for turns that used tools. Output is always a DRAFT under
     skills/_drafts/ — the user accepts or rejects it in the Skills modal.
     Never writes live skills silently.
+
+    Returns a dict describing what happened for auto_action visibility:
+    {"action":"skill","status":"completed|skipped|error","detail":{...}}
     """
     try:
         from settings import settings_manager
         interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
         if interval <= 0:
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": "skill reflection disabled"}}
         msgs = await get_conversation_messages(db, conversation_id)
         assistant_count = len([m for m in msgs if m["role"] == "assistant"])
         if assistant_count % interval != 0:
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": f"cadence {assistant_count % interval}/{interval}"}}
         last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
         last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
         if not last_user or not last_assistant:
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": "no exchange found"}}
         # Only reflect when tools were used in the last assistant message.
         last_msg = msgs[-1]
         blocks = (last_msg.get("metadata") or {}).get("blocks") or []
         tool_names = [b.get("name") for b in blocks if b.get("type") == "tool_call"]
         if not tool_names:
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": "no tool calls in last turn"}}
         prompt = (
             "You are a skill-builder for an AI assistant. Decide whether this task is worth "
             "turning into a reusable skill.\n\n"
@@ -466,34 +469,38 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
         m = _re.search(r"\{.*\}", raw, _re.DOTALL)
         if not m:
             print("[SKILLS] reflection: no JSON in model output")
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": "no JSON in model output", "raw": raw[:500]}}
         try:
             decision = _json.loads(m.group(0))
         except _json.JSONDecodeError as e:
             print(f"[SKILLS] reflection: unparseable JSON: {e}")
-            return
+            return {"action": "skill", "status": "error", "detail": {"reason": f"unparseable JSON: {e}", "raw": raw[:500]}}
         action = str(decision.get("action") or "none").strip().lower()
         if action not in ("create", "improve"):
             print(f"[SKILLS] reflection: action={action} — no draft")
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": f"model chose none ({action})", "decision": decision}}
         name = str(decision.get("name") or "").strip()
         description = str(decision.get("description") or "").strip()
         instructions = str(decision.get("instructions") or "").strip()
         reason = str(decision.get("reason") or "").strip()
         if not name or not instructions:
             print("[SKILLS] reflection: missing name/instructions")
-            return
+            return {"action": "skill", "status": "error", "detail": {"reason": "missing name/instructions", "decision": decision}}
         from tools.skills_tool import write_skill, get_skill
         if action == "improve" and not get_skill(name):
             print(f"[SKILLS] reflection: improve target '{name}' does not exist — skipping")
-            return
+            return {"action": "skill", "status": "skipped", "detail": {"reason": f"improve target '{name}' not found"}}
         body = instructions
         if reason:
             body = f"<!-- reflection reason: {reason} -->\n\n" + body
         skill = write_skill(name, description or name, body, draft=True)
         print(f"[SKILLS] reflection: draft proposed: {name} ({action}) — review in Skills modal")
+        return {"action": "skill", "status": "completed", "detail": {"skill": name, "skill_action": action, "description": description, "reason": reason}}
     except Exception as e:
         print(f"[SKILLS] reflection failed: {e}")
+        import traceback as _tb
+        _tb.print_exc()
+        return {"action": "skill", "status": "error", "detail": {"reason": str(e)[:500]}}
 
 
 async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, agent_id=None, model=None,
@@ -502,20 +509,23 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
 
     Runs every `memory_auto_extract_interval` assistant turns. Uses a fast,
     low-max-token completion; failures are logged, never propagated.
+
+    Returns dict for auto_action visibility:
+    {"action":"memory","status":"completed|skipped|error","detail":{...}}
     """
     try:
         from settings import settings_manager
         interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
         if interval <= 0:
-            return
+            return {"action": "memory", "status": "skipped", "detail": {"reason": "memory extraction disabled"}}
         msgs = await get_conversation_messages(db, conversation_id)
         assistant_count = len([m for m in msgs if m["role"] == "assistant"])
         if assistant_count % interval != 0:
-            return
+            return {"action": "memory", "status": "skipped", "detail": {"reason": f"cadence {assistant_count % interval}/{interval}"}}
         last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
         last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
         if not last_user or not last_assistant:
-            return
+            return {"action": "memory", "status": "skipped", "detail": {"reason": "no exchange found"}}
         prompt = (
             "Extract durable, reusable facts or user preferences from this conversation exchange. "
             'Output ONLY a JSON array of strings. Each string must be a concise, standalone fact '
@@ -544,7 +554,7 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
             items = [l.strip("- ").strip() for l in raw.splitlines()
                      if l.strip() and len(l.strip()) > 5 and not l.strip().startswith("```")]
         if not items:
-            return
+            return {"action": "memory", "status": "skipped", "detail": {"reason": "no durable facts found"}}
         from database.memory_crud import create_memory_entry
         scope = f"agent:{agent_id}" if agent_id is not None else "global"
         added = 0
@@ -554,8 +564,13 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
         if added:
             await db.commit()
             print(f"[MEMORY] auto-extracted {added} fact(s) (scope={scope})")
+            return {"action": "memory", "status": "completed", "detail": {"facts": items[:10], "count": added, "scope": scope}}
+        return {"action": "memory", "status": "skipped", "detail": {"reason": "no facts saved"}}
     except Exception as e:
         print(f"[MEMORY] extraction failed: {e}")
+        import traceback as _tb2
+        _tb2.print_exc()
+        return {"action": "memory", "status": "error", "detail": {"reason": str(e)[:500]}}
 
 
 async def _stream_with_stall_timeout(generator, initial_timeout=600, stall_timeout=60):
@@ -628,7 +643,8 @@ async def _unregister_stream(conversation_id: str, request_id: str) -> None:
 async def _save_assistant_message(db, conversation_id: str, assistant_message: str,
                                   thinking_content: str, message_blocks: list,
                                   model: Optional[str], version: int,
-                                  version_group: Optional[str]):
+                                  version_group: Optional[str],
+                                  metrics: Optional[dict] = None):
     """Persist an assistant message. Returns saved message dict or None."""
     if not (assistant_message.strip() or thinking_content.strip() or message_blocks):
         return None
@@ -646,6 +662,8 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
         else:
             consolidated_blocks.append(block)
     message_extra_metadata = {"model": model} if model else {}
+    if metrics:
+        message_extra_metadata["metrics"] = metrics
     saved = await add_message(
         db, conversation_id, "assistant", assistant_message,
         blocks=consolidated_blocks or None,
@@ -653,7 +671,6 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
         version=version,
         version_group=version_group
     )
-    # Commit immediately so the message is persisted even if client disconnects
     await db.commit()
     return saved
 
@@ -667,7 +684,8 @@ async def _core_stream_handler(
     version: int = 1,
     version_group: Optional[str] = None,
     provider_id: Optional[str] = None,
-    override_servers: Optional[list] = None
+    override_servers: Optional[list] = None,
+    thinking_mode: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """Universal SSE handler for streaming LLM responses and tool execution.
     
@@ -1039,6 +1057,7 @@ async def _core_stream_handler(
             try:
                 yield f"data: {json.dumps({'type': 'context_info', 'context': {
                     'model': model or 'default',
+                    'thinking_mode': thinking_mode or 'auto',
                     'system_prompt': system_prompt_content,
                     'message_count': len(llm_messages),
                     'tool_count': len(all_tools),
@@ -1050,7 +1069,7 @@ async def _core_stream_handler(
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 35  # Prevent infinite loops
             tool_iteration = 0
-
+            turn_metrics: list[dict] = []  # one entry per LLM call in this turn
             while tool_iteration < max_tool_iterations:
                 tool_iteration += 1
                 print(f"[DEBUG] Conversation loop iteration {tool_iteration}")
@@ -1065,7 +1084,8 @@ async def _core_stream_handler(
                 try:
                     async for chunk in _stream_with_stall_timeout(
                         llm_client.stream_chat(llm_messages, model=model, tools=all_tools,
-                                               base_url=provider_base_url, api_key=provider_api_key),
+                                               base_url=provider_base_url, api_key=provider_api_key,
+                                               thinking_mode=thinking_mode),
                         initial_timeout=600,
                         stall_timeout=60
                     ):
@@ -1130,8 +1150,13 @@ async def _core_stream_handler(
                                 })
                                 yield f"data: {json.dumps({'type': 'tool_error', 'tool': tool_name, 'error': error_msg})}\n\n"
 
+                            elif chunk_type == "metrics":
+                                m = chunk.get("metrics") or {}
+                                turn_metrics.append(m)
+                                # Forward live so UI can show streaming speed without waiting for DB
+                                yield f"data: {json.dumps({'type': 'metrics', 'metrics': m})}\n\n"
+
                             elif chunk_type == "error":
-                                # LLM request failure (connection, auth, invalid model...) —
                                 # surface it instead of silently ending with an empty reply.
                                 error_msg = chunk.get("error", "LLM request failed")
                                 print(f"[LLM ERROR] {error_msg}")
@@ -1310,14 +1335,66 @@ async def _core_stream_handler(
             # Log total messages sent to LLM after all iterations
             print(f"[DEBUG] Total messages in llm_messages after {tool_iteration} iterations: {len(llm_messages)}")
             
+            # Aggregate performance metrics across all LLM calls in this turn
+            final_metrics = None
+            if turn_metrics:
+                if len(turn_metrics) == 1:
+                    final_metrics = turn_metrics[0]
+                else:
+                    # Multi-iteration (tool loop): sum counts/durations, keep first TTFT
+                    prompt_sum = sum((m.get("prompt_tokens") or 0) for m in turn_metrics)
+                    compl_sum = sum((m.get("completion_tokens") or 0) for m in turn_metrics)
+                    total_sum = sum((m.get("total_tokens") or 0) for m in turn_metrics)
+                    ttft_first = next((m.get("ttft_ms") for m in turn_metrics if m.get("ttft_ms") is not None), None)
+                    dur_sum = sum((m.get("total_duration_ms") or 0) for m in turn_metrics)
+                    cached_sum = None
+                    if any(m.get("cached_tokens") is not None for m in turn_metrics):
+                        cached_sum = sum((m.get("cached_tokens") or 0) for m in turn_metrics)
+                    # Aggregated tok/s from totals (exclude first TTFT for generation speed)
+                    agg_tps = None
+                    gen_ms = (dur_sum - (ttft_first or 0)) if ttft_first else dur_sum
+                    if compl_sum and gen_ms > 0:
+                        agg_tps = round(compl_sum / (gen_ms / 1000), 2)
+                    final_metrics = {
+                        "ttft_ms": ttft_first,
+                        "total_duration_ms": dur_sum,
+                        "prompt_tokens": prompt_sum or None,
+                        "completion_tokens": compl_sum or None,
+                        "total_tokens": total_sum or (prompt_sum + compl_sum if prompt_sum or compl_sum else None),
+                        "cached_tokens": cached_sum,
+                        "tokens_per_second": agg_tps,
+                        "prompt_per_second": turn_metrics[0].get("prompt_per_second"),
+                    }
+                    # Keep raw per-iteration breakdown for debugging
+                    final_metrics["_iterations"] = turn_metrics
+                try:
+                    yield f"data: {json.dumps({'type': 'metrics', 'metrics': final_metrics, 'aggregated': len(turn_metrics) > 1})}\n\n"
+                except Exception as _e:
+                    print(f"[METRICS] emit aggregated failed: {_e}")
+            
             # Save assistant message with message blocks for sequential display
             # (also used on client-cancel so a steering message can continue)
             assistant_saved = await _save_assistant_message(
                 db, conversation_id, assistant_message, thinking_content,
-                message_blocks, model, version, version_group
+                message_blocks, model, version, version_group,
+                metrics=final_metrics
             )
             saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else None
             saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
+
+            # ── Visible autonomous actions (persisted + streamed) ──────────
+            # Collect auto_action blocks that will be appended to the saved message
+            # and streamed live so the thread shows "what the model did after answering".
+            import time as _aa_time
+            activity_blocks: list = []
+            def _aa_block(action: str, status: str, detail: dict | None = None):
+                return {
+                    "type": "auto_action",
+                    "action": action,
+                    "status": status,
+                    "detail": detail or {},
+                    "ts": int(_aa_time.time() * 1000),
+                }
 
             # Finalize open job runs for this conversation (Phase 5).
             if assistant_saved:
@@ -1329,6 +1406,8 @@ async def _core_stream_handler(
                     open_runs = [r for r in runs
                                  if r["conversation_id"] == conversation_id and r["status"] == "running"]
                     if open_runs:
+                        # stream start
+                        yield f"data: {json.dumps({'type': 'auto_action', 'action': 'jobs', 'status': 'running', 'detail': {'count': len(open_runs)}})}\n\n"
                         jobs_dir = _os.path.join(OUTPUTS_DIR, "jobs")
                         _os.makedirs(jobs_dir, exist_ok=True)
                         for run in open_runs:
@@ -1346,13 +1425,22 @@ async def _core_stream_handler(
                                                      error="No assistant output produced")
                         await db.commit()
                         print(f"[JOBS] finalized {len(open_runs)} run(s) for conversation {conversation_id[:8]}")
+                        blk = _aa_block("jobs", "completed", {"count": len(open_runs), "run_ids": [r["id"] for r in open_runs]})
+                        activity_blocks.append(blk)
+                        yield f"data: {json.dumps({'type': 'auto_action', 'action': 'jobs', 'status': 'completed', 'detail': blk['detail']})}\n\n"
                 except Exception as e:
                     print(f"[JOBS] finalize failed: {e}")
+                    blk = _aa_block("jobs", "error", {"reason": str(e)[:400]})
+                    activity_blocks.append(blk)
+                    yield f"data: {json.dumps({'type': 'auto_action', 'action': 'jobs', 'status': 'error', 'detail': blk['detail']})}\n\n"
 
             # Auto memory extraction (Phase 2) — every N assistant turns.
             if assistant_saved:
+                # stream start immediately so UI shows spinner even for skipped cadence
+                yield f"data: {json.dumps({'type': 'auto_action', 'action': 'memory', 'status': 'running'})}\n\n"
+                mem_res = None
                 try:
-                    await asyncio.wait_for(
+                    mem_res = await asyncio.wait_for(
                         _extract_memory_from_exchange(
                             db, conversation_id, llm_client,
                             agent_id=conversation.agent_id if conversation else None,
@@ -1363,20 +1451,37 @@ async def _core_stream_handler(
                     )
                 except asyncio.TimeoutError:
                     print("[MEMORY] extraction timed out")
+                    mem_res = {"action": "memory", "status": "error", "detail": {"reason": "timeout (90s)"}}
                 except Exception as e:
                     print(f"[MEMORY] extraction error: {e}")
+                    mem_res = {"action": "memory", "status": "error", "detail": {"reason": str(e)[:400]}}
+                # Normalize result
+                if not isinstance(mem_res, dict) or "status" not in mem_res:
+                    mem_res = {"action": "memory", "status": "skipped", "detail": {"reason": "no result"}}
+                blk = _aa_block("memory", mem_res.get("status", "skipped"), mem_res.get("detail", {}))
+                activity_blocks.append(blk)
+                yield f"data: {json.dumps({'type': 'auto_action', 'action': 'memory', 'status': blk['status'], 'detail': blk['detail']})}\n\n"
 
                 # Self-improvement reflection (Phase 4) — proposes skill drafts.
+                yield f"data: {json.dumps({'type': 'auto_action', 'action': 'skill', 'status': 'running'})}\n\n"
+                skill_res = None
                 try:
-                    await asyncio.wait_for(
+                    skill_res = await asyncio.wait_for(
                         _maybe_reflect_and_propose_skill(db, conversation_id, llm_client, model=model,
                                                          base_url=provider_base_url, api_key=provider_api_key),
                         timeout=90
                     )
                 except asyncio.TimeoutError:
                     print("[SKILLS] reflection timed out")
+                    skill_res = {"action": "skill", "status": "error", "detail": {"reason": "timeout (90s)"}}
                 except Exception as e:
                     print(f"[SKILLS] reflection error: {e}")
+                    skill_res = {"action": "skill", "status": "error", "detail": {"reason": str(e)[:400]}}
+                if not isinstance(skill_res, dict) or "status" not in skill_res:
+                    skill_res = {"action": "skill", "status": "skipped", "detail": {"reason": "no result"}}
+                blk2 = _aa_block("skill", skill_res.get("status", "skipped"), skill_res.get("detail", {}))
+                activity_blocks.append(blk2)
+                yield f"data: {json.dumps({'type': 'auto_action', 'action': 'skill', 'status': blk2['status'], 'detail': blk2['detail']})}\n\n"
 
             # Generate title using model (reuses KV cache via cache_prompt: true)
             # Skip if the conversation already has a meaningful title (not the default)
@@ -1387,16 +1492,66 @@ async def _core_stream_handler(
                     user_count = len([m for m in msgs if m["role"] == "user"])
                     assistant_count = len([m for m in msgs if m["role"] == "assistant"])
 
-                if user_count == 1 and assistant_count == 1:
-                    title = await _generate_title_with_model(
-                        llm_messages, assistant_message, llm_client, tools=all_tools, model=model,
-                        base_url=provider_base_url, api_key=provider_api_key,
-                        thinking_content=thinking_content
-                    )
-                    if title:
-                        await update_conversation_title(db, conversation_id, title)
+                should_title = (user_count == 1 and assistant_count == 1)
+                if should_title:
+                    yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'running'})}\n\n"
+                    title = ""
+                    try:
+                        title = await _generate_title_with_model(
+                            llm_messages, assistant_message, llm_client, tools=all_tools, model=model,
+                            base_url=provider_base_url, api_key=provider_api_key,
+                            thinking_content=thinking_content
+                        )
+                    except Exception as e:
+                        print(f"[TITLE] generation failed: {e}")
+                        blk3 = _aa_block("title", "error", {"reason": str(e)[:400]})
+                        activity_blocks.append(blk3)
+                        yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'error', 'detail': blk3['detail']})}\n\n"
+                        title = ""
+                    else:
+                        if title:
+                            try:
+                                await update_conversation_title(db, conversation_id, title)
+                                await db.commit()
+                            except Exception as e:
+                                print(f"[TITLE] db update failed: {e}")
+                            yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                            blk3 = _aa_block("title", "completed", {"title": title})
+                            activity_blocks.append(blk3)
+                            yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'completed', 'detail': blk3['detail']})}\n\n"
+                        else:
+                            blk3 = _aa_block("title", "skipped", {"reason": "model returned empty title"})
+                            activity_blocks.append(blk3)
+                            yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'skipped', 'detail': blk3['detail']})}\n\n"
+                else:
+                    blk3 = _aa_block("title", "skipped", {"reason": f"not first turn (u:{user_count} a:{assistant_count}) or custom title"})
+                    activity_blocks.append(blk3)
+                    yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'skipped', 'detail': blk3['detail']})}\n\n"
+            elif assistant_saved:
+                blk3 = _aa_block("title", "skipped", {"reason": "conversation already titled"})
+                activity_blocks.append(blk3)
+                yield f"data: {json.dumps({'type': 'auto_action', 'action': 'title', 'status': 'skipped', 'detail': blk3['detail']})}\n\n"
+
+            # Persist activity blocks to the saved assistant message (so reload shows them)
+            if assistant_saved and activity_blocks:
+                try:
+                    from sqlalchemy import select as _select
+                    from backend.database.models import Message as _Msg
+                    result = await db.execute(_select(_Msg).where(_Msg.id == saved_msg_id))
+                    msg_row = result.scalar_one_or_none()
+                    if msg_row is not None:
+                        meta = dict(msg_row.extra_metadata or {})
+                        existing_blocks = list(meta.get("blocks") or [])
+                        # Append only auto_action blocks (avoid duplicating content/thinking)
+                        meta["blocks"] = existing_blocks + activity_blocks
+                        msg_row.extra_metadata = meta
+                        # Also surface thinking/content for backward compat already handled
                         await db.commit()
-                        yield f"data: {json.dumps({'type': 'title_update', 'title': title})}\n\n"
+                        print(f"[AUTO_ACTION] persisted {len(activity_blocks)} blocks to message {saved_msg_id[:8]}")
+                except Exception as e:
+                    print(f"[AUTO_ACTION] persist failed: {e}")
+                    import traceback as _tb3
+                    _tb3.print_exc()
 
             # Yield done event (include real ids so frontend can fix placeholder after regenerate)
             yield f"data: {json.dumps({'type': 'done', 'message_id': saved_msg_id, 'version_group': saved_version_group, 'version': version})}\n\n"
@@ -1426,7 +1581,6 @@ async def _core_stream_handler(
     finally:
         await _unregister_stream(conversation_id, request_id)
 
-
 @app.get("/api/stream/{request_id}")
 async def stream_response(
     request_id: str,
@@ -1435,14 +1589,16 @@ async def stream_response(
     model: str = None,
     document_ids: str = None,
     provider_id: str = None,
-    override_servers: str = None
+    override_servers: str = None,
+    thinking_mode: str = None
 ):
     """Stream LLM response with real-time tool execution updates."""
     doc_ids = document_ids.split(",") if document_ids else None
     overrides = override_servers.split(",") if override_servers else None
     return StreamingResponse(
         _core_stream_handler(request_id, conversation_id, enable_rag, model, doc_ids,
-                             provider_id=provider_id, override_servers=overrides),
+                             provider_id=provider_id, override_servers=overrides,
+                             thinking_mode=thinking_mode),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1460,7 +1616,8 @@ async def stream_regenerate_response(
     version: int = 1,
     version_group: str = None,
     provider_id: str = None,
-    override_servers: str = None
+    override_servers: str = None,
+    thinking_mode: str = None
 ):
     """Stream regenerated LLM response using unified handler.
     Supports versioned regeneration through version/version_group params.
@@ -1471,9 +1628,9 @@ async def stream_regenerate_response(
             request_id, conversation_id,
             enable_rag=False, model=model,
             version=version, version_group=version_group,
-            provider_id=provider_id, override_servers=overrides
+            provider_id=provider_id, override_servers=overrides,
+            thinking_mode=thinking_mode
         ),
-        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

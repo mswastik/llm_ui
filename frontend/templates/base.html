@@ -16,14 +16,13 @@
 
     <!-- Custom Theme CSS -->
     <link rel="stylesheet" href="/static/css/theme.css?v=40">
-
     <!-- Alpine.js stores data (plain objects, no Alpine dependency) -->
     <script>
       // ═══════════════════════════════════════════════════════════
       // Store data must be available BEFORE main.js imports Alpine.
       // This inline script runs synchronously during HTML parse.
       // ═══════════════════════════════════════════════════════════
-      window.__chatStoreData__ = {
+    window.__chatStoreData__ = {
         conversations: [], currentConversationId: null, currentConversationTitle: 'New Chat',
         messages: [], inputMessage: '', isLoading: false,
         activeStreaming: { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] },
@@ -31,6 +30,7 @@
         selectedModel: '', availableModels: [], selectedAgentId: null, availableAgents: [], currentAgentConfig: null,
         selectedProviderId: '', availableProviders: [],
         selectedDocumentIds: [], editingMessageId: null, editContent: '',
+        thinkingMode: localStorage.getItem('thinkingMode') || 'auto',
         addConversation(c) { this.conversations.unshift(c) },
         updateConversation(id, u) { const i = this.conversations.findIndex(x => x.id === id); if (i !== -1) Object.assign(this.conversations[i], u) },
         removeConversation(id) { this.conversations = this.conversations.filter(x => x.id !== id) },
@@ -42,6 +42,8 @@
         loadSavedModel() { const s = localStorage.getItem('selectedModel'); if (s && this.availableModels.some(m => m.id === s)) { this.selectedModel = s; const m = this.availableModels.find(x => x.id === s); this.selectedProviderId = m?.provider_id || localStorage.getItem('selectedProviderId') || this.availableProviders[0]?.id || '' } },
         setAgent(v) { this.selectedAgentId = v; this.currentAgentConfig = this.availableAgents.find(a => a.id === v) || null; localStorage.setItem('selectedAgentId', v) },
         loadSavedAgent() { const s = localStorage.getItem('selectedAgentId'); if (s && this.availableAgents.some(a => a.id === parseInt(s))) { this.selectedAgentId = parseInt(s); this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId) } },
+        setThinkingMode(v) { this.thinkingMode = v || 'auto'; localStorage.setItem('thinkingMode', this.thinkingMode) },
+        loadSavedThinkingMode() { const s = localStorage.getItem('thinkingMode'); if (s && ['auto','off','on','low','medium','high'].includes(s)) this.thinkingMode = s },
         startStreaming(rq, cid, mi, t, ms) { this.activeStreaming = { isStreaming: true, requestId: rq, conversationId: cid, msgIndex: mi, conversationTitle: t || '', messages: ms || [] }; this.isLoading = true },
         stopStreaming() { this.activeStreaming = { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] }; this.isLoading = false; this.toolStatus = { active: false, tool: '', status: '', progress: null } },
         applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model) { this.selectedModel = a.model; const m = this.availableModels.find(x => x.id === a.model); if (m) this.selectedProviderId = m.provider_id; else if (a.provider_id) this.selectedProviderId = a.provider_id } this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
@@ -82,13 +84,11 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=73"></script>
-
+    <script type="module" src="/static/js/main.js?v=75"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] h-screen overflow-hidden"
       {% block body_attrs %}{% endblock %}>
-
     {% block content %}{% endblock %}
 
     <!-- Toast Container -->

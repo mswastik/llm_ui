@@ -181,18 +181,39 @@
                     </div>
                   </template>
 
-                  <!-- Model Badge -->
-                  <template
-                    x-if="message.role === 'assistant' && message.metadata?.model"
-                  >
-                    <div class="mb-2">
-                      <span
-                        class="badge badge-primary"
-                        x-text="message.metadata.model"
-                      ></span>
+                  <!-- Model Badge + Performance Metrics -->
+                  <template x-if="message.role === 'assistant' && (message.metadata?.model || getMetrics(message))">
+                    <div class="mb-2 flex items-center gap-2 flex-wrap">
+                      <template x-if="message.metadata?.model">
+                        <span class="badge badge-primary" x-text="message.metadata.model"></span>
+                      </template>
+                      <!-- Inline short label (tok/s · TTFT) -->
+                      <template x-if="metricsShortLabel(message)">
+                        <span class="text-xs text-[var(--text-tertiary)]" x-text="'· ' + metricsShortLabel(message)" :title="metricsTooltip(message)"></span>
+                      </template>
+                      <!-- Hover details card -->
+                      <div x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false" class="relative">
+                        <button x-show="getMetrics(message)" type="button" class="text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)] flex items-center gap-0.5" title="Performance details">
+                          <i class="ph ph-chart-bar text-[11px]"></i>
+                          <i class="ph ph-caret-down text-[10px]" :class="open ? 'rotate-180' : ''" style="transition: transform 0.15s"></i>
+                        </button>
+                        <div x-show="open" x-cloak x-transition.opacity
+                             class="absolute left-0 top-full mt-1.5 z-30 w-64 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] shadow-xl p-3 text-xs leading-4">
+                          <div class="font-semibold text-[var(--text-primary)] mb-1.5 flex items-center gap-1"><i class="ph ph-lightning"></i> Performance</div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between" x-show="getMetrics(message)?.prompt_tokens != null"><span class="text-[var(--text-tertiary)]">Prompt</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.prompt_tokens ?? '—') + ' tok' + (getMetrics(message)?.cached_tokens ? ' (' + getMetrics(message).cached_tokens + ' cached)' : '')"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.completion_tokens != null"><span class="text-[var(--text-tertiary)]">Completion</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.completion_tokens ?? '—') + ' tok'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.total_tokens != null"><span class="text-[var(--text-tertiary)]">Total</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.total_tokens ?? '—') + ' tok'"></span></div>
+                            <div class="border-t border-[var(--border)] my-1"></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.tokens_per_second != null"><span class="text-[var(--text-tertiary)]">Speed</span><span class="font-mono text-[var(--text-primary)]" x-text="formatTps(getMetrics(message)) || '—'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.prompt_per_second != null"><span class="text-[var(--text-tertiary)]">Prompt speed</span><span class="font-mono text-[var(--text-primary)]" x-text="getMetrics(message)?.prompt_per_second ? (getMetrics(message).prompt_per_second >= 10 ? Math.round(getMetrics(message).prompt_per_second) : getMetrics(message).prompt_per_second.toFixed(1)) + ' tok/s' : '—'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.ttft_ms != null"><span class="text-[var(--text-tertiary)]">TTFT</span><span class="font-mono text-[var(--text-primary)]" x-text="formatDuration(getMetrics(message)?.ttft_ms) || '—'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.total_duration_ms != null"><span class="text-[var(--text-tertiary)]">Duration</span><span class="font-mono text-[var(--text-primary)]" x-text="formatDuration(getMetrics(message)?.total_duration_ms) || '—'"></span></div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </template>
-
                   <!-- Sequential Blocks -->
                   <template x-if="message.blocks?.length > 0">
                     <div class="space-y-2">
@@ -645,6 +666,119 @@
                               </div>
                             </div>
                           </div>
+
+                          <!-- Auto Action Block (visible autonomous actions: memory/skill/title/jobs) -->
+                          <div
+                            x-show="block.type === 'auto_action'"
+                            class="auto-action-block overflow-hidden rounded-md border"
+                            :class="{
+                              'border-[var(--border-primary)] bg-[var(--bg-tertiary)]': block.status === 'completed',
+                              'border-amber-200 bg-amber-50/50': block.status === 'running',
+                              'border-[var(--border-primary)] bg-[var(--bg-primary)] opacity-70': block.status === 'skipped',
+                              'border-red-200 bg-red-50/50': block.status === 'error'
+                            }"
+                          >
+                            <div
+                              @click="toggleBlock('auto-' + message.id + '-' + blockIdx)"
+                              class="auto-action-header flex items-center gap-2 px-3 py-2 text-sm cursor-pointer select-none"
+                            >
+                              <i
+                                class="ph text-base"
+                                :class="{
+                                  'ph-check-circle text-[var(--success)]': block.status === 'completed',
+                                  'ph-spinner animate-spin text-amber-600': block.status === 'running',
+                                  'ph-minus-circle text-[var(--text-tertiary)]': block.status === 'skipped',
+                                  'ph-x-circle text-[var(--error)]': block.status === 'error',
+                                  'ph-brain': block.action === 'memory' && block.status !== 'running' && block.status !== 'completed' && block.status !== 'error',
+                                  'ph-lightbulb': block.action === 'skill' && block.status !== 'running' && block.status !== 'completed' && block.status !== 'error',
+                                  'ph-tag': block.action === 'title' && block.status !== 'running' && block.status !== 'completed' && block.status !== 'error',
+                                  'ph-briefcase': block.action === 'jobs' && block.status !== 'running' && block.status !== 'completed' && block.status !== 'error'
+                                }"
+                              ></i>
+                              <!-- Running uses spinner, completed uses check, pick action icon otherwise -->
+                              <template x-if="block.status === 'running'">
+                                <i class="ph ph-spinner animate-spin text-amber-600 text-base"></i>
+                              </template>
+                              <template x-if="block.status === 'completed' && block.action === 'memory'">
+                                <i class="ph ph-brain text-base text-[var(--success)]"></i>
+                              </template>
+                              <template x-if="block.status === 'completed' && block.action === 'skill'">
+                                <i class="ph ph-lightbulb text-base text-[var(--success)]"></i>
+                              </template>
+                              <template x-if="block.status === 'completed' && block.action === 'title'">
+                                <i class="ph ph-tag text-base text-[var(--success)]"></i>
+                              </template>
+                              <template x-if="block.status === 'completed' && block.action === 'jobs'">
+                                <i class="ph ph-briefcase text-base text-[var(--success)]"></i>
+                              </template>
+                              <span class="font-medium text-xs uppercase tracking-wide text-[var(--text-secondary)]" x-text="block.action"></span>
+                              <span class="text-sm text-[var(--text-primary)] truncate" x-text="
+                                block.action === 'memory' && block.status === 'completed' ? `Saved ${block.detail?.count || 0} fact(s)` :
+                                block.action === 'memory' && block.status === 'skipped' ? 'No facts to save' :
+                                block.action === 'skill' && block.status === 'completed' ? `Draft: ${block.detail?.skill || 'skill'}` :
+                                block.action === 'skill' && block.status === 'skipped' ? 'No skill needed' :
+                                block.action === 'title' && block.status === 'completed' ? `Title: ${block.detail?.title || ''}` :
+                                block.action === 'title' && block.status === 'skipped' ? 'Title unchanged' :
+                                block.action === 'jobs' && block.status === 'completed' ? `${block.detail?.count || 0} job(s) finalized` :
+                                block.status === 'running' ? 'Running…' :
+                                block.status === 'error' ? 'Error' :
+                                block.status
+                              "></span>
+                              <span class="ml-auto flex items-center gap-1.5">
+                                <template x-if="block.status === 'completed'"><span class="badge badge-success text-[10px]">done</span></template>
+                                <template x-if="block.status === 'running'"><span class="badge badge-warning text-[10px] animate-pulse">running</span></template>
+                                <template x-if="block.status === 'skipped'"><span class="badge bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] text-[10px]">skipped</span></template>
+                                <template x-if="block.status === 'error'"><span class="badge badge-error text-[10px]">error</span></template>
+                                <i class="ph ph-caret-right text-xs transition-transform" :class="isExpanded('auto-' + message.id + '-' + blockIdx) ? 'rotate-90' : ''"></i>
+                              </span>
+                            </div>
+                            <div x-show="isExpanded('auto-' + message.id + '-' + blockIdx)" x-collapse>
+                              <div class="px-3 pb-3 space-y-2">
+                                <!-- Memory detail -->
+                                <template x-if="block.action === 'memory'">
+                                  <div class="space-y-1.5">
+                                    <template x-if="block.status === 'completed' && block.detail?.facts?.length">
+                                      <div>
+                                        <div class="text-xs text-[var(--text-tertiary)] mb-1">Facts saved (<span x-text="block.detail.scope"></span>):</div>
+                                        <ul class="list-disc list-inside text-xs text-[var(--text-primary)] space-y-0.5">
+                                          <template x-for="(fact, fi) in block.detail.facts" :key="fi">
+                                            <li x-text="fact"></li>
+                                          </template>
+                                        </ul>
+                                      </div>
+                                    </template>
+                                    <template x-if="block.status !== 'completed'">
+                                      <div class="text-xs text-[var(--text-tertiary)]" x-text="block.detail?.reason || 'No detail'"></div>
+                                    </template>
+                                  </div>
+                                </template>
+                                <!-- Skill detail -->
+                                <template x-if="block.action === 'skill'">
+                                  <div class="space-y-1.5">
+                                    <template x-if="block.status === 'completed'">
+                                      <div class="text-xs space-y-1">
+                                        <div><span class="text-[var(--text-tertiary)]">Skill:</span> <span class="font-medium text-[var(--text-primary)]" x-text="block.detail.skill"></span> <span class="badge badge-primary text-[10px]" x-text="block.detail.skill_action"></span></div>
+                                        <div x-show="block.detail.description" class="text-[var(--text-secondary)]" x-text="block.detail.description"></div>
+                                        <div x-show="block.detail.reason" class="text-[var(--text-tertiary)] italic" x-text="'— ' + block.detail.reason"></div>
+                                      </div>
+                                    </template>
+                                    <template x-if="block.status !== 'completed'">
+                                      <div class="text-xs text-[var(--text-tertiary)]" x-text="block.detail?.reason || block.detail?.raw || 'No detail'"></div>
+                                    </template>
+                                  </div>
+                                </template>
+                                <!-- Title detail -->
+                                <template x-if="block.action === 'title'">
+                                  <div class="text-xs text-[var(--text-tertiary)]" x-text="block.detail?.title || block.detail?.reason || 'No detail'"></div>
+                                </template>
+                                <!-- Jobs detail -->
+                                <template x-if="block.action === 'jobs'">
+                                  <div class="text-xs text-[var(--text-tertiary)]" x-text="block.status === 'completed' ? (block.detail.count + ' job(s) written to outputs/jobs/') : (block.detail?.reason || '')"></div>
+                                </template>
+                                <div class="text-[10px] text-[var(--text-tertiary)]" x-text="block.detail?.raw ? block.detail.raw.substring(0,300) : ''"></div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </template>
                   <!-- Message Actions at bottom of bubble -->
@@ -1031,6 +1165,39 @@
                   <div x-show="availableModels.length === 0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">
                     No models available
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Thinking Mode Selector -->
+            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+              <button
+                type="button"
+                @click="open = !open"
+                class="dropdown-btn"
+                :class="thinkingMode !== 'auto' ? 'dropdown-btn-active' : ''"
+                title="Thinking mode"
+              >
+                <i :class="thinkingModeIcon + ' text-sm'"></i>
+                <span x-text="thinkingModeLabel"></span>
+                <i class="ph ph-caret-down text-xs"></i>
+              </button>
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[180px]">
+                <div class="py-1">
+                  <template x-for="mode in thinkingModes" :key="mode.id">
+                    <button
+                      type="button"
+                      @click="selectThinkingMode(mode.id); open = false"
+                      class="dropdown-item justify-between"
+                      :class="thinkingMode === mode.id ? 'dropdown-item-active' : ''"
+                    >
+                      <span class="flex items-center gap-1.5">
+                        <i :class="mode.icon + ' text-xs'"></i>
+                        <span x-text="mode.label"></span>
+                      </span>
+                      <span class="text-[10px] text-[var(--text-tertiary)] ml-2" x-text="mode.desc"></span>
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>

@@ -139,11 +139,15 @@ async def add_message(
         # in the column — the full result/sources/progress payload lives in
         # metadata.blocks (the render source of truth), so storing it twice
         # roughly doubled message size for every tool-using message.
+        # Preserve tool_call `id` for KV cache exact replay (prompt must match byte-for-byte).
         tool_call_blocks = [b for b in blocks if b.get('type') == 'tool_call']
         if tool_call_blocks:
             tool_calls = []
-            for block in tool_call_blocks:
+            for idx, block in enumerate(tool_call_blocks):
+                # Use stored id if present (set during live tool loop), else synthesize deterministically
+                tid = block.get('id') or block.get('tool_call_id') or f"{block.get('name','tool')}_{idx}"
                 tool_calls.append({
+                    'id': tid,
                     'name': block.get('name'),
                     'arguments': block.get('arguments', {}),
                     'status': block.get('status', 'completed'),

@@ -35,7 +35,9 @@
   "terminal_allowed_dirs": [
     ".",
     "./uploads",
-    "./outputs"
+    "./outputs",
+    "/home/swastik/.llm-ui",
+    "/home/swastik/.hermes"
   ],
   "terminal_allowed_commands": [
     "python3",

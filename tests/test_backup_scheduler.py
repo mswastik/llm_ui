@@ -42,7 +42,8 @@ class BackupSchedulerTest(unittest.IsolatedAsyncioTestCase):
         calls = []
         with self._patch_loop(), \
              patch.object(backup_mod, "backup_database",
-                          side_effect=lambda: calls.append(1) or {"success": True}):
+                          side_effect=lambda: calls.append(1) or {"success": True}), \
+             patch.object(backup_mod, "_load_metadata", lambda _: {}):
             self.scheduler.start()
             tasks = [self.scheduler._task]
             for _ in range(3):
@@ -62,7 +63,8 @@ class BackupSchedulerTest(unittest.IsolatedAsyncioTestCase):
             fired_at.append(self.chunks[0])
             calls.append(1)
             return {"success": True}
-        with self._patch_loop(), patch.object(backup_mod, "backup_database", fake_backup):
+        with self._patch_loop(), patch.object(backup_mod, "backup_database", fake_backup), \
+             patch.object(backup_mod, "_load_metadata", lambda _: {}):
             self.scheduler.start()
             await REAL_SLEEP(0)  # let the scheduler run a few chunks
             # We are still well short of the interval → no backup yet
@@ -76,6 +78,7 @@ class BackupSchedulerTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(c >= CHUNKS_PER_INTERVAL for c in fired_at),
                             "backup fired before the interval elapsed")
             await self.scheduler.stop()
+
 
 
 if __name__ == "__main__":

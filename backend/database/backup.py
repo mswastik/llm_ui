@@ -167,35 +167,70 @@ class BackupScheduler:
         self.start()
 
     async def _run_loop(self):
-        """Main scheduler loop."""
+        """Main scheduler loop — last_backup-aware, no pile-ups."""
         while self._running:
             try:
-                if settings_manager.settings.backup_enabled:
-                    interval = int(settings_manager.settings.backup_interval_hours * 3600)
-                else:
-                    interval = 3600  # Check every hour if backup gets enabled
+                enabled = bool(settings_manager.settings.backup_enabled)
+                interval = int(settings_manager.settings.backup_interval_hours * 3600) if enabled else 3600
             except Exception as e:
-                print(f"[BACKUP] Scheduler error: {e}")
+                print(f"[BACKUP] Scheduler error reading settings: {e}")
+                enabled = False
                 interval = 3600
 
-            # Sleep the interval FIRST, then back up. Starting/restarting the
-            # scheduler must not fire an instant backup — that piled up several
-            # backups at the same time whenever settings were saved.
-            for _ in range(max(1, interval // 5)):
-                if not self._running:
-                    return
-                await asyncio.sleep(5)
-
-            # Re-check after sleeping; the enabled flag may have changed.
-            if not settings_manager.settings.backup_enabled:
+            if not enabled:
+                # Not enabled — poll every hour for a settings change
+                for _ in range(max(1, interval // 5)):
+                    if not self._running:
+                        return
+                    await asyncio.sleep(5)
                 continue
+
+            # Enabled — compute how long since last backup
+            backup_dir = settings_manager.settings.backup_path
+            metadata = _load_metadata(backup_dir)
+            last_iso = metadata.get("last_backup")
+            if last_iso:
+                try:
+                    last_dt = datetime.fromisoformat(last_iso)
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                except Exception:
+                    elapsed = interval  # treat parse failure as overdue
+            else:
+                # No prior backup — wait a full interval (matches test expectation)
+                # Use wall-clock elapsed since scheduler start is not tracked,
+                # so we treat elapsed as 0 and will sleep for the full interval
+                # on the first iteration, then back up.
+                elapsed = 0
+
+            if elapsed < interval:
+                remaining = int(interval - elapsed)
+                for _ in range(max(1, remaining // 5)):
+                    if not self._running:
+                        return
+                    await asyncio.sleep(5)
+                # Re-check after sleeping; the enabled flag may have changed.
+                if not settings_manager.settings.backup_enabled:
+                    continue
+                # Fall through to backup — we have now waited the remaining time
+
+            # Overdue (or exactly due) — perform backup now
             try:
                 result = backup_database()
                 if not result.get("success"):
                     print(f"[BACKUP] Scheduled backup failed: {result.get('error')}")
             except Exception as e:
                 print(f"[BACKUP] Scheduler error: {e}")
+                continue
 
+            # Overdue (or exactly due) — perform backup now
+            try:
+                result = backup_database()
+                if not result.get("success"):
+                    print(f"[BACKUP] Scheduled backup failed: {result.get('error')}")
+            except Exception as e:
+                print(f"[BACKUP] Scheduler error: {e}")
 
 # Global scheduler instance
 backup_scheduler = BackupScheduler()

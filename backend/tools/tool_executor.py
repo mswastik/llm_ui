@@ -99,7 +99,8 @@ class ToolExecutor:
             tools.append(RUN_JOB_DEFINITION)
 
         if mcp_tools:
-            for tool in mcp_tools:
+            # Deterministic order for KV cache stability (server+name)
+            for tool in sorted(mcp_tools, key=lambda t: (t.get("server",""), t.get("name",""))):
                 openai_tool = {
                     "type": "function",
                     "function": {
@@ -110,6 +111,8 @@ class ToolExecutor:
                 }
                 tools.append(openai_tool)
 
+        # Sort builtins deterministically? Keep insertion order for builtins but ensure no accidental set ordering.
+        # For KV stability, final list order is: builtins (fixed above) + sorted MCP tools — fully deterministic.
         return tools
 
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], request_id: str, call_key: str = None, conversation_id: str = None, skill_allowlist: List[str] = None) -> AsyncGenerator[Dict, None]:

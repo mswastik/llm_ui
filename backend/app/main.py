@@ -250,10 +250,56 @@ async def get_conversation_context(conversation_id: str):
                     )
         except Exception as e:
             print(f"[SKILLS] context preview failed: {e}")
-        # messages + tools count preview
+        # messages + tools count preview — use same KV-aware replay as stream handler
         try:
             messages = await get_conversation_messages(db, conversation_id)
-            llm_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
+            llm_messages = []
+            for msg in messages:
+                role = msg["role"]
+                content = msg["content"]
+                metadata = msg.get("metadata") or {}
+                if role == "user" and (metadata.get("files") or []):
+                    # Keep preview simple: one entry per user message with files
+                    llm_messages.append({"role": role, "content": content})
+                    continue
+                blocks = (metadata.get("blocks") or []) if isinstance(metadata, dict) else []
+                tool_blocks = [b for b in blocks if b.get("type") == "tool_call"] if role == "assistant" else []
+                has_tools = bool(role == "assistant" and msg.get("tool_calls") and tool_blocks)
+                if not has_tools:
+                    m = {"role": role, "content": content}
+                    if role == "assistant" and msg.get("thinking"):
+                        m["reasoning_content"] = msg["thinking"]
+                    llm_messages.append(m)
+                else:
+                    first_tool_pos = next((i for i, b in enumerate(blocks) if b.get("type") == "tool_call"), len(blocks))
+                    last_tool_pos = len(blocks) - 1 - next((i for i, b in enumerate(reversed(blocks)) if b.get("type") == "tool_call"), len(blocks))
+                    pre_content = "".join(b.get("content","") for b in blocks[:first_tool_pos] if b.get("type")=="content")
+                    post_parts = [b.get("content","") for b in blocks[last_tool_pos+1:] if b.get("type")=="content"]
+                    post_content = "".join(post_parts) if post_parts else (content or "")
+                    tcs=[]
+                    for idx, tc in enumerate(msg.get("tool_calls") or []):
+                        args = tc.get("arguments") or {}
+                        if not isinstance(args, dict):
+                            args={}
+                        tid = tc.get("id") or f"{tc.get('name','tool')}_{idx}"
+                        if idx < len(tool_blocks) and tool_blocks[idx].get("id"):
+                            tid = tool_blocks[idx]["id"]
+                        tcs.append({"id": tid, "type":"function","function":{"name":tc.get("name","unknown"),"arguments":__import__("json").dumps(args)}})
+                    llm_msg2 = {"role":"assistant","content":pre_content}
+                    if msg.get("thinking"):
+                        llm_msg2["reasoning_content"]=msg["thinking"]
+                    if tcs:
+                        llm_msg2["tool_calls"]=tcs
+                    llm_messages.append(llm_msg2)
+                    for idx, b in enumerate(tool_blocks):
+                        tid = b.get("id") or (tcs[idx]["id"] if idx < len(tcs) else f"{b.get('name','tool')}_{idx}")
+                        try:
+                            cres = __import__("json").dumps(b.get("result"), default=str) if b.get("result") is not None else "No result"
+                        except Exception:
+                            cres = str(b.get("result") or "No result")
+                        llm_messages.append({"role":"tool","content":cres,"tool_call_id":tid})
+                    if post_content and post_content.strip():
+                        llm_messages.append({"role":"assistant","content":post_content})
             if system_prompt_content:
                 llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
             mcp_tools = []
@@ -410,37 +456,37 @@ async def _generate_title_with_model(
 
 
 async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client, model=None,
-                                           base_url=None, api_key=None):
+                                           base_url=None, api_key=None,
+                                           llm_messages=None, assistant_message=None, thinking_content=None,
+                                           tools=None):
     """Self-improvement loop (Phase 4): propose a skill draft after a
     multi-tool task.
 
-    Runs on the same cadence as memory extraction (every N assistant turns),
-    only for turns that used tools. Output is always a DRAFT under
-    skills/_drafts/ — the user accepts or rejects it in the Skills modal.
-    Never writes live skills silently.
+    Insight-based: runs whenever the last turn used tools; the LLM decides
+    if the procedure is worth turning into a skill (no fixed cadence).
+    Prompt reuses the conversation prefix (llm_messages) for KV cache hit
+    when caller provides it — otherwise falls back to a standalone prompt.
+    Output is always a DRAFT under skills/_drafts/.
 
     Returns a dict describing what happened for auto_action visibility:
     {"action":"skill","status":"completed|skipped|error","detail":{...}}
     """
     try:
-        from settings import settings_manager
-        interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
-        if interval <= 0:
+        from settings import settings_manager as _sm2
+        _iv = _sm2.get_settings().get("memory_auto_extract_interval", 1)
+        if isinstance(_iv, int) and _iv <= 0:
             return {"action": "skill", "status": "skipped", "detail": {"reason": "skill reflection disabled"}}
+        # Only reflect when tools were used in the last assistant message.
         msgs = await get_conversation_messages(db, conversation_id)
-        assistant_count = len([m for m in msgs if m["role"] == "assistant"])
-        if assistant_count % interval != 0:
-            return {"action": "skill", "status": "skipped", "detail": {"reason": f"cadence {assistant_count % interval}/{interval}"}}
+        last_msg = msgs[-1] if msgs else None
+        blocks = (last_msg.get("metadata") or {}).get("blocks") or [] if last_msg else []
+        tool_names = [b.get("name") for b in blocks if b.get("type") == "tool_call"]
+        if not tool_names:
+            return {"action": "skill", "status": "skipped", "detail": {"reason": "no tool calls in last turn"}}
         last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
         last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
         if not last_user or not last_assistant:
             return {"action": "skill", "status": "skipped", "detail": {"reason": "no exchange found"}}
-        # Only reflect when tools were used in the last assistant message.
-        last_msg = msgs[-1]
-        blocks = (last_msg.get("metadata") or {}).get("blocks") or []
-        tool_names = [b.get("name") for b in blocks if b.get("type") == "tool_call"]
-        if not tool_names:
-            return {"action": "skill", "status": "skipped", "detail": {"reason": "no tool calls in last turn"}}
         prompt = (
             "You are a skill-builder for an AI assistant. Decide whether this task is worth "
             "turning into a reusable skill.\n\n"
@@ -456,10 +502,27 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
             '"name": "short-slug", "description": "one line", '
             '"instructions": "numbered steps", "reason": "short justification"}'
         )
+        # KV-friendly: reuse prefix (like title generation) when caller provides it
+        # Use same tools as main (with tool_choice none) so prefix tokens match exactly
+        if llm_messages is not None and assistant_message is not None:
+            _msgs = list(llm_messages)
+            _assistant = {"role": "assistant", "content": assistant_message}
+            if thinking_content:
+                _assistant["reasoning_content"] = thinking_content
+            _msgs.append(_assistant)
+            _msgs.append({"role": "user", "content": prompt})
+            stream_target = _msgs
+            _tools = tools
+            _tool_choice = "none" if _tools else None
+        else:
+            stream_target = [{"role": "user", "content": prompt}]
+            _tools = None
+            _tool_choice = None
         raw = ""
         async for chunk in llm_client.stream_chat(
-            [{"role": "user", "content": prompt}],
-            model=model, temperature=0.0, max_tokens=700, tools=None,
+            stream_target,
+            model=model, temperature=0.0, max_tokens=700, tools=_tools,
+            tool_choice=_tool_choice,
             base_url=base_url, api_key=api_key
         ):
             if chunk.get("type") == "content":
@@ -504,38 +567,60 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
 
 
 async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, agent_id=None, model=None,
-                                        base_url=None, api_key=None):
+                                        base_url=None, api_key=None,
+                                        llm_messages=None, assistant_message=None, thinking_content=None,
+                                        tools=None):
     """Auto-extract durable facts from the last user↔assistant exchange (Phase 2).
 
-    Runs every `memory_auto_extract_interval` assistant turns. Uses a fast,
-    low-max-token completion; failures are logged, never propagated.
+    Insight-based: runs after every assistant turn; the LLM decides if the
+    exchange contains durable insights worth remembering (project facts,
+    preferences, decisions, bug fixes, content/workflow outcomes, etc.).
+    Returns [] when nothing durable — no fixed cadence.
 
-    Returns dict for auto_action visibility:
-    {"action":"memory","status":"completed|skipped|error","detail":{...}}
+    When `llm_messages` is provided, the prompt is appended to the existing
+    prefix for KV cache reuse (like title generation).
     """
     try:
-        from settings import settings_manager
-        interval = settings_manager.get_settings().get("memory_auto_extract_interval", 3) or 0
-        if interval <= 0:
+        from settings import settings_manager as _sm
+        # Allow disabling via setting (0 = disabled), but otherwise always run — insight decision is LLM-driven, not cadence.
+        _interval = _sm.get_settings().get("memory_auto_extract_interval", 1)
+        if isinstance(_interval, int) and _interval <= 0:
             return {"action": "memory", "status": "skipped", "detail": {"reason": "memory extraction disabled"}}
         msgs = await get_conversation_messages(db, conversation_id)
-        assistant_count = len([m for m in msgs if m["role"] == "assistant"])
-        if assistant_count % interval != 0:
-            return {"action": "memory", "status": "skipped", "detail": {"reason": f"cadence {assistant_count % interval}/{interval}"}}
         last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
         last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
         if not last_user or not last_assistant:
             return {"action": "memory", "status": "skipped", "detail": {"reason": "no exchange found"}}
         prompt = (
-            "Extract durable, reusable facts or user preferences from this conversation exchange. "
+            "Extract durable insights worth remembering from this conversation exchange. "
+            "Save facts that would help in future sessions: user preferences, project details, "
+            "decisions made, bugs fixed, workflows discovered, content created, or any learning "
+            "that could aid future tasks. Only save concrete, reusable information — not generic chatter. "
             'Output ONLY a JSON array of strings. Each string must be a concise, standalone fact '
-            "(max ~120 chars) that would still be useful in future sessions. If nothing durable, output [].\n\n"
+            "(max ~120 chars) that would still be useful later. If nothing truly durable or insightful, output [].\n\n"
             f"User: {last_user[:1500]}\n\nAssistant: {last_assistant[:1500]}"
         )
+        # KV-friendly path: append to existing prefix (like title generation)
+        # Use same tools as main (with tool_choice none) so prefix tokens match exactly
+        if llm_messages is not None and assistant_message is not None:
+            _msgs = list(llm_messages)
+            _assistant = {"role": "assistant", "content": assistant_message}
+            if thinking_content:
+                _assistant["reasoning_content"] = thinking_content
+            _msgs.append(_assistant)
+            _msgs.append({"role": "user", "content": prompt})
+            stream_target = _msgs
+            _tools = tools
+            _tool_choice = "none" if _tools else None
+        else:
+            stream_target = [{"role": "user", "content": prompt}]
+            _tools = None
+            _tool_choice = None
         parts = []
         async for chunk in llm_client.stream_chat(
-            [{"role": "user", "content": prompt}],
-            model=model, temperature=0.0, max_tokens=512, tools=None,
+            stream_target,
+            model=model, temperature=0.0, max_tokens=512, tools=_tools,
+            tool_choice=_tool_choice,
             base_url=base_url, api_key=api_key
         ):
             if chunk.get("type") == "content":
@@ -928,10 +1013,37 @@ async def _core_stream_handler(
                                 content_parts.append({"type": "text", "text": f"\n[Attached file: {f_name}]"})
                     llm_messages.append({"role": role, "content": content_parts})
                 else:
-                    llm_msg = {"role": role, "content": content}
-                    # Replay tool_calls verbatim — required for KV cache hit
-                    # Without this, next turn's prefix diverges at assistant{tool_calls}
-                    if role == "assistant" and msg.get("tool_calls"):
+                    # ── KV-friendly history replay (tool-aware) ──────────
+                    # For non-tool turns: single assistant message.
+                    # For tool turns: emit assistant(with tool_calls + pre-content) →
+                    # tool result(s) → assistant(post-content) to exactly match
+                    # the live loop's token sequence (assistant->tool->assistant).
+                    # IDs are replayed verbatim from DB for byte-exact prefix.
+                    blocks = (metadata.get("blocks") or []) if isinstance(metadata, dict) else []
+                    tool_blocks = [b for b in blocks if b.get("type") == "tool_call"] if role == "assistant" else []
+                    has_tools = bool(role == "assistant" and msg.get("tool_calls") and tool_blocks)
+                    if not has_tools:
+                        llm_msg = {"role": role, "content": content}
+                        if role == "assistant" and msg.get("thinking"):
+                            llm_msg["reasoning_content"] = msg["thinking"]
+                        llm_messages.append(llm_msg)
+                    else:
+                        # Split blocks into pre-tool vs post-tool content/thinking
+                        first_tool_pos = next((i for i, b in enumerate(blocks) if b.get("type") == "tool_call"), len(blocks))
+                        last_tool_pos = len(blocks) - 1 - next((i for i, b in enumerate(reversed(blocks)) if b.get("type") == "tool_call"), len(blocks))
+                        pre_content = "".join(b.get("content", "") for b in blocks[:first_tool_pos] if b.get("type") == "content")
+                        pre_thinking = "".join(b.get("content", "") for b in blocks[:first_tool_pos] if b.get("type") == "thinking")
+                        # post_content/thinking is content after last tool_call; fallback to msg fields if empty (legacy rows)
+                        post_parts = [b.get("content", "") for b in blocks[last_tool_pos+1:] if b.get("type") == "content"]
+                        post_content = "".join(post_parts) if post_parts else (content or "")
+                        post_thinking_parts = [b.get("content", "") for b in blocks[last_tool_pos+1:] if b.get("type") == "thinking"]
+                        post_thinking = "".join(post_thinking_parts)
+                        # Fallback for legacy rows where thinking was aggregated into column
+                        if not pre_thinking and not post_thinking and msg.get("thinking"):
+                            # Heuristic: if there was a tool call, thinking likely belongs before it; otherwise after
+                            pre_thinking = msg["thinking"]
+                            post_thinking = ""
+                        # Build tool_calls with stored IDs (or deterministic fallback)
                         tcs = []
                         for idx, tc in enumerate(msg["tool_calls"] or []):
                             try:
@@ -940,29 +1052,33 @@ async def _core_stream_handler(
                                     args = {}
                             except Exception:
                                 args = {}
+                            tid = tc.get("id") or tc.get("tool_call_id") or f"{tc.get('name','tool')}_{idx}"
+                            # Prefer block's stored id if column id was missing (backward compat)
+                            if idx < len(tool_blocks) and tool_blocks[idx].get("id"):
+                                tid = tool_blocks[idx]["id"]
                             tcs.append({
-                                "id": f"{tc.get('name','tool')}_{idx}",
+                                "id": tid,
                                 "type": "function",
                                 "function": {
                                     "name": tc.get("name","unknown"),
                                     "arguments": __import__("json").dumps(args),
                                 },
                             })
+                        # First assistant: tool_calls + pre_content + pre_thinking
+                        llm_msg = {"role": "assistant", "content": pre_content}
+                        if pre_thinking:
+                            llm_msg["reasoning_content"] = pre_thinking
                         if tcs:
                             llm_msg["tool_calls"] = tcs
-                    # Strict reasoning providers require the original reasoning
-                    # (thinking mode) to be echoed back with assistant messages.
-                    if role == "assistant" and msg.get("thinking"):
-                        llm_msg["reasoning_content"] = msg["thinking"]
-                    llm_messages.append(llm_msg)
-                    # Replay tool results from blocks as role=tool messages
-                    # This restores the exact assistant->tool->assistant chain that was cached
-                    if role == "assistant":
-                        blocks = (metadata.get("blocks") or []) if isinstance(metadata, dict) else []
-                        tool_blocks = [b for b in blocks if b.get("type") == "tool_call"]
+                        llm_messages.append(llm_msg)
+                        # Tool results
                         for idx, b in enumerate(tool_blocks):
+                            tid = b.get("id")
+                            if not tid and idx < len(tcs):
+                                tid = tcs[idx]["id"]
+                            else:
+                                tid = tid or f"{b.get('name','tool')}_{idx}"
                             result = b.get("result")
-                            # Normalize result to string as done in the live loop
                             try:
                                 tool_result_str = __import__("json").dumps(result, default=str) if result is not None else "No result"
                             except Exception:
@@ -970,8 +1086,14 @@ async def _core_stream_handler(
                             llm_messages.append({
                                 "role": "tool",
                                 "content": tool_result_str,
-                                "tool_call_id": f"{b.get('name','tool')}_{idx}"
+                                "tool_call_id": tid
                             })
+                        # Second assistant: final answer (without tool_calls) — only if there is post content/thinking
+                        if (post_content and post_content.strip()) or post_thinking:
+                            post_msg = {"role": "assistant", "content": post_content}
+                            if post_thinking:
+                                post_msg["reasoning_content"] = post_thinking
+                            llm_messages.append(post_msg)
             
             # Prepend system prompt to messages
             if system_prompt_content:
@@ -1229,6 +1351,7 @@ async def _core_stream_handler(
                                 # Create provisional block for save-on-cancel
                                 provisional = {
                                     "type": "tool_call",
+                                    "id": f"{pending_tool_call['name']}_{i}",
                                     "name": pending_tool_call['name'],
                                     "arguments": pending_tool_call['arguments'],
                                     "status": "approval",
@@ -1276,6 +1399,7 @@ async def _core_stream_handler(
                                 break
                         tool_call_block = {
                             "type": "tool_call",
+                            "id": f"{pending_tool_call['name']}_{i}",
                             "name": pending_tool_call['name'],
                             "arguments": pending_tool_call['arguments'],
                             "status": pending_tool_call['status'],
@@ -1434,7 +1558,7 @@ async def _core_stream_handler(
                     activity_blocks.append(blk)
                     yield f"data: {json.dumps({'type': 'auto_action', 'action': 'jobs', 'status': 'error', 'detail': blk['detail']})}\n\n"
 
-            # Auto memory extraction (Phase 2) — every N assistant turns.
+            # Auto memory extraction (Phase 2) — insight-based, KV-friendly
             if assistant_saved:
                 # stream start immediately so UI shows spinner even for skipped cadence
                 yield f"data: {json.dumps({'type': 'auto_action', 'action': 'memory', 'status': 'running'})}\n\n"
@@ -1445,7 +1569,10 @@ async def _core_stream_handler(
                             db, conversation_id, llm_client,
                             agent_id=conversation.agent_id if conversation else None,
                             model=model,
-                            base_url=provider_base_url, api_key=provider_api_key
+                            base_url=provider_base_url, api_key=provider_api_key,
+                            llm_messages=llm_messages, assistant_message=assistant_message,
+                            thinking_content=thinking_content,
+                            tools=all_tools
                         ),
                         timeout=90
                     )
@@ -1462,13 +1589,15 @@ async def _core_stream_handler(
                 activity_blocks.append(blk)
                 yield f"data: {json.dumps({'type': 'auto_action', 'action': 'memory', 'status': blk['status'], 'detail': blk['detail']})}\n\n"
 
-                # Self-improvement reflection (Phase 4) — proposes skill drafts.
+                # Self-improvement reflection (Phase 4) — proposes skill drafts (insight-based, KV-friendly)
                 yield f"data: {json.dumps({'type': 'auto_action', 'action': 'skill', 'status': 'running'})}\n\n"
                 skill_res = None
                 try:
                     skill_res = await asyncio.wait_for(
                         _maybe_reflect_and_propose_skill(db, conversation_id, llm_client, model=model,
-                                                         base_url=provider_base_url, api_key=provider_api_key),
+                                                         base_url=provider_base_url, api_key=provider_api_key,
+                                                         llm_messages=llm_messages, assistant_message=assistant_message,
+                                                         thinking_content=thinking_content, tools=all_tools),
                         timeout=90
                     )
                 except asyncio.TimeoutError:

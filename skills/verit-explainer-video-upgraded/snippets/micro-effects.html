@@ -1,0 +1,29 @@
+<!-- SNIPPET: MICRO-EFFECTS (count-up number + staggered grid pop-in) -->
+<!-- Use for: stat reveals, KPI counters, grids of cards/boxes/units -->
+<!-- No dedicated track block — paste elements inside an existing scene -->
+
+<!-- 1) COUNT-UP NUMBER: animate innerText from 0 to target with integer snap.
+     Requires GSAP's TextPlugin-free trick: tween a plain object property.
+     The element just displays whatever the tween writes. -->
+<div id="mx-num" style="font-size:96px;font-weight:800;color:#f8fafc;">0</div>
+
+<!-- 2) STAGGERED GRID POP-IN: children with class .dbox appear in random
+     order with a springy back-out scale. Grid itself is plain CSS:
+     display:grid;grid-template-columns:repeat(10,1fr);gap:10px; -->
+<div id="mx-grid" style="display:grid;grid-template-columns:repeat(10,1fr);gap:10px;">
+  <div class="dbox" style="width:100%;aspect-ratio:1;background:#1a2540;border-radius:8px;"></div>
+  <!-- ...repeat ~30-60 boxes; highlight a few with .hot { background:#ef4444; } -->
+</div>
+
+<!-- GSAP → paste after // ANIM_INJECT -->
+<script type="text/note">
+// Count-up (2s, integer snap)
+tl.fromTo("#mx-num",{innerText:0},{innerText:200,duration:2.0,snap:{innerText:1},ease:"power1.inOut"},19.4);
+
+// Random-order staggered pop-in for grid children
+tl.fromTo("#mx-grid .dbox",{opacity:0,scale:0.6},
+  {opacity:1,scale:1,duration:0.35,ease:"back.out(1.5)",stagger:{each:0.035,from:"random"}},18.4);
+
+// Pulse only the highlighted boxes after the grid lands
+tl.to("#mx-grid .hot",{scale:1.12,duration:0.5,ease:"sine.inOut",yoyo:true,repeat:3,stagger:0.08},21.8);
+</script>

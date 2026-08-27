@@ -1,0 +1,29 @@
+<!--
+  SNIPPET: 3D PARALLAX TEXT (headline floats above body with depth)
+  Creates depth between text layers — headline appears to float above dimmer
+  background text with shadow gap and subtle parallax drift.
+  Track block: 65-67
+-->
+
+<!-- HTML → paste before <!-- SCENES_INJECT --> -->
+<div class="clip" id="parallax-stage" data-start="10.0" data-duration="8.0" data-track-index="65" style="left:240px;top:280px;width:1440px;height:520px;perspective:800px;">
+  <!-- Background text layer (deeper, dimmer) -->
+  <div id="parallax-bg" class="clip" style="position:absolute;left:0;top:0;width:100%;height:100%;">
+    <div class="h-big" style="color:rgba(20,184,166,0.08);font-size:140px;letter-spacing:-0.04em;">KEYWORD</div>
+  </div>
+  <!-- Foreground headline (closer, brighter, with shadow) -->
+  <div id="parallax-fg" class="clip" style="position:absolute;left:0;top:80px;width:100%;">
+    <div class="h-big" style="color:#f8fafc;letter-spacing:-0.03em;text-shadow:0 4px 20px rgba(0,0,0,0.4);">
+      Main headline with <span class="accent">accent word.</span>
+    </div>
+  </div>
+</div>
+
+<!-- GSAP → paste after // ANIM_INJECT -->
+<script type="text/note">
+tl.fromTo("#parallax-bg",{opacity:0,scale:1.1},{opacity:1,scale:1,duration:1.0,ease:"power2.out"},10.0);
+tl.fromTo("#parallax-fg",{opacity:0,y:40,rotateX:-8},{opacity:1,y:0,rotateX:0,duration:0.9,ease:"power3.out"},10.2);
+// Parallax drift: foreground moves slightly more than background on hold
+tl.to("#parallax-fg",{x:-8,duration:3.0,ease:"sine.inOut",yoyo:true,repeat:2},11.5);
+tl.to(["#parallax-bg","#parallax-fg"],{opacity:0,duration:0.5,ease:"power1.in"},17.0);
+</script>

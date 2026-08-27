@@ -44,7 +44,7 @@
             <select
               x-model="formData.provider_id"
               class="input text-sm"
-              @change="formData.model = ''"
+              @change="formData.model = ''; modelSearch = ''"
             >
               <option value="">Default provider</option>
               <template x-for="p in availableProviders" :key="p.id">
@@ -53,19 +53,19 @@
             </select>
           </div>
           <div>
-            <label
-              class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-              >Model</label
-            >
-            <select
-              x-model="formData.model"
-              class="input text-sm"
-            >
-              <option value="">Select model...</option>
-              <template x-for="m in modelsForProvider(formData.provider_id)" :key="m.id">
-                <option :value="m.id" x-text="m.name || m.id"></option>
-              </template>
-            </select>
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Model</label>
+            <div x-data="{ open:false }" @click.outside="open=false" class="relative">
+              <input type="text" x-model="modelSearch" @focus="open=true; $el.select()" @input="open=true" placeholder="Select model — search..." class="input text-sm w-full" autocomplete="off" />
+              <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                <div @click="formData.model=''; modelSearch=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!formData.model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">Select model...</div>
+                <template x-for="m in modelsForProvider(formData.provider_id).filter(o=> !modelSearch || (o.name||o.id).toLowerCase().includes(modelSearch.toLowerCase()) || o.id.toLowerCase().includes(modelSearch.toLowerCase()))" :key="m.id">
+                  <div @click="formData.model=m.id; modelSearch=m.name||m.id; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="formData.model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                    <span x-text="m.name || m.id" class="truncate"></span><i x-show="formData.model===m.id" class="ph ph-check text-xs"></i>
+                  </div>
+                </template>
+                <div x-show="modelsForProvider(formData.provider_id).filter(o=> !modelSearch || (o.name||o.id).toLowerCase().includes(modelSearch.toLowerCase()) || o.id.toLowerCase().includes(modelSearch.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+              </div>
+            </div>
             <p class="text-xs text-[var(--text-tertiary)] mt-1" x-show="formData.provider_id && modelsForProvider(formData.provider_id).length === 0">
               No models on this provider — refresh it in the LLM tab.
             </p>

@@ -23,6 +23,8 @@ export class SSEService {
       (options.documentIds?.length ? `&document_ids=${encodeURIComponent(options.documentIds.join(','))}` : '') +
       (options.version ? `&version=${options.version}` : '') +
       (options.versionGroup ? `&version_group=${encodeURIComponent(options.versionGroup)}` : '') +
+      (options.anchorMessageId ? `&anchor_message_id=${encodeURIComponent(options.anchorMessageId)}` : '') +
+      (options.turnIndex !== undefined && options.turnIndex !== null ? `&turn_index=${options.turnIndex}` : '') +
       (options.thinkingMode && options.thinkingMode !== 'auto' ? `&thinking_mode=${encodeURIComponent(options.thinkingMode)}` : '')
     fetch(url, { signal: this.controller.signal })
       .then(response => {
@@ -42,6 +44,7 @@ export class SSEService {
             buffer = lines.pop() || ''
 
             for (const line of lines) {
+              // DIAG-SSE-RAW
               if (!line.startsWith('data: ')) continue
               try {
                 const data = JSON.parse(line.slice(6))
@@ -51,9 +54,13 @@ export class SSEService {
 
             read()
           }).catch(err => {
-            if (err.name !== 'AbortError') {
-              this.handlers.error.forEach(h => h(err))
+            if (err.name === 'AbortError') {
+              // Deliberate close (stop button / done-timeout) must still be
+              // observable, or the UI keeps its loading state forever.
+              this.handlers.complete.forEach(h => h())
+              return
             }
+            this.handlers.error.forEach(h => h(err))
           })
         }
 

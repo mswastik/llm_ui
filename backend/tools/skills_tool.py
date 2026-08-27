@@ -75,7 +75,50 @@ CREATE_SKILL_DEFINITION = {
     }
 }
 
-SKILL_TOOL_DEFINITIONS = [LOAD_SKILL_DEFINITION, CREATE_SKILL_DEFINITION]
+
+UPDATE_SKILL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "update_skill",
+        "description": (
+            "Update an existing skill's description or instructions. "
+            "Use when the user asks to modify, improve, or fix a skill that "
+            "already exists ('update skill X', 'improve skill Y'). The skill "
+            "is overwritten in place and becomes available immediately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Skill name to update (as listed in the available-skills index)"},
+                "description": {"type": "string", "description": "One-line description shown in the skills index"},
+                "instructions": {"type": "string", "description": "Step-by-step instructions the agent follows when the skill is loaded"}
+            },
+            "required": ["name", "description", "instructions"]
+        }
+    }
+}
+
+DELETE_SKILL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "delete_skill",
+        "description": (
+            "Delete a skill entirely. Use when the user asks to remove, delete, "
+            "or unpublish a skill ('delete skill X', 'remove skill Y'). This "
+            "permanently removes the skill directory and it will no longer appear "
+            "in the skills index."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Skill name to delete (as listed in the available-skills index)"}
+            },
+            "required": ["name"]
+        }
+    }
+}
+
+SKILL_TOOL_DEFINITIONS = [LOAD_SKILL_DEFINITION, CREATE_SKILL_DEFINITION, UPDATE_SKILL_DEFINITION, DELETE_SKILL_DEFINITION]
 
 
 def _skills_dir() -> str:

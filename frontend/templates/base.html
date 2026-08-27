@@ -38,15 +38,15 @@
         updateMessage(id, u) { const m = this.messages.find(x => x.id === id); if (m) Object.assign(m, u) },
         removeMessage(id) { this.messages = this.messages.filter(m => m.id !== id) },
         clearMessages() { this.messages = [] },
-        setModel(v, providerId) { this.selectedModel = v; if (providerId) this.selectedProviderId = providerId; localStorage.setItem('selectedModel', v); localStorage.setItem('selectedProviderId', this.selectedProviderId || '') },
-        loadSavedModel() { const s = localStorage.getItem('selectedModel'); if (s && this.availableModels.some(m => m.id === s)) { this.selectedModel = s; const m = this.availableModels.find(x => x.id === s); this.selectedProviderId = m?.provider_id || localStorage.getItem('selectedProviderId') || this.availableProviders[0]?.id || '' } },
+        setModel(v) { this.selectedModel = v; const m = this.availableModels.find(x=>x.id===v); this.selectedProviderId = m?.provider_id || this.selectedProviderId || this.availableProviders[0]?.id || ''; localStorage.setItem('selectedModel', v); localStorage.setItem('selectedProviderId', this.selectedProviderId || '') },
+        loadSavedModel() { const s = localStorage.getItem('selectedModel'); if (s) { const m = this.availableModels.find(x=>x.id===s); if (m) { this.selectedModel = s; this.selectedProviderId = m.provider_id; } else if (this.availableModels.some(m=>m.id===s)) { this.selectedModel = s; } else { this.selectedModel = s; } } if (!this.selectedProviderId) { const cur = this.availableModels.find(x=>x.id===this.selectedModel); this.selectedProviderId = cur?.provider_id || localStorage.getItem('selectedProviderId') || this.availableProviders[0]?.id || ''; } },
         setAgent(v) { this.selectedAgentId = v; this.currentAgentConfig = this.availableAgents.find(a => a.id === v) || null; localStorage.setItem('selectedAgentId', v) },
         loadSavedAgent() { const s = localStorage.getItem('selectedAgentId'); if (s && this.availableAgents.some(a => a.id === parseInt(s))) { this.selectedAgentId = parseInt(s); this.currentAgentConfig = this.availableAgents.find(a => a.id === this.selectedAgentId) } },
         setThinkingMode(v) { this.thinkingMode = v || 'auto'; localStorage.setItem('thinkingMode', this.thinkingMode) },
         loadSavedThinkingMode() { const s = localStorage.getItem('thinkingMode'); if (s && ['auto','off','on','low','medium','high'].includes(s)) this.thinkingMode = s },
         startStreaming(rq, cid, mi, t, ms) { this.activeStreaming = { isStreaming: true, requestId: rq, conversationId: cid, msgIndex: mi, conversationTitle: t || '', messages: ms || [] }; this.isLoading = true },
         stopStreaming() { this.activeStreaming = { isStreaming: false, requestId: null, conversationId: null, msgIndex: null, conversationTitle: '', messages: [] }; this.isLoading = false; this.toolStatus = { active: false, tool: '', status: '', progress: null } },
-        applyAgentConfig() { const a = this.currentAgentConfig; if (!a) return; if (a.model) { this.selectedModel = a.model; const m = this.availableModels.find(x => x.id === a.model); if (m) this.selectedProviderId = m.provider_id; else if (a.provider_id) this.selectedProviderId = a.provider_id } this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
+        applyAgentConfig(force=false) { const a = this.currentAgentConfig; if (!a) return; if (a.model && (force || !this.selectedModel)) { this.selectedModel = a.model; const m = this.availableModels.find(x=>x.id===a.model); this.selectedProviderId = m?.provider_id || a.provider_id || this.selectedProviderId; } else if (a.model && force) { const m = this.availableModels.find(x=>x.id===a.model); this.selectedProviderId = m?.provider_id || a.provider_id || this.selectedProviderId; } else if (a.model) { const m = this.availableModels.find(x=>x.id===a.model); if (m && !this.selectedProviderId) this.selectedProviderId = m.provider_id; } this.selectedDocumentIds = a.enable_rag ? ['all'] : [] }
       };
       window.__uiStoreData__ = {
         darkMode: localStorage.getItem('darkMode') === 'true',
@@ -84,7 +84,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=81"></script>
+    <script type="module" src="/static/js/main.js?v=90"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] h-screen overflow-hidden"

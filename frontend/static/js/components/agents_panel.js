@@ -51,6 +51,7 @@ const agentsPanel = () => ({
   mcpServers: [],
   skills: [],
   toolGroups: TOOL_GROUPS,
+  modelSearch: '',
 
   async init() {
     await Promise.all([
@@ -107,6 +108,7 @@ const agentsPanel = () => ({
 
   newAgent() {
     this.editing = null
+    this.modelSearch = ''
     this.formData = {
       name: '', description: '', system_prompt: '', model: '',
       provider_id: this.availableProviders.find(p => p.is_default)?.id || this.availableProviders[0]?.id || '',
@@ -119,6 +121,7 @@ const agentsPanel = () => ({
 
   editAgent(agent) {
     this.editing = agent
+    this.modelSearch = ''
     this.formData = {
       name: agent.name || '',
       description: agent.description || '',

@@ -93,6 +93,7 @@ DEFAULTS = {
     "skills_dir": "./skills",
     "outputs_dir": "./outputs",
     "memory_auto_extract_interval": 3,
+    "memory_search_use_embedding": False,  # VRAM-safe: keyword search only; embedding would evict main model on limited VRAM
     "jobs_model": "",
 }
 
@@ -148,6 +149,7 @@ class Settings(BaseModel):
     skills_dir: str = DEFAULTS["skills_dir"]
     outputs_dir: str = DEFAULTS["outputs_dir"]
     memory_auto_extract_interval: int = DEFAULTS["memory_auto_extract_interval"]
+    memory_search_use_embedding: bool = DEFAULTS["memory_search_use_embedding"]
     jobs_model: str = DEFAULTS["jobs_model"]
 
 

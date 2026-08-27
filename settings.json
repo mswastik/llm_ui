@@ -1,8 +1,8 @@
 {
   "database_url": "sqlite+aiosqlite:///./llm_ui.db",
   "llama_cpp_base_url": "http://localhost:8080",
-  "llama_cpp_model": "Qwen3.6-35B-General",
-  "query_model": "Qwen3.6-35B-General",
+  "llama_cpp_model": "Gemma4-26B",
+  "query_model": "Gemma4-26B",
   "embedding_model": "Qwen3-4B-Embedding",
   "reranking_model": "Qwen3-4B-Embedding",
   "app_host": "0.0.0.0",
@@ -37,7 +37,10 @@
     "./uploads",
     "./outputs",
     "/home/swastik/.llm-ui",
-    "/home/swastik/.hermes"
+    "/home/swastik/.hermes",
+    "/home/swastik/Downloads/repos",
+    "/home/swastik/workspace",
+    "/tmp"
   ],
   "terminal_allowed_commands": [
     "python3",
@@ -89,7 +92,10 @@
     "tr",
     "cut",
     "paste",
-    "ffmpeg"
+    "ffmpeg",
+    "ffmpeg-wrap",
+    "ffprobe",
+    "cd"
   ],
   "terminal_blocked_patterns": [],
   "terminal_require_approval": true,
@@ -98,5 +104,6 @@
   "skills_dir": "./skills",
   "outputs_dir": "./outputs",
   "memory_auto_extract_interval": 3,
+  "memory_search_use_embedding": false,
   "jobs_model": "Qwen3.6-35B-General"
 }

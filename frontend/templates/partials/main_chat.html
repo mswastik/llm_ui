@@ -1129,7 +1129,7 @@
             </div>
 
             <!-- Model Selector -->
-            <div class="relative" x-data="{ open: false }" @click.outside="open = false">
+            <div class="relative" x-data="{ open: false, search: '' }" @click.outside="open = false; search = ''">
               <button
                 type="button"
                 @click="open = !open"
@@ -1141,22 +1141,25 @@
                 <span class="max-w-[130px] truncate" x-text="selectedModelName"></span>
                 <i class="ph ph-caret-down text-xs"></i>
               </button>
-              <div x-show="open" x-cloak class="dropdown-panel min-w-[240px]">
+              <div x-show="open" x-cloak class="dropdown-panel min-w-[280px]">
+                <div class="px-2 py-2 border-b border-[var(--border-primary)]">
+                  <input type="text" x-model="search" placeholder="Search models..." class="input text-xs w-full" @click.stop @focus="$el.select()" />
+                </div>
                 <div class="max-h-[40vh] overflow-y-auto py-1">
                   <template x-for="prov in availableProviders" :key="prov.id">
-                    <div>
+                    <div x-show="modelsByProvider(prov.id).filter(m => !search || (m.name || m.id).toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase())).length > 0">
                       <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] flex items-center gap-1.5">
                         <span class="truncate" x-text="prov.name"></span>
                         <span x-show="prov.is_default" class="badge badge-primary text-[9px]">default</span>
                       </div>
-                      <template x-for="model in modelsByProvider(prov.id)" :key="model.id">
+                      <template x-for="model in modelsByProvider(prov.id).filter(m => !search || (m.name || m.id).toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase()))" :key="model.id">
                         <button
                           type="button"
-                          @click="selectModel(model.id, prov.id)"
+                          @click="selectModel(model.id); search = ''"
                           class="dropdown-item"
-                          :class="selectedModel === model.id && selectedProviderId === prov.id ? 'dropdown-item-active' : ''"
+                          :class="selectedModel === model.id ? 'dropdown-item-active' : ''"
                         >
-                          <i class="ph ph-check text-xs" x-show="selectedModel === model.id && selectedProviderId === prov.id"></i>
+                          <i class="ph ph-check text-xs" x-show="selectedModel === model.id"></i>
                           <span class="truncate" x-text="model.name || model.id"></span>
                         </button>
                       </template>

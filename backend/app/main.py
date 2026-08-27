@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import threading
+import time as _time
 import uuid
 import contextvars
 from typing import AsyncGenerator, Dict, List, Optional
@@ -27,7 +28,7 @@ from database.crud import (
     toggle_mcp_server, remove_mcp_server, update_mcp_server_disabled_tools,
     update_conversation_tags, update_conversation_agent,
     create_note, get_all_notes, delete_note, get_notes_for_conversation,
-    get_message_versions
+    get_message_versions, update_assistant_message_full
 )
 from mcp_client.client import MCPClientManager, MCPServerConfig
 from tools.tool_executor import ToolExecutor
@@ -89,10 +90,52 @@ async def _bootstrap_default_agent():
         print(f"[AGENT] bootstrap Default failed: {e}")
 
 
+async def _reconcile_pending_tool_messages():
+    """On startup, mark any in-flight tool calls (approval/pending) as interrupted.
+
+    If the app restarted while a turn was waiting for approval or mid-tool,
+    the in-memory gate/progress is gone but the placeholder row is already
+    committed (incremental persist). Without this, the UI would show a spinner
+    forever. Marking as error makes the state explicit and lets the user retry.
+    """
+    try:
+        from sqlalchemy import select as _sel
+        from database.models import Message as _Msg
+        async with get_db() as db:
+            result = await db.execute(_sel(_Msg).where(_Msg.role == "assistant"))
+            rows = result.scalars().all()
+            fixed = 0
+            for msg in rows:
+                meta = msg.extra_metadata or {}
+                blocks = meta.get("blocks") or []
+                changed = False
+                for b in blocks:
+                    if b.get("type") == "tool_call" and b.get("status") in ("approval", "pending", "starting", "running"):
+                        b["status"] = "error"
+                        b["result"] = {"error": "Interrupted — app restarted or connection lost while waiting for tool/approval. Please retry by sending a follow-up message."}
+                        b["progress"] = 0
+                        changed = True
+                if changed:
+                    msg.extra_metadata = meta
+                    # also keep tool_calls column consistent
+                    tool_calls = []
+                    for idx, b in enumerate([x for x in blocks if x.get("type") == "tool_call"]):
+                        tid = b.get("id") or f"{b.get('name','tool')}_{idx}"
+                        tool_calls.append({"id": tid, "name": b.get("name"), "arguments": b.get("arguments",{}), "status": b.get("status","error"), "progress": 0})
+                    msg.tool_calls = tool_calls
+                    fixed += 1
+            if fixed:
+                await db.commit()
+                print(f"[RECONCILE] marked {fixed} interrupted assistant message(s) as error")
+    except Exception as e:
+        print(f"[RECONCILE] failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
+    await _reconcile_pending_tool_messages()
     await _bootstrap_default_provider()
     await _bootstrap_default_agent()
     await mcp_manager.initialize()
@@ -398,20 +441,26 @@ async def _generate_title_with_model(
     model: str = None,
     base_url: str = None,
     api_key: str = None,
-    thinking_content: str = None
+    thinking_content: str = None,
+    thinking_mode: str = None,
+    message_blocks: list = None,
 ) -> str:
     """
     Generate a title by appending to the existing conversation messages.
     KV cache reuses the prefix from the main response.
     The appended messages are not saved to DB — only the title is returned.
-    The title generation request is built from a copy of llm_messages, so the
-    original is untouched and future requests can still reuse the KV cache.
+    Phase A: uses expanded final (tool-aware) and same thinking_mode as main
+    so the next turn's prompt shares the full prefix (98% hit).
     """
     title_messages = list(llm_messages)
-    title_assistant = {"role": "assistant", "content": assistant_message}
-    if thinking_content:
-        title_assistant["reasoning_content"] = thinking_content
-    title_messages.append(title_assistant)
+    # Phase A: expand final like history replay, not single
+    if message_blocks is not None:
+        title_messages.extend(_expand_final_for_autos(assistant_message, thinking_content, message_blocks))
+    else:
+        title_assistant = {"role": "assistant", "content": assistant_message}
+        if thinking_content:
+            title_assistant["reasoning_content"] = thinking_content
+        title_messages.append(title_assistant)
     title_messages.append({"role": "user", "content": "Generate a title (3-6 words) for this conversation. No reasoning. Just output the title."})
 
     title = ""
@@ -423,9 +472,10 @@ async def _generate_title_with_model(
             temperature=0.0,
             max_tokens=1024,
             tools=tools,
-            tool_choice="none",
+            tool_choice=None,
             base_url=base_url,
-            api_key=api_key
+            api_key=api_key,
+            thinking_mode=thinking_mode,
         ):
             chunk_type = chunk.get("type")
             if chunk_type == "content":
@@ -458,7 +508,7 @@ async def _generate_title_with_model(
 async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client, model=None,
                                            base_url=None, api_key=None,
                                            llm_messages=None, assistant_message=None, thinking_content=None,
-                                           tools=None):
+                                           tools=None, thinking_mode: str = None, message_blocks: list = None):
     """Self-improvement loop (Phase 4): propose a skill draft after a
     multi-tool task.
 
@@ -503,17 +553,20 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
             '"instructions": "numbered steps", "reason": "short justification"}'
         )
         # KV-friendly: reuse prefix (like title generation) when caller provides it
-        # Use same tools as main (with tool_choice none) so prefix tokens match exactly
+        # Phase A: use expanded final (tool-aware) and same thinking_mode/tool_choice as main
         if llm_messages is not None and assistant_message is not None:
             _msgs = list(llm_messages)
-            _assistant = {"role": "assistant", "content": assistant_message}
-            if thinking_content:
-                _assistant["reasoning_content"] = thinking_content
-            _msgs.append(_assistant)
+            if message_blocks is not None:
+                _msgs.extend(_expand_final_for_autos(assistant_message, thinking_content, message_blocks))
+            else:
+                _assistant = {"role": "assistant", "content": assistant_message}
+                if thinking_content:
+                    _assistant["reasoning_content"] = thinking_content
+                _msgs.append(_assistant)
             _msgs.append({"role": "user", "content": prompt})
             stream_target = _msgs
             _tools = tools
-            _tool_choice = "none" if _tools else None
+            _tool_choice = None  # match main (None, not "none") so prompt tokens identical
         else:
             stream_target = [{"role": "user", "content": prompt}]
             _tools = None
@@ -523,7 +576,8 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
             stream_target,
             model=model, temperature=0.0, max_tokens=700, tools=_tools,
             tool_choice=_tool_choice,
-            base_url=base_url, api_key=api_key
+            base_url=base_url, api_key=api_key,
+            thinking_mode=thinking_mode,
         ):
             if chunk.get("type") == "content":
                 raw += chunk.get("content", "")
@@ -569,7 +623,7 @@ async def _maybe_reflect_and_propose_skill(db, conversation_id: str, llm_client,
 async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, agent_id=None, model=None,
                                         base_url=None, api_key=None,
                                         llm_messages=None, assistant_message=None, thinking_content=None,
-                                        tools=None):
+                                        tools=None, thinking_mode: str = None, message_blocks: list = None):
     """Auto-extract durable facts from the last user↔assistant exchange (Phase 2).
 
     Insight-based: runs after every assistant turn; the LLM decides if the
@@ -595,23 +649,33 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
             "Extract durable insights worth remembering from this conversation exchange. "
             "Save facts that would help in future sessions: user preferences, project details, "
             "decisions made, bugs fixed, workflows discovered, content created, or any learning "
-            "that could aid future tasks. Only save concrete, reusable information — not generic chatter. "
-            'Output ONLY a JSON array of strings. Each string must be a concise, standalone fact '
-            "(max ~120 chars) that would still be useful later. If nothing truly durable or insightful, output [].\n\n"
+            "that could aid future tasks. Only save concrete, reusable information — not generic chatter.\n"
+            "CRITICAL: Each fact must be a complete, standalone sentence (15-120 chars) a stranger could understand without context.\n"
+            "Examples:\n"
+            "- GOOD: 'User prefers dark mode for the editor and wants it enabled by default'\n"
+            "- GOOD: 'Project Alpha deadline is Friday, frontend is React with Tailwind'\n"
+            "- BAD: 'llm-ui' (single word/tag, no context)\n"
+            "- BAD: 'skills' (too vague)\n"
+            "Do NOT return single words, tags, or topic names like 'llm-ui', 'skills', 'tools', 'architecture' alone.\n"
+            'Output ONLY a JSON array of strings. Each string must be a concise, standalone sentence '
+            "(15-120 chars, at least 3 words, must contain a verb) that would still be useful later. If nothing truly durable or insightful, output [].\n\n"
             f"User: {last_user[:1500]}\n\nAssistant: {last_assistant[:1500]}"
         )
         # KV-friendly path: append to existing prefix (like title generation)
-        # Use same tools as main (with tool_choice none) so prefix tokens match exactly
+        # Phase A: use expanded final (tool-aware) and same thinking_mode/tool_choice as main
         if llm_messages is not None and assistant_message is not None:
             _msgs = list(llm_messages)
-            _assistant = {"role": "assistant", "content": assistant_message}
-            if thinking_content:
-                _assistant["reasoning_content"] = thinking_content
-            _msgs.append(_assistant)
+            if message_blocks is not None:
+                _msgs.extend(_expand_final_for_autos(assistant_message, thinking_content, message_blocks))
+            else:
+                _assistant = {"role": "assistant", "content": assistant_message}
+                if thinking_content:
+                    _assistant["reasoning_content"] = thinking_content
+                _msgs.append(_assistant)
             _msgs.append({"role": "user", "content": prompt})
             stream_target = _msgs
             _tools = tools
-            _tool_choice = "none" if _tools else None
+            _tool_choice = None  # match main (None, not "none")
         else:
             stream_target = [{"role": "user", "content": prompt}]
             _tools = None
@@ -621,7 +685,8 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
             stream_target,
             model=model, temperature=0.0, max_tokens=512, tools=_tools,
             tool_choice=_tool_choice,
-            base_url=base_url, api_key=api_key
+            base_url=base_url, api_key=api_key,
+            thinking_mode=thinking_mode,
         ):
             if chunk.get("type") == "content":
                 parts.append(chunk.get("content", ""))
@@ -638,8 +703,28 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
         else:
             items = [l.strip("- ").strip() for l in raw.splitlines()
                      if l.strip() and len(l.strip()) > 5 and not l.strip().startswith("```")]
+        # --- Filter out single-word tags / junk (VRAM-free FTS will index these, but they are useless) ---
+        # The model sometimes returns ["llm-ui","skills","tools"] instead of sentences.
+        _filtered = []
+        for _it in items:
+            _s = str(_it).strip()
+            if not _s:
+                continue
+            # Must be at least 15 chars, at least 3 words, contain a space and a verb-like char
+            if len(_s) < 15 or _s.count(" ") < 2:
+                print(f"[MEMORY] filtered short/single-word: '{_s[:60]}'")
+                continue
+            # Reject pure tags / single hyphenated word without sentence structure
+            if _s.lower() in {"llm-ui", "llm_ui", "skills", "tools", "architecture"}:
+                print(f"[MEMORY] filtered known tag: '{_s}'")
+                continue
+            # Must look like a sentence (contains at least one verb-ish word ending or common verb)
+            # Simple heuristic: contains is/are/was/were/prefer/uses/needs/wants/fixed/decided etc. or length > 25
+            # For now just require it not be a single token and length > 15 (already above)
+            _filtered.append(_s)
+        items = _filtered
         if not items:
-            return {"action": "memory", "status": "skipped", "detail": {"reason": "no durable facts found"}}
+            return {"action": "memory", "status": "skipped", "detail": {"reason": "no durable facts found (filtered)"}}
         from database.memory_crud import create_memory_entry
         scope = f"agent:{agent_id}" if agent_id is not None else "global"
         added = 0
@@ -729,6 +814,7 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
                                   thinking_content: str, message_blocks: list,
                                   model: Optional[str], version: int,
                                   version_group: Optional[str],
+                                  turn_index: Optional[float] = None,
                                   metrics: Optional[dict] = None):
     """Persist an assistant message. Returns saved message dict or None."""
     if not (assistant_message.strip() or thinking_content.strip() or message_blocks):
@@ -754,12 +840,133 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
         blocks=consolidated_blocks or None,
         extra_metadata=message_extra_metadata,
         version=version,
-        version_group=version_group
+        version_group=version_group,
+        turn_index=turn_index
     )
     await db.commit()
     return saved
 
 
+def _expand_final_for_autos(
+    assistant_message: str, thinking_content: str, message_blocks: List[Dict]
+) -> List[Dict]:
+    """
+    Phase A KV fix: autos must append the *same* token sequence as the
+    next turn's history will replay. Main history replays a tool turn as
+    `assistant(tool_calls,pre_content) -> tool(s) -> assistant(post_content)`
+    (see `llm_messages` build). Previously autos appended a single
+    `assistant(assistant_message)` → prefix mismatch 80% vs 98%.
+    This helper returns 1 or 3 messages matching the replay.
+    """
+    if not message_blocks:
+        m: Dict = {"role": "assistant", "content": assistant_message or ""}
+        if thinking_content:
+            m["reasoning_content"] = thinking_content
+        return [m]
+    # Find tool blocks in the current turn's message_blocks
+    tool_blocks = [b for b in message_blocks if b.get("type") == "tool_call"]
+    if not tool_blocks:
+        m2: Dict = {"role": "assistant", "content": assistant_message or ""}
+        if thinking_content:
+            m2["reasoning_content"] = thinking_content
+        return [m2]
+    # Split like history replay: pre-content/thinking before first tool, post after last
+    first_pos = next((i for i, b in enumerate(message_blocks) if b.get("type") == "tool_call"), len(message_blocks))
+    last_pos = len(message_blocks) - 1 - next((i for i, b in enumerate(reversed(message_blocks)) if b.get("type") == "tool_call"), len(message_blocks))
+    pre_content = "".join(b.get("content", "") for b in message_blocks[:first_pos] if b.get("type") == "content")
+    pre_thinking = "".join(b.get("content", "") for b in message_blocks[:first_pos] if b.get("type") == "thinking")
+    post_parts = [b.get("content", "") for b in message_blocks[last_pos + 1 :] if b.get("type") == "content"]
+    post_content = "".join(post_parts) if post_parts else (assistant_message or "")
+    post_thinking_parts = [b.get("content", "") for b in message_blocks[last_pos + 1 :] if b.get("type") == "thinking"]
+    post_thinking = "".join(post_thinking_parts)
+    if not post_thinking and thinking_content and not pre_thinking:
+        # Fallback: thinking_content belongs to post when no pre-thinking found
+        post_thinking = thinking_content
+        pre_thinking = pre_thinking or ""
+    elif thinking_content and not pre_thinking and not post_thinking:
+        pre_thinking = thinking_content
+
+    # Build tcs from tool_blocks (preserve stored ids)
+    tcs: List[Dict] = []
+    for idx, b in enumerate(tool_blocks):
+        tid = b.get("id") or f"{b.get('name','tool')}_{idx}"
+        args = b.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
+        tcs.append({
+            "id": tid,
+            "type": "function",
+            "function": {"name": b.get("name", "unknown"), "arguments": __import__("json").dumps(args)},
+        })
+
+    out: List[Dict] = []
+    first: Dict = {"role": "assistant", "content": pre_content}
+    if pre_thinking:
+        first["reasoning_content"] = pre_thinking
+    if tcs:
+        first["tool_calls"] = tcs
+    out.append(first)
+    for idx, b in enumerate(tool_blocks):
+        tid = b.get("id") or (tcs[idx]["id"] if idx < len(tcs) else f"{b.get('name','tool')}_{idx}")
+        result = b.get("result")
+        try:
+            cres = __import__("json").dumps(result, default=str) if result is not None else "No result"
+        except Exception:
+            cres = str(result) if result is not None else "No result"
+        out.append({"role": "tool", "content": cres, "tool_call_id": tid})
+    if (post_content and post_content.strip()) or post_thinking:
+        last: Dict = {"role": "assistant", "content": post_content}
+        if post_thinking:
+            last["reasoning_content"] = post_thinking
+        out.append(last)
+    return out
+
+
+
+async def _persist_partial_turn(conversation_id: str, assistant_message: str,
+                                thinking_content: str, message_blocks: List[Dict],
+                                model: Optional[str], version: int,
+                                version_group: Optional[str],
+                                turn_index: Optional[float],
+                                placeholder_id: Optional[str]) -> Optional[str]:
+    """Best-effort persist of a partial turn on crash/cancel/error, using a
+    fresh DB session (the generator's session is gone by then). Returns the
+    saved row id when known so clients can repair their local placeholder."""
+    try:
+        async with get_db() as pdb:
+            if placeholder_id:
+                cons = []
+                for b in message_blocks:
+                    bt = b.get("type")
+                    if bt in ("content", "thinking"):
+                        if cons and cons[-1].get("type") == bt:
+                            cons[-1]["content"] = cons[-1].get("content", "") + b.get("content", "")
+                        else:
+                            cons.append(dict(b))
+                    else:
+                        cons.append(dict(b))
+                full_c = "".join(x.get("content", "") for x in cons if x.get("type") == "content") or assistant_message
+                full_t = "".join(x.get("content", "") for x in cons if x.get("type") == "thinking") or thinking_content
+                if full_c.strip() or full_t.strip() or cons:
+                    await update_assistant_message_full(
+                        pdb, placeholder_id,
+                        content=full_c,
+                        thinking=full_t,
+                        blocks=cons or message_blocks,
+                        extra_metadata={"model": model} if model else None,
+                    )
+                return placeholder_id
+            saved = await _save_assistant_message(
+                pdb, conversation_id, assistant_message, thinking_content,
+                message_blocks, model, version, version_group,
+                turn_index=turn_index
+            )
+            return saved["id"] if isinstance(saved, dict) else None
+    except Exception as e:
+        print(f"[STREAM] partial save on teardown failed: {e}")
+        import traceback as _tb_p
+        _tb_p.print_exc()
+        return None
 async def _core_stream_handler(
     request_id: str,
     conversation_id: str,
@@ -768,18 +975,34 @@ async def _core_stream_handler(
     document_ids: Optional[list] = None,
     version: int = 1,
     version_group: Optional[str] = None,
+    anchor_message_id: Optional[str] = None,
+    turn_index: Optional[float] = None,
     provider_id: Optional[str] = None,
     override_servers: Optional[list] = None,
     thinking_mode: Optional[str] = None
 ) -> AsyncGenerator[str, None]:
     """Universal SSE handler for streaming LLM responses and tool execution.
-    
+
     Args:
         version: Version number for regenerated responses
         version_group: UUID shared by all versions of the same response
+        anchor_message_id: Regeneration only — the user message being re-answered.
+                           History replay is cut at (and includes) this message and
+                           every stored version of the response group is excluded, so
+                           the model never sees prior attempts or later turns.
+        turn_index: Regeneration only — timeline slot inherited from the superseded
+                    response so all versions render in place.
         provider_id: LLM provider to use (falls back to the default provider)
     """
     current_document_ids.set(document_ids)
+
+    # Placeholder for crash-safe incremental persist — must be defined here
+    # so the CancelledError handler (outside the `async with get_db()` block)
+    # can still access the current turn's state even if cancelled early.
+    placeholder_id: Optional[str] = None
+    assistant_message = ""
+    thinking_content = ""
+    message_blocks: List[Dict] = []
     try:
         await _register_stream(conversation_id, request_id)
         async with get_db() as db:
@@ -809,25 +1032,110 @@ async def _core_stream_handler(
                             "enabled_skills": agent.enabled_skills or []
                         }
 
-            # Resolve LLM provider: agent's provider > requested provider > default.
-            from database.provider_crud import get_provider as _get_provider, get_default_provider
-            resolved_provider_id = None
-            if agent_config and agent_config.get("provider_id"):
-                resolved_provider_id = agent_config["provider_id"]
-            elif provider_id:
-                resolved_provider_id = provider_id
+            # Resolve LLM provider — single entity: model implies provider (live chat overrides default/agent)
+            # Default from settings is fallback only when no live model selected
+            from database.provider_crud import get_provider as _get_provider, get_default_provider, list_providers as _list_providers
             provider = None
-            try:
-                if resolved_provider_id:
-                    provider = await _get_provider(db, resolved_provider_id, include_api_key=True)
-                if provider is None:
-                    provider = await get_default_provider(db, include_api_key=True)
-            except Exception as e:
-                print(f"[PROVIDER] resolution failed: {e}")
-            provider_base_url = provider.get("base_url") if provider else None
-            provider_api_key = provider.get("api_key") if provider else None
+            provider_base_url = None
+            provider_api_key = None
+            # 1) If a live model is selected (chat dropdown), it is single entity → find its owner provider
+            if model:
+                try:
+                    _all = await _list_providers(db, include_api_key=True)
+                    for p in _all:
+                        if not p.get("enabled"):
+                            continue
+                        if any(m.get("id") == model for m in (p.get("models") or [])):
+                            provider = p
+                            provider_base_url = p.get("base_url")
+                            provider_api_key = p.get("api_key")
+                            print(f"[PROVIDER] live model '{model}' → provider '{p['name']}' ({provider_base_url}) [single entity]")
+                            break
+                    if provider is None:
+                        print(f"[PROVIDER] live model '{model}' not in any enabled provider cache — will try agent/requested/default")
+                except Exception as e:
+                    print(f"[PROVIDER] live-model lookup failed: {e}")
+            # 2) Fallback: agent's provider > requested provider_id > default (for default model from settings)
+            if provider is None:
+                resolved_provider_id = None
+                if agent_config and agent_config.get("provider_id"):
+                    resolved_provider_id = agent_config["provider_id"]
+                elif provider_id:
+                    resolved_provider_id = provider_id
+                try:
+                    if resolved_provider_id:
+                        provider = await _get_provider(db, resolved_provider_id, include_api_key=True)
+                    if provider is None:
+                        provider = await get_default_provider(db, include_api_key=True)
+                except Exception as e:
+                    print(f"[PROVIDER] resolution failed: {e}")
+                provider_base_url = provider.get("base_url") if provider else None
+                provider_api_key = provider.get("api_key") if provider else None
+                if provider:
+                    print(f"[PROVIDER] using '{provider['name']}' ({provider_base_url}) model={model} [fallback]")
+            # If no live model was supplied (race: page reloaded before model
+            # list fetched, so selectedModel is empty), don't fall back to
+            # the stale settings default (e.g. Qwen no longer deployed) — derive
+            # from the resolved (or any enabled) provider instead.
+            if not model and provider:
+                cand = [m.get("id") for m in (provider.get("models") or []) if m.get("id")]
+                if cand:
+                    model = cand[0]
+                    print(f"[PROVIDER] derived model '{model}' from provider '{provider['name']}' (live selection was empty)")
+            if not model:
+                try:
+                    _all2 = await _list_providers(db)
+                    for p in _all2:
+                        if not p.get("enabled"):
+                            continue
+                        ms = [m.get("id") for m in (p.get("models") or []) if m.get("id")]
+                        if ms:
+                            model = ms[0]
+                            provider = p
+                            provider_base_url = p.get("base_url")
+                            provider_api_key = p.get("api_key")
+                            print(f"[PROVIDER] global fallback model '{model}'")
+                            break
+                except Exception:
+                    pass
+            # 3) Safety: if resolved provider still doesn't own live model (stale cache or agent pin), scan again
+            if model and provider:
+                prov_models = [m.get("id") for m in (provider.get("models") or []) if m.get("id")]
+                if prov_models and model not in prov_models:
+                    orig_name = provider.get("name")
+                    switched = False
+                    # honour explicit provider_id if it owns model
+                    if provider_id and provider_id != provider.get("id"):
+                        try:
+                            req_p = await _get_provider(db, provider_id, include_api_key=True)
+                            if req_p and any(m.get("id") == model for m in (req_p.get("models") or [])):
+                                provider = req_p
+                                provider_base_url = provider.get("base_url")
+                                provider_api_key = provider.get("api_key")
+                                print(f"[PROVIDER] honouring requested provider '{provider['name']}' for model '{model}' (was '{orig_name}')")
+                                switched = True
+                        except Exception as e:
+                            print(f"[PROVIDER] requested-provider check failed: {e}")
+                    if not switched:
+                        try:
+                            all_ps = await _list_providers(db, include_api_key=True)
+                            for p in all_ps:
+                                if not p.get("enabled"):
+                                    continue
+                                if any(m.get("id") == model for m in (p.get("models") or [])):
+                                    if p.get("id") != provider.get("id"):
+                                        print(f"[PROVIDER] switching from '{orig_name}' to '{p['name']}' for model '{model}' [stale cache]")
+                                        provider = p
+                                        provider_base_url = p.get("base_url")
+                                        provider_api_key = p.get("api_key")
+                                    switched = True
+                                    break
+                            if not switched:
+                                print(f"[PROVIDER] model '{model}' not in any enabled provider cache — leaving '{orig_name}' (will 400 if missing)")
+                        except Exception as e:
+                            print(f"[PROVIDER] model-aware fallback failed: {e}")
             if provider:
-                print(f"[PROVIDER] using '{provider['name']}' ({provider_base_url}) model={model}")
+                print(f"[PROVIDER] final '{provider['name']}' ({provider_base_url}) model={model} provider_id={provider.get('id')}")
             
             # Get current date for system prompt
             from datetime import datetime
@@ -880,6 +1188,29 @@ async def _core_stream_handler(
             
             messages = await get_conversation_messages(db, conversation_id)
             # Build LLM messages — convert user messages with file attachments to multimodal format
+            # Filter out empty failed turns that pollute old chats (empty assistant with no tools/thinking)
+            filtered_msgs = []
+            for m in messages:
+                if m.get("role") == "assistant" and not (m.get("content") or "").strip() and not m.get("thinking") and not (m.get("tool_calls") or []) and not ((m.get("metadata") or {}).get("blocks")):
+                    print(f"[HISTORY] skipping empty failed assistant {m.get('id','')[:8]}")
+                    continue
+                filtered_msgs.append(m)
+            messages = filtered_msgs
+            # ── Regeneration context cut ─────────────────────────────
+            # The model must answer the anchor prompt fresh: replay history only
+            # up to (and including) that user message, and drop EVERY stored
+            # version of the response being regenerated — otherwise the old
+            # answer leaks into the context as if it were already spoken.
+            if anchor_message_id:
+                _anchor_idx = next(
+                    (i for i, m in enumerate(messages) if m.get("id") == anchor_message_id),
+                    -1,
+                )
+                if _anchor_idx >= 0:
+                    messages = messages[:_anchor_idx + 1]
+                if version_group:
+                    messages = [m for m in messages if m.get("version_group") != version_group]
+                print(f"[REGEN] history cut at anchor {anchor_message_id[:8]}: {len(messages)} msgs replayed")
             llm_messages = []
             for msg in messages:
                 role = msg["role"]
@@ -1099,10 +1430,75 @@ async def _core_stream_handler(
             if system_prompt_content:
                 llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
 
+            # ponytail: truncate huge history for old chats (99 msgs → 400 on free models)
+            # Free models fail even with 21 msgs; keep last 10 for -free, 40 otherwise
+            is_free = bool(model and "-free" in model)
+            limit = 10 if is_free else 40
+            thresh = 15 if is_free else 50
+            if len(llm_messages) > thresh:
+                sys_msg = llm_messages[0] if llm_messages and llm_messages[0].get("role") == "system" else None
+                rest = llm_messages[1:] if sys_msg else llm_messages
+                keep = rest[-limit:]
+                llm_messages = ([sys_msg] + keep) if sys_msg else keep
+                print(f"[HISTORY] truncated {len(rest)+ (1 if sys_msg else 0)} → {len(llm_messages)} for model {model} (free={is_free})")
+
             tool_calls_history = []
 
             # Track message blocks for sequential display (content, thinking, tool calls)
             message_blocks = []
+
+            # ── Placeholder for crash/stop/approval safety ────────────
+            # The previous turn is already committed in its own handler.
+            # This placeholder guarantees the *current* turn is never lost:
+            # created empty and updated incrementally as chunks arrive,
+            # on every tool event, and immediately on approval. A restart or
+            # Stop therefore finds a row instead of nothing.
+            placeholder_id: Optional[str] = None
+            _last_persist = 0.0
+            try:
+                _ph = await add_message(
+                    db, conversation_id, "assistant", "",
+                    blocks=[], extra_metadata={"model": model} if model else {},
+                    version=version, version_group=version_group,
+                    turn_index=turn_index,
+                )
+                placeholder_id = _ph["id"]
+                await db.commit()
+                print(f"[PERSIST] placeholder {placeholder_id[:8]} for {request_id[:8]}")
+            except Exception as _e:
+                print(f"[PERSIST] placeholder create failed: {_e}")
+                placeholder_id = None
+
+            async def _flush_placeholder(force: bool = False):
+                nonlocal _last_persist
+                if not placeholder_id:
+                    return
+                now = _time.monotonic()
+                if not force and (now - _last_persist < 0.8):
+                    return
+                _last_persist = now
+                try:
+                    _cons = []
+                    for _b in message_blocks:
+                        _bt = _b.get("type")
+                        if _bt in ("content", "thinking"):
+                            if _cons and _cons[-1].get("type") == _bt:
+                                _cons[-1]["content"] = _cons[-1].get("content","") + _b.get("content","")
+                            else:
+                                _cons.append(dict(_b))
+                        else:
+                            _cons.append(dict(_b))
+                    _full_content = "".join(b.get("content","") for b in _cons if b.get("type")=="content")
+                    _full_thinking = "".join(b.get("content","") for b in _cons if b.get("type")=="thinking")
+                    await update_assistant_message_full(
+                        db, placeholder_id,
+                        content=_full_content,
+                        thinking=_full_thinking,
+                        blocks=_cons if _cons else message_blocks,
+                        extra_metadata={"model": model} if model else None,
+                    )
+                except Exception as _e:
+                    print(f"[PERSIST] flush failed: {_e}")
 
             # Get MCP tools for LLM function calling
             mcp_tools = []
@@ -1188,6 +1584,8 @@ async def _core_stream_handler(
             except Exception as e:
                 print(f"[CONTEXT] event failed: {e}")
             
+            # Save original prefix for KV-friendly autos (Phase A) — llm_messages will be mutated in the loop
+            original_llm_messages = list(llm_messages)
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 35  # Prevent infinite loops
             tool_iteration = 0
@@ -1223,6 +1621,11 @@ async def _core_stream_handler(
                                         "content": content
                                     })
                                 yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+                                # incremental persist (throttled) so Stop/restart never loses the whole response
+                                try:
+                                    await _flush_placeholder()
+                                except Exception:
+                                    pass
                             elif chunk_type == "thinking":
                                 thinking = chunk.get("content", "")
                                 thinking_content += thinking
@@ -1235,6 +1638,10 @@ async def _core_stream_handler(
                                             "content": thinking
                                         })
                                 yield f"data: {json.dumps({'type': 'thinking', 'content': thinking})}\n\n"
+                                try:
+                                    await _flush_placeholder()
+                                except Exception:
+                                    pass
                             elif chunk_type == "tool_call":
                                 print(f"[DEBUG] Tool call chunk received")
                                 tc_data = chunk.get("tool_call")
@@ -1271,6 +1678,10 @@ async def _core_stream_handler(
                                     "progress_history": []
                                 })
                                 yield f"data: {json.dumps({'type': 'tool_error', 'tool': tool_name, 'error': error_msg})}\n\n"
+                                try:
+                                    await _flush_placeholder(force=True)
+                                except Exception:
+                                    pass
 
                             elif chunk_type == "metrics":
                                 m = chunk.get("metrics") or {}
@@ -1366,6 +1777,10 @@ async def _core_stream_handler(
                                 # (so CancelledError save includes it)
                                 if not any(b.get("type")=="tool_call" and b.get("name")==pending_tool_call['name'] and b.get("status")=="approval" for b in message_blocks):
                                     message_blocks.append(provisional)
+                                    try:
+                                        await _flush_placeholder(force=True)
+                                    except Exception:
+                                        pass
                             elif progress_event.get("type") == "tool_progress":
                                 pending_tool_call["status"] = progress_event.get("status", "running")
                                 pending_tool_call["progress"] = progress_event.get("progress", 0)
@@ -1422,6 +1837,10 @@ async def _core_stream_handler(
                             message_blocks[provisional_idx] = tool_call_block
                         else:
                             message_blocks.append(tool_call_block)
+                        try:
+                            await _flush_placeholder(force=True)
+                        except Exception:
+                            pass
 
                         # Add tool result to conversation for LLM to continue
                         # Format for llama.cpp: role=tool with content as string
@@ -1496,18 +1915,83 @@ async def _core_stream_handler(
                 except Exception as _e:
                     print(f"[METRICS] emit aggregated failed: {_e}")
             
-            # Save assistant message with message blocks for sequential display
-            # (also used on client-cancel so a steering message can continue)
-            assistant_saved = await _save_assistant_message(
-                db, conversation_id, assistant_message, thinking_content,
-                message_blocks, model, version, version_group,
-                metrics=final_metrics
-            )
-            saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else None
-            saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
-
-            # ── Visible autonomous actions (persisted + streamed) ──────────
-            # Collect auto_action blocks that will be appended to the saved message
+            # Save assistant message — update placeholder if it exists (crash-safe),
+            # otherwise create new. The placeholder was committed at stream start
+            # and updated incrementally, so the previous turn is already safe and
+            # the current partial is never lost on Stop/restart/approval.
+            if placeholder_id:
+                # Consolidate like _save_assistant_message, then update in place
+                _cons2 = []
+                for _b in message_blocks:
+                    _bt = _b.get("type")
+                    if _bt in ("content", "thinking"):
+                        if _cons2 and _cons2[-1].get("type") == _bt:
+                            _cons2[-1]["content"] = _cons2[-1].get("content","") + _b.get("content","")
+                        else:
+                            _cons2.append(dict(_b))
+                    else:
+                        _cons2.append(dict(_b))
+                _full_c = "".join(b.get("content","") for b in _cons2 if b.get("type")=="content")
+                if not _full_c:
+                    _full_c = assistant_message
+                _full_t = "".join(b.get("content","") for b in _cons2 if b.get("type")=="thinking")
+                if not _full_t:
+                    _full_t = thinking_content
+                _extra2: Dict = {}
+                if model:
+                    _extra2["model"] = model
+                if final_metrics:
+                    _extra2["metrics"] = final_metrics
+                # If nothing to save and placeholder is still empty, keep it (still counts as saved for done)
+                if not (_full_c.strip() or _full_t.strip() or _cons2):
+                    # Keep the empty placeholder as the saved row (so done has an id)
+                    from sqlalchemy import select as _sel2
+                    from backend.database.models import Message as _M2
+                    _r2 = await db.execute(_sel2(_M2).where(_M2.id == placeholder_id))
+                    _row2 = _r2.scalar_one_or_none()
+                    if _row2 is not None and final_metrics:
+                        _meta2 = dict(_row2.extra_metadata or {})
+                        if model:
+                            _meta2["model"] = model
+                        _meta2["metrics"] = final_metrics
+                        _row2.extra_metadata = _meta2
+                        await db.commit()
+                    assistant_saved = {"id": placeholder_id, "version_group": version_group}
+                    saved_msg_id = placeholder_id
+                    saved_version_group = version_group
+                else:
+                    assistant_saved = await update_assistant_message_full(
+                        db, placeholder_id,
+                        content=_full_c,
+                        thinking=_full_t,
+                        blocks=_cons2 if _cons2 else message_blocks,
+                        extra_metadata=_extra2 if _extra2 else None,
+                    )
+                    # update_assistant_message_full already committed
+                    saved_msg_id = placeholder_id
+                    saved_version_group = version_group
+                    # keep the dict shape for later activity_blocks handling
+                    if assistant_saved is None:
+                        # placeholder was deleted? fallback to create
+                        assistant_saved = await _save_assistant_message(
+                            db, conversation_id, assistant_message, thinking_content,
+                            message_blocks, model, version, version_group,
+                            turn_index=turn_index,
+                            metrics=final_metrics
+                        )
+                        saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else placeholder_id
+                        saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
+                        placeholder_id = saved_msg_id
+            else:
+                assistant_saved = await _save_assistant_message(
+                    db, conversation_id, assistant_message, thinking_content,
+                    message_blocks, model, version, version_group,
+                    turn_index=turn_index,
+                    metrics=final_metrics
+                )
+                saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else None
+                saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
+                placeholder_id = saved_msg_id
             # and streamed live so the thread shows "what the model did after answering".
             import time as _aa_time
             activity_blocks: list = []
@@ -1570,11 +2054,11 @@ async def _core_stream_handler(
                             agent_id=conversation.agent_id if conversation else None,
                             model=model,
                             base_url=provider_base_url, api_key=provider_api_key,
-                            llm_messages=llm_messages, assistant_message=assistant_message,
+                            llm_messages=original_llm_messages, assistant_message=assistant_message,
                             thinking_content=thinking_content,
-                            tools=all_tools
+                            tools=all_tools, thinking_mode=thinking_mode, message_blocks=message_blocks
                         ),
-                        timeout=90
+                        timeout=300
                     )
                 except asyncio.TimeoutError:
                     print("[MEMORY] extraction timed out")
@@ -1596,9 +2080,10 @@ async def _core_stream_handler(
                     skill_res = await asyncio.wait_for(
                         _maybe_reflect_and_propose_skill(db, conversation_id, llm_client, model=model,
                                                          base_url=provider_base_url, api_key=provider_api_key,
-                                                         llm_messages=llm_messages, assistant_message=assistant_message,
-                                                         thinking_content=thinking_content, tools=all_tools),
-                        timeout=90
+                                                         llm_messages=original_llm_messages, assistant_message=assistant_message,
+                                                         thinking_content=thinking_content, tools=all_tools,
+                                                         thinking_mode=thinking_mode, message_blocks=message_blocks),
+                        timeout=300
                     )
                 except asyncio.TimeoutError:
                     print("[SKILLS] reflection timed out")
@@ -1627,9 +2112,10 @@ async def _core_stream_handler(
                     title = ""
                     try:
                         title = await _generate_title_with_model(
-                            llm_messages, assistant_message, llm_client, tools=all_tools, model=model,
+                            original_llm_messages, assistant_message, llm_client, tools=all_tools, model=model,
                             base_url=provider_base_url, api_key=provider_api_key,
-                            thinking_content=thinking_content
+                            thinking_content=thinking_content, thinking_mode=thinking_mode,
+                            message_blocks=message_blocks
                         )
                     except Exception as e:
                         print(f"[TITLE] generation failed: {e}")
@@ -1684,29 +2170,39 @@ async def _core_stream_handler(
 
             # Yield done event (include real ids so frontend can fix placeholder after regenerate)
             yield f"data: {json.dumps({'type': 'done', 'message_id': saved_msg_id, 'version_group': saved_version_group, 'version': version})}\n\n"
-
     except asyncio.CancelledError:
-        # Request was cancelled by client - this is normal, don't log as error
+        # Request was cancelled by client (Stop button) - this is normal, don't log as error.
+        # The placeholder was already committed at stream start and updated incrementally;
+        # flush the latest in-memory blocks so nothing typed/generated is lost.
         print(f"Request {request_id} cancelled by client")
-        # Save the partial response so a steering message can continue from it.
-        # Use a fresh DB session — the original `db` from `async with` is already closed.
-        try:
-            async with get_db() as cancel_db:
-                await _save_assistant_message(
-                    cancel_db, conversation_id, assistant_message, thinking_content,
-                    message_blocks, model, version, version_group
-                )
-        except Exception as e:
-            print(f"[STEER] partial save on cancel failed: {e}")
+        await _persist_partial_turn(
+            conversation_id, assistant_message, thinking_content,
+            message_blocks, model, version, version_group,
+            turn_index, placeholder_id
+        )
         raise  # Re-raise to properly propagate cancellation
     except Exception as e:
+        # Any uncaught failure (mid-stream connection reset, DB hiccup, provider
+        # blow-up between the inner guards) used to kill this generator BEFORE
+        # 'done' — leaving clients stuck on the spinner with a never-patched
+        # placeholder id. Persist what we have, then ALWAYS terminate the SSE
+        # protocol cleanly: an explicit error event followed by done.
         print(f"Error in event generator: {e}")
         import traceback
         traceback.print_exc()
+        saved_id = await _persist_partial_turn(
+            conversation_id, assistant_message, thinking_content,
+            message_blocks, model, version, version_group,
+            turn_index, placeholder_id
+        )
         try:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
         except Exception:
             pass  # Client may have disconnected
+        try:
+            yield f"data: {json.dumps({'type': 'done', 'message_id': saved_id or placeholder_id, 'version_group': version_group, 'version': version})}\n\n"
+        except Exception:
+            pass  # Client gone mid-write; nothing more we can do
     finally:
         await _unregister_stream(conversation_id, request_id)
 
@@ -1744,6 +2240,8 @@ async def stream_regenerate_response(
     model: str = None,
     version: int = 1,
     version_group: str = None,
+    anchor_message_id: str = None,
+    turn_index: float = None,
     provider_id: str = None,
     override_servers: str = None,
     thinking_mode: str = None
@@ -1757,6 +2255,7 @@ async def stream_regenerate_response(
             request_id, conversation_id,
             enable_rag=False, model=model,
             version=version, version_group=version_group,
+            anchor_message_id=anchor_message_id, turn_index=turn_index,
             provider_id=provider_id, override_servers=overrides,
             thinking_mode=thinking_mode
         ),
@@ -2142,10 +2641,11 @@ async def get_versions_by_group(version_group: str):
 
 
 @app.delete("/api/messages/{message_id}")
-async def delete_message_endpoint(message_id: str):
-    """Delete a message"""
+async def delete_message_endpoint(message_id: str, version: Optional[int] = None):
+    """Delete a message, or (with ?version=N) one specific version of a
+    versioned response — that row's id is resolved from the message's group."""
     async with get_db() as db:
-        success = await db_delete_message(db, message_id)
+        success = await db_delete_message(db, message_id, version=version)
         if not success:
             raise HTTPException(status_code=404, detail="Message not found")
         return {"status": "success", "message": "Message deleted"}
@@ -2208,40 +2708,51 @@ async def regenerate_last_response(conversation_id: str, request: Request):
         if not user_message:
             raise HTTPException(status_code=400, detail="Could not find preceding user message")
         
-        # Determine version_group and next version number
+        # Determine version_group, next version number, and the timeline slot.
+        from sqlalchemy import select, func
+        from database.models import Message as MsgModel
+
+        # ORM row of the response being replaced — source of the turn slot and
+        # the object stamped with a fresh version_group on first regeneration.
+        sup_res = await db.execute(select(MsgModel).where(MsgModel.id == msg_target_id))
+        superseded = sup_res.scalar_one_or_none()
+
         current_version_group = message.get("version_group")
-        current_version = message.get("version", 1)
-        
+
         if current_version_group:
-            # This message already has versions — increment
-            new_version = current_version + 1
             version_group = current_version_group
+            # Derive from MAX(version) so concurrent/stale regenerations of any
+            # group member can never mint duplicate (group, version) pairs.
+            max_v = (await db.execute(
+                select(func.max(MsgModel.version)).where(MsgModel.version_group == version_group)
+            )).scalar()
+            new_version = (max_v or message.get("version", 1)) + 1
         else:
-            # First regenerate — create a version_group
+            # First regenerate — create the version group on the original.
             version_group = str(uuid_lib.uuid4())
-            new_version = current_version + 1
-            
-            # Update the original message with the version_group
-            from sqlalchemy import select
-            from database.models import Message as MsgModel
-            result = await db.execute(
-                select(MsgModel).where(MsgModel.id == msg_target_id)
-            )
-            original_msg = result.scalar_one_or_none()
-            if original_msg:
-                original_msg.version = current_version
-                original_msg.version_group = version_group
-        
+            new_version = message.get("version", 1) + 1
+            if superseded:
+                superseded.version_group = version_group
+
+        # All versions occupy the superseded response's timeline slot so the
+        # regenerated answer renders (and replays history) at the same position.
+        turn_index = superseded.turn_index if superseded else None
+        if turn_index is None:
+            turn_index = (user_message.get("turn_index") or 0.0) + 0.5
+
+        await db.commit()
+
         # Create new request ID
         request_id = str(uuid.uuid4())
-        
+
         return {
             "request_id": request_id,
             "status": "processing",
             "conversation_id": conversation_id,
             "version": new_version,
             "version_group": version_group,
-            "superseded_message_id": msg_target_id
+            "anchor_user_message_id": user_message["id"],
+            "turn_index": turn_index
         }
 
 

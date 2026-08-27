@@ -143,24 +143,29 @@ class LLMClient:
                         timeout=1260
                     ) as response:
                         if response.status == 500:
-                            # Server error - likely temporary overload, retry
                             error_text = await response.text()
-                            raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
+                            raise Exception(f"LLM provider {current_base_url} returned status {response.status}: {error_text}")
                         elif response.status != 200:
                             error_text = await response.text()
-                            # Graceful fallback: some strict proxies reject unknown fields
                             if response.status == 400:
                                 lower = error_text.lower()
                                 popped = False
                                 for key in ("stream_options", "reasoning_effort", "chat_template_kwargs", "thinking"):
                                     if key in lower and key in payload:
-                                        print(f"[DEBUG] Provider rejected {key}, retrying without it")
+                                        print(f"[DEBUG] Provider {current_base_url} rejected {key}, retrying without it")
                                         payload.pop(key, None)
                                         popped = True
+                                # ponytail: free models (muse-spark) 400 with empty choices when history/tools too long
+                                # retry without tools — history already truncated, but tools may still be too much
+                                if not popped and '"choices":[{"index":0,"message":{"role":"assistant"},"finish_reason":null}]' in error_text.replace(" ", "") and "tools" in payload:
+                                    print(f"[DEBUG] Provider {current_base_url} rejected tools/history for {payload.get('model')}, retrying without tools")
+                                    payload.pop("tools", None)
+                                    payload.pop("tool_choice", None)
+                                    popped = True
                                 if popped:
                                     await response.release()
                                     continue
-                            raise Exception(f"llama.cpp returned status {response.status}: {error_text}")
+                            raise Exception(f"LLM provider {current_base_url} returned status {response.status}: {error_text}")
                         
                         # Stream content more immediately
                         buffer = ""

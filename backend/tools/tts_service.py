@@ -135,17 +135,113 @@ def _money_to_words(raw, suffix):
     return "zero dollars"
 
 
-def normalize_tts_text(text: str) -> str:
-    """Rewrite number-heavy text so TTS engines (esp. Kokoro) read it correctly.
+# ─── Non-numeric TTS text cleanup ──────────────────────────────
+# Engines (esp. Kokoro/misaki, but Edge too) read literal punctuation and
+# symbols aloud: "~" -> "tilde", URLs spelled out char-by-char, "->" read as
+# "hyphen greater", etc. The rewrites below are conservative — they match what
+# a human would say — so they are safe to run before ANY engine.
 
-    Kokoro/misaki mangles $ amounts, percents, ordinals and bare numbers. The
-    rewrites here are conservative — they match what Edge TTS would say anyway
-    — so it is safe to run before any engine. Requires num2words; no-ops if missing.
+# Symbols that should become words.
+_SYMBOL_WORDS = {
+    "\u2192": " to ",      # →
+    "\u2190": " to ",      # ←
+    "\u2194": " versus ",  # ↔
+    "\u00b1": " plus or minus ",  # ±
+    "\u00d7": " times ",   # ×
+    "\u00f7": " divided by ",     # ÷
+    "\u2248": " approximately ",   # ≈
+    "\u2264": " less than or equal to ",  # ≤
+    "\u2265": " greater than or equal to ",  # ≥
+    "\u2260": " not equal to ",   # ≠
+    "\u00b0": " degrees ",  # °
+}
+
+# Acronyms Kokoro/misaki mangle into nonsense ("appy", "jay-son"). Edge reads
+# them fine, so only spell them out letter-by-letter for Kokoro.
+_KOKORO_ACRONYMS = {
+    "API": "A P I", "APIs": "A P I s", "URL": "U R L", "URLs": "U R L s",
+    "SQL": "S Q L", "JSON": "J S O N", "XML": "X M L", "HTML": "H T M L",
+    "CSS": "C S S", "HTTP": "H T T P", "HTTPS": "H T T P S",
+}
+
+# Glued number+unit tokens. Expanded to words; the digit is then converted to
+# words by the numeric pass below.
+_UNIT_WORDS = {
+    "km": " kilometers", "cm": " centimeters", "mm": " millimeters",
+    "m": " meters", "px": " pixels", "gb": " gigabytes", "mb": " megabytes",
+    "kb": " kilobytes", "tb": " terabytes", "ms": " milliseconds",
+    "kg": " kilograms", "ml": " milliliters", "hz": " hertz",
+    "ghz": " gigahertz", "mhz": " megahertz",
+}
+
+# Emoji / symbol pictographs to drop entirely (engines read them as
+# descriptions like "red heart emoji" or skip them).
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\ufe0f]"
+)
+
+
+def normalize_tts_text(text: str, engine: Optional[str] = None) -> str:
+    """Rewrite text so any TTS engine reads it the way a human would.
+
+    Two layers:
+      1. Structural/semantic cleanup (URLs, links, ~, &, symbols, units,
+         emoji) — engine-agnostic, conservative.
+      2. Numeric cleanup ($/%/ordinals/bare numbers) — required for Kokoro,
+         harmless for Edge.
+    Acronym spelling-out is gated to Kokoro only.
     """
+    if not text:
+        return text
+
+    # 1. Decode HTML entities first so &amp; -> & before the &->"and" rule.
+    import html as _html
+    text = _html.unescape(text)
+
+    # 2. Markdown links [text](url) -> text (URL would otherwise be read aloud).
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+
+    # 3. URLs: drop scheme + leading www, and any /path?query, leaving the host.
+    text = re.sub(r"https?://", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\S)www\.", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b([\w-]+(?:\.[\w-]+)+)(/[^\s]*)", r"\1", text)
+
+    # 4. & -> "and" (entity already decoded above).
+    text = re.sub(r"\s*&\s*", " and ", text)
+
+    # 5. ~ : approximate before a number; home-dir before a slash; else leave.
+    text = re.sub(r"~\s*(\d)", r"approximately \1", text)
+    text = re.sub(r"~/", "home ", text)
+
+    # 6. #N (not a hex color) -> "number N".
+    text = re.sub(r"#(\d+)(?![0-9a-fA-F])", r"number \1", text)
+
+    # 7. Unicode symbol -> word.
+    for sym, word in _SYMBOL_WORDS.items():
+        text = text.replace(sym, word)
+
+    # 8. Glued number+unit -> "5 kilometers" (digit worded below).
+    text = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(km|cm|mm|px|gb|mb|kb|tb|ms|kg|ml|hz|ghz|mhz)",
+        lambda m: f"{m.group(1)}{_UNIT_WORDS[m.group(2).lower()]}",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 9. Acronyms: spell out only for Kokoro (Edge handles them).
+    if engine == "kokoro":
+        for acr, spelled in _KOKORO_ACRONYMS.items():
+            text = re.sub(rf"\b{acr}\b", spelled, text)
+
+    # 10. Drop emoji/pictographs.
+    text = _EMOJI_RE.sub("", text)
+
+    # 11. Numeric cleanup (existing behavior, kept verbatim).
     try:
         from num2words import num2words
     except ImportError:
-        return text
+        # Without num2words we can't word numbers; return the structural cleanup.
+        return re.sub(r"\s+", " ", text).strip()
 
     text = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)\s+(million|billion|trillion|thousand)\b",
                   lambda m: f"{num2words(m.group(1).replace(',', '')).replace(',', '')} {m.group(2).lower()} dollars", text)
@@ -160,7 +256,9 @@ def normalize_tts_text(text: str) -> str:
     # Bare numbers, but not ones glued to : / - . (times, dates, ranges, versions)
     text = re.sub(r"(?<![\w:./-])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\w:./%-])",
                   lambda m: num2words(m.group(1).replace(",", "")).replace(",", ""), text)
-    return text
+
+    # 12. Collapse whitespace.
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _is_abbrev_fragment(p: str) -> bool:
@@ -266,7 +364,7 @@ class TTSService:
         # Rewrite $ amounts, %, ordinals and bare numbers so the engine
         # (especially Kokoro) reads them correctly. Cache key uses the
         # normalized text since that is what gets synthesized.
-        text = normalize_tts_text(text)
+        text = normalize_tts_text(text, engine=self.config.engine)
 
         voice = voice or self.config.voice
         rate = rate or self.config.rate
@@ -449,7 +547,7 @@ class TTSService:
         re-reads of the same message stream instantly from cache. Generation
         bails between sentences once should_stop() is true (client paused).
         """
-        text = normalize_tts_text(text)
+        text = normalize_tts_text(text, engine=self.config.engine)
         voice = voice or self.config.voice
         rate = rate or self.config.rate
         engine = self.config.engine
@@ -627,9 +725,20 @@ if __name__ == "__main__":
         "12:30 PM": "12:30 PM",  # untouched: time
         "12/25/2024": "12/25/2024",  # untouched: date
         "10-20 items": "10-20 items",  # untouched: range
-        "5km away": "5km away",  # untouched: unit
+        "5km away": "five kilometers away",  # glued unit -> words
+        "Visit https://www.google.com": "Visit google.com",
+        "See [Google](https://google.com)": "See Google",
+        "~30 minutes": "approximately thirty minutes",
+        "AT&T": "AT and T",
+        "A \u2192 B": "A to B",
+        "#1 issue": "number one issue",
+        "hi \U0001F44D there": "hi there",
     }
     for inp, expected in cases.items():
         got = normalize_tts_text(inp)
         assert got == expected, f"{inp!r} -> {got!r}, expected {expected!r}"
+    # Engine-specific: Kokoro spells out acronyms; Edge (and default) does not.
+    assert normalize_tts_text("call the API", engine="kokoro") == "call the A P I"
+    assert normalize_tts_text("call the API", engine="edge-tts") == "call the API"
+    assert normalize_tts_text("call the API") == "call the API"
     print("normalizer self-check: OK")

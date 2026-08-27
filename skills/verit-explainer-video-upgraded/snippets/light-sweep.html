@@ -1,0 +1,28 @@
+<!-- SNIPPET: LIGHT-SWEEP TRANSITION (on-brand scene transition) -->
+<!-- Use for: transitioning between major scene groups / acts -->
+<!-- Track block: 8-9 (one element per sweep, unique track each) -->
+<!--
+  This REPLACES registry shader transitions (light-leak, flash-through-white):
+  those install as full-frame 4-second DEMO compositions with their own
+  backgrounds and fonts — embedding them mid-video clashes with Verit brand.
+  This hand-authored sweep is brand-native: a skewed teal-white light bar
+  that wipes across the full frame in ~1s between scenes.
+
+  Timing: start the sweep ~0.1s BEFORE the old scene's fade-out ends and let
+  the next scene enter ~0.15s after the sweep starts (the bar covers the cut).
+-->
+<div class="clip" id="sweep1" data-start="17.7" data-duration="1.2" data-track-index="8"
+     style="left:0;top:0;width:520px;height:1080px;
+            background:linear-gradient(90deg,transparent,rgba(45,212,191,0.16) 35%,rgba(248,250,252,0.22) 50%,rgba(45,212,191,0.16) 65%,transparent);
+            transform:skewX(-12deg);opacity:0;"></div>
+
+<!-- GSAP → paste after // ANIM_INJECT (retime to your scene boundaries) -->
+<script type="text/note">
+/* ---- light-sweep transition ---- */
+tl.fromTo("#sweep1",{x:-700,opacity:1},{x:2300,duration:1.0,ease:"power2.inOut"},17.7);
+tl.set("#sweep1",{opacity:0},18.75);
+</script>
+
+<!-- For multiple sweeps, duplicate the element with a new id + track index
+     (sweep2 → track 9, sweep3 → track 10-content must shift) and repeat the
+     two-line tween pair at each boundary. -->

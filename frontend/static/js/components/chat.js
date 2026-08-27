@@ -1,7 +1,7 @@
 /**
  * Chat Component — Messages, streaming, tools, TTS
  */
-import { sseService } from '../services/sse.js?v=64'
+import { sseService } from '../services/sse.js?v=70'
 import { ttsService } from '../services/tts.js?v=45'
 import { sttService } from '../services/stt.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
@@ -102,6 +102,7 @@ const chatComponent = () => ({
   },
 
   get mcpSummary() {
+    const n = this.mcpServers.length
     if (!n) return 'MCP'
     if (this.agentMcpRestricted) {
       const allowed = this.agentAllowedServerNames
@@ -263,18 +264,24 @@ const chatComponent = () => ({
       this.availableProviders = data.providers || []
       this.$store.chat.availableModels = this.availableModels
       this.$store.chat.availableProviders = this.availableProviders
-      // Restore provider selection or default to the default provider
+      // Single entity: provider derived from model
+      if (!this.selectedModel && this.availableModels.length) {
+        // default from settings store or first available
+        const defModel = this.$store.chat.selectedModel || this.availableModels[0]?.id
+        if (defModel) {
+          this.selectedModel = defModel
+          const m = this.availableModels.find(x=>x.id===defModel)
+          this.selectedProviderId = m?.provider_id || this.availableProviders.find(p=>p.is_default)?.id || this.availableProviders[0]?.id || ''
+        }
+      } else if (this.selectedModel) {
+        const m = this.availableModels.find(x=>x.id===this.selectedModel)
+        if (m) this.selectedProviderId = m.provider_id
+      }
       if (!this.selectedProviderId && this.availableProviders.length) {
         const def = this.availableProviders.find(p => p.is_default) || this.availableProviders[0]
         this.selectedProviderId = def.id
       }
-      if (!this.selectedModel && this.availableModels.length) {
-        const m = this.availableModels.find(x => x.provider_id === this.selectedProviderId) || this.availableModels[0]
-        if (m) {
-          this.selectedModel = m.id
-          this.selectedProviderId = m.provider_id
-        }
-      }
+      this.$store.chat.selectedModel = this.selectedModel
       this.$store.chat.selectedProviderId = this.selectedProviderId
     } catch (e) { console.error('[chat] Models:', e) }
   },
@@ -587,6 +594,9 @@ const chatComponent = () => ({
     this.attachedFiles = []  // Clear attachments
 
     try {
+      // single entity: provider derived from model live
+      const _m = this.availableModels.find(x=>x.id===this.selectedModel)
+      const _prov = _m?.provider_id || this.selectedProviderId
       const data = await api.post(
         `/api/conversations/${conversationId}/messages`,
         { 
@@ -595,7 +605,7 @@ const chatComponent = () => ({
           document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
           files: uploadedFiles,
           model: this.selectedModel,
-          provider_id: this.selectedProviderId,
+          provider_id: _prov,
           thinking_mode: this.thinkingMode || 'auto'
         }
       )
@@ -634,15 +644,21 @@ const chatComponent = () => ({
 
   // ─── Stream Response ──────────────────────────────────
   async streamResponse(requestId) {
+    if (!requestId) {
+      this.isLoading = false
+      this.$store.chat.isLoading = false
+      return
+    }
+
     const assistantMsg = {
-      id: helpers.generateId(),
-      role: 'assistant',
-      content: '',
-      blocks: [],
-      created_at: new Date().toISOString()
+      id: helpers.generateId(), role: 'assistant', content: '',
+      blocks: [], created_at: new Date().toISOString()
     }
     this.$store.chat.addMessage(assistantMsg)
     const msgIndex = this.messages.length - 1
+    // A previous stream's pending close timer would abort THIS connection
+    // silently (AbortError is swallowed by sse.js) — disarm it on new streams.
+    clearTimeout(this.pendingTitleTimeout)
 
     this.$store.chat.startStreaming(
       requestId,
@@ -652,11 +668,15 @@ const chatComponent = () => ({
       [...this.$store.chat.messages]
     )
 
+
+    const _effModel = this.selectedModel || this.availableModels[0]?.id
+    const _effSm = this.availableModels.find(x=>x.id===_effModel)
+    const _effSp = _effSm?.provider_id || this.selectedProviderId
     const handlers = sseService.stream(requestId, this.$store.chat.currentConversationId, {
       enableRag: this.isRAGActive,
       documentIds: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
-      model: this.selectedModel,
-      providerId: this.selectedProviderId,
+      model: _effModel,
+      providerId: _effSp,
       overrideServers: this.sessionMcpOverrides,
       thinkingMode: this.thinkingMode || 'auto'
     })
@@ -666,6 +686,9 @@ const chatComponent = () => ({
       const msg = this.messages[msgIndex]
       if (msg) msg.content += `\n\n❌ Error: ${error.message}`
       this.$store.ui.showToast(`Stream error: ${error.message}`, 'error')
+      // Terminal safety net: done may never arrive after a transport error.
+      this.isLoading = false
+      this.$store.chat.stopStreaming()
     })
 
     handlers.onComplete(() => {
@@ -675,27 +698,38 @@ const chatComponent = () => ({
       }
       this.streamEndedNormally = false
       this.$store.chat.stopStreaming()
+      // Always release the UI, even when done was never processed.
+      this.isLoading = false
     })
   },
 
   // ─── Event Processing ─────────────────────────────────
   processEvent(data, msgIndex) {
-    // Skip if on different conversation
+    // Skip CONTENT updates if we're viewing a different conversation — but
+    // terminal events (done/error) must ALWAYS run: they are what clears the
+    // loading state and repairs placeholder ids, and skipping them used to
+    // wedge the spinner permanently once the user returned to the thread.
     const active = this.$store.chat.activeStreaming
-    if (active.isStreaming && active.conversationId !== this.$store.chat.currentConversationId) return
+    const foreignConv = active.isStreaming && active.conversationId !== this.$store.chat.currentConversationId
+    if (foreignConv && data.type !== 'done' && data.type !== 'error') return
 
     const msg = this.messages[msgIndex]
-    if (!msg) return
 
+    // Content/tool cases need a target row; done/error must survive without
+    // one so global cleanup always runs.
+    const needsMsg = data.type !== 'done' && data.type !== 'error'
+    if (!msg && needsMsg) return
     // Ensure blocks array exists
-    if (!msg.blocks) msg.blocks = []
+    if (msg && !msg.blocks) msg.blocks = []
 
     switch (data.type) {
       case 'content':
+        if (!msg) return
         this.appendBlock(msg, 'content', data.content)
         break
 
       case 'thinking':
+        if (!msg) return
         this.appendBlock(msg, 'thinking', data.content)
         break
 
@@ -831,7 +865,7 @@ const chatComponent = () => ({
         this.$store.chat.toolStatus.active = false
         this.isLoading = false
         this.$store.chat.isLoading = false
-        msg.blocks.push({ type: 'content', content: `\n\n❌ Error: ${data.error}` })
+        if (msg) msg.blocks.push({ type: 'content', content: `\n\n❌ Error: ${data.error}` })
         this.$store.ui.showToast(`Error: ${data.error}`, 'error')
         break
 
@@ -857,15 +891,30 @@ const chatComponent = () => ({
         }
         break
 
-      case 'done':
-        // placeholder created with a fake helpers.generateId() gets patched
+      case 'done': {
+        // Placeholder created with a fake helpers.generateId() gets patched
         // with the DB id — second regenerate works without refresh.
-        if (data.message_id && msg) {
-          msg.id = data.message_id
-        }
-        if (data.version_group && msg) {
-          msg.version_group = data.version_group
-          msg.version = data.version || msg.version
+        //
+        // Repair is group-wide: if a conversation switch or an interrupted
+        // stream left sibling rows of the same version_group holding
+        // never-patched client ids, later DELETE/regen calls would 404
+        // against the DB. Patch the indexed row and drop the stale siblings.
+        if (msg) {
+          if (data.message_id) msg.id = data.message_id
+          if (data.version_group) {
+            msg.version_group = data.version_group
+            msg.version = data.version || msg.version
+            msg.max_version = Math.max(msg.max_version || 0, data.version || 1)
+          }
+          // Client-generated ids are never UUIDs; anything else sharing the
+          // group after this patch is a stale local duplicate.
+          const g = data.version_group || msg.version_group
+          if (g) {
+            const isDbId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+            this.$store.chat.messages = this.$store.chat.messages.filter(
+              m => m === msg || m.version_group !== g ||
+                   (!!m.id && isDbId.test(m.id)))
+          }
         }
         this.streamEndedNormally = true
         this.pendingTitleTimeout = setTimeout(() => sseService.close(), 5000)
@@ -892,6 +941,7 @@ const chatComponent = () => ({
           }
         }
         break
+        }
     }
 
     // Force reactivity
@@ -988,7 +1038,19 @@ const chatComponent = () => ({
     const vg = target?.version_group || null
     if (!confirm('Delete this message?')) return
     try {
-      await api.delete(`/api/messages/${id}`)
+      try {
+        await api.delete(`/api/messages/${id}`)
+      } catch (err) {
+        // Stale client-side id (e.g. a placeholder whose done event never
+        // patched it) — resolve the authoritative row for this slot from the
+        // server via the version group and retry once.
+        if (!vg) throw err
+        const vs = await api.get(`/api/versions/${encodeURIComponent(vg)}`)
+        const tv = (vs.versions || []).find(v => v.version === target?.version) ||
+                   (vs.versions || []).slice(-1)[0]
+        if (!tv) throw err
+        await api.delete(`/api/messages/${tv.id}`)
+      }
       // Optimistically remove
       this.$store.chat.removeMessage(id)
       // If versioned, reload conversation to show previous version in-place (avoid blank)
@@ -1007,6 +1069,7 @@ const chatComponent = () => ({
       this.$store.ui.showToast('Failed to delete', 'error')
     }
   },
+
   startEdit(id, content) {
     this.editingMessageId = id
     this.editContent = content
@@ -1073,50 +1136,73 @@ const chatComponent = () => ({
     this.isLoading = true
     this.$store.chat.isLoading = true
 
-    // Store the old message before removing it (for potential version switching)
-    const oldMsg = this.messages.find(m => m.id === id)
+    // Position bookkeeping BEFORE any mutation: map raw store objects to their
+    // index so we can splice the replacement into exactly the same slot.
+    const rawMsgs = this.$store.chat.messages
+    const posOf = new Map(rawMsgs.map((m, i) => [m, i]))
+    const rawIdx = rawMsgs.findIndex(m => m.id === id)
 
     try {
       const data = await api.post(
         `/api/conversations/${this.$store.chat.currentConversationId}/regenerate`,
         { message_id: id }
       )
+      // Disarm any previous stream's pending close timer — it would abort
+      // this connection silently.
+      clearTimeout(this.pendingTitleTimeout)
 
-      // Remove the old assistant message from display (it stays in DB as a prior version)
-      const idx = this.messages.findIndex(m => m.id === id)
-      if (idx !== -1) {
-        this.$store.chat.messages = this.$store.chat.messages.slice(0, idx)
-        this.messages = [...this.$store.chat.messages]
+
+      // Displayed position of the replaced message = count of shown messages
+      // that sit before it in the raw array (dedup getter preserves order).
+      let dispIdx = 0
+      for (const m of this.messages) {
+        const p = posOf.get(m)
+        if (p === undefined || p >= rawIdx) break
+        dispIdx++
       }
+
+      // Remove ONLY the replaced entry — earlier code sliced off every later
+      // turn, wiping the rest of a mid-thread regeneration from view.
+      // The old version stays in the DB as a prior version of the group.
+      if (rawIdx !== -1) rawMsgs.splice(rawIdx, 1)
 
       const newMsg = {
         id: helpers.generateId(), role: 'assistant', content: '',
         blocks: [], created_at: new Date().toISOString(),
         version: data.version || 1,
         version_group: data.version_group || null,
-        max_version: data.version || 1  // Total version count (all pills shown up to this)
+        max_version: data.version || 1,  // Total version count (all pills shown up to this)
+        turn_index: data.turn_index ?? null
       }
-      this.$store.chat.addMessage(newMsg)
-      // Use store length (not stale this.messages) — addMessage just pushed to store
-      const newIdx = this.$store.chat.messages.length - 1
+      // Insert the placeholder into the freed slot so later turns stay put and
+      // processEvent(data, msgIndex) streams into the right message.
+      rawMsgs.splice(dispIdx, 0, newMsg)
+      const newIdx = dispIdx
 
       // Pass version info to SSE stream for backend to save correctly
+      const _effRModel = this.selectedModel || this.availableModels[0]?.id
+      const _effRm = this.availableModels.find(x=>x.id===_effRModel)
+      const _effRp = _effRm?.provider_id || this.selectedProviderId
       const handlers = sseService.stream(data.request_id, this.$store.chat.currentConversationId, {
-        model: this.selectedModel,
+        model: _effRModel,
         isRegenerate: true,
         version: data.version,
+        anchorMessageId: data.anchor_user_message_id,
+        providerId: _effRp,
         versionGroup: data.version_group,
-        providerId: this.selectedProviderId,
         overrideServers: this.sessionMcpOverrides,
         thinkingMode: this.thinkingMode || 'auto'
       })
+      handlers.onData((data) => this.processEvent(data, newIdx))
 
       handlers.onError((error) => {
         console.error('[chat] Regenerate stream error:', error)
-        this.$store.chat.stopStreaming()
         const msg = this.messages[newIdx]
         if (msg) msg.content += `\n\n❌ Error: ${error.message}`
         this.$store.ui.showToast(`Stream error: ${error.message}`, 'error')
+        // Terminal safety net: done may never arrive after a transport error.
+        this.isLoading = false
+        this.$store.chat.stopStreaming()
       })
 
       handlers.onComplete(() => {
@@ -1126,6 +1212,8 @@ const chatComponent = () => ({
         }
         this.streamEndedNormally = false
         this.$store.chat.stopStreaming()
+        // Always release the UI, even when done was never processed.
+        this.isLoading = false
       })
     } catch (e) {
       console.error('[chat] Regenerate:', e)
@@ -1367,14 +1455,16 @@ const chatComponent = () => ({
 
   // ─── UI Handlers ──────────────────────────────────────
   updateSelectedModel() {
-    this.$store.chat.setModel(this.selectedModel, this.selectedProviderId)
+    this.$store.chat.setModel(this.selectedModel)
+    this.selectedProviderId = this.$store.chat.selectedProviderId
   },
 
-  selectModel(id, providerId) {
-    const model = this.availableModels.find(m => m.id === id)
+  selectModel(id) {
     this.selectedModel = id
-    this.selectedProviderId = providerId || model?.provider_id || this.selectedProviderId
-    this.updateSelectedModel()
+    const m = this.availableModels.find(x=>x.id===id)
+    this.selectedProviderId = m?.provider_id || this.selectedProviderId
+    this.$store.chat.setModel(this.selectedModel)
+    this.selectedProviderId = this.$store.chat.selectedProviderId
   },
 
   selectAgent(id) {
@@ -1385,9 +1475,11 @@ const chatComponent = () => ({
 
   async updateSelectedAgent() {
     this.$store.chat.setAgent(this.selectedAgentId)
-    this.$store.chat.applyAgentConfig()
+    this.$store.chat.applyAgentConfig(true)
     this.selectedModel = this.$store.chat.selectedModel
-    this.selectedProviderId = this.$store.chat.selectedProviderId
+    const m = this.availableModels.find(x=>x.id===this.selectedModel)
+    this.selectedProviderId = m?.provider_id || this.$store.chat.selectedProviderId
+    this.$store.chat.selectedProviderId = this.selectedProviderId
     this.selectedDocumentIds = [...(this.$store.chat.selectedDocumentIds || [])]
 
     // Update the current conversation's agent_id if one is active

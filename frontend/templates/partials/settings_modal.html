@@ -209,64 +209,64 @@
           <h3 class="font-semibold mb-4">Default Model Settings</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Default Model</label
-              >
-              <select
-                x-model="$store.ui.settingsData.llama_cpp_model"
-                class="input text-sm"
-              >
-                <option value="">(provider default)</option>
-                <template x-for="m in allModelOptions" :key="m.key">
-                  <option :value="m.id" x-text="m.label"></option>
-                </template>
-              </select>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Default Model</label>
+              <div x-data="{ open:false, search: '' }" x-init="search = allModelOptions.find(o=>o.id===$store.ui.settingsData.llama_cpp_model)?.label || $store.ui.settingsData.llama_cpp_model || ''" @click.outside="open=false" class="relative">
+                <input type="text" x-model="search" @focus="open=true; $el.select()" @input="open=true" placeholder="(provider default) — search..." class="input text-sm w-full" autocomplete="off" />
+                <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                  <div @click="$store.ui.settingsData.llama_cpp_model=''; search=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!$store.ui.settingsData.llama_cpp_model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">(provider default)</div>
+                  <template x-for="m in allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))" :key="m.key">
+                    <div @click="$store.ui.settingsData.llama_cpp_model=m.id; search=m.label; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="$store.ui.settingsData.llama_cpp_model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                      <span x-text="m.label" class="truncate"></span><i x-show="$store.ui.settingsData.llama_cpp_model===m.id" class="ph ph-check text-xs"></i>
+                    </div>
+                  </template>
+                  <div x-show="allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+                </div>
+              </div>
             </div>
             <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Query Model</label
-              >
-              <select
-                x-model="$store.ui.settingsData.query_model"
-                class="input text-sm"
-              >
-                <option value="">(provider default)</option>
-                <template x-for="m in allModelOptions" :key="m.key">
-                  <option :value="m.id" x-text="m.label"></option>
-                </template>
-              </select>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Query Model</label>
+              <div x-data="{ open:false, search: '' }" x-init="search = allModelOptions.find(o=>o.id===$store.ui.settingsData.query_model)?.label || $store.ui.settingsData.query_model || ''" @click.outside="open=false" class="relative">
+                <input type="text" x-model="search" @focus="open=true; $el.select()" @input="open=true" placeholder="(provider default) — search..." class="input text-sm w-full" autocomplete="off" />
+                <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                  <div @click="$store.ui.settingsData.query_model=''; search=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!$store.ui.settingsData.query_model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">(provider default)</div>
+                  <template x-for="m in allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))" :key="m.key">
+                    <div @click="$store.ui.settingsData.query_model=m.id; search=m.label; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="$store.ui.settingsData.query_model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                      <span x-text="m.label" class="truncate"></span><i x-show="$store.ui.settingsData.query_model===m.id" class="ph ph-check text-xs"></i>
+                    </div>
+                  </template>
+                  <div x-show="allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+                </div>
+              </div>
             </div>
             <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Embedding Model</label
-              >
-              <select
-                x-model="$store.ui.settingsData.embedding_model"
-                class="input text-sm"
-              >
-                <option value="">(provider default)</option>
-                <template x-for="m in allModelOptions" :key="m.key">
-                  <option :value="m.id" x-text="m.label"></option>
-                </template>
-              </select>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Embedding Model</label>
+              <div x-data="{ open:false, search: '' }" x-init="search = allModelOptions.find(o=>o.id===$store.ui.settingsData.embedding_model)?.label || $store.ui.settingsData.embedding_model || ''" @click.outside="open=false" class="relative">
+                <input type="text" x-model="search" @focus="open=true; $el.select()" @input="open=true" placeholder="(provider default) — search..." class="input text-sm w-full" autocomplete="off" />
+                <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                  <div @click="$store.ui.settingsData.embedding_model=''; search=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!$store.ui.settingsData.embedding_model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">(provider default)</div>
+                  <template x-for="m in allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))" :key="m.key">
+                    <div @click="$store.ui.settingsData.embedding_model=m.id; search=m.label; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="$store.ui.settingsData.embedding_model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                      <span x-text="m.label" class="truncate"></span><i x-show="$store.ui.settingsData.embedding_model===m.id" class="ph ph-check text-xs"></i>
+                    </div>
+                  </template>
+                  <div x-show="allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+                </div>
+              </div>
             </div>
             <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Reranking Model</label
-              >
-              <select
-                x-model="$store.ui.settingsData.reranking_model"
-                class="input text-sm"
-              >
-                <option value="">(provider default)</option>
-                <template x-for="m in allModelOptions" :key="m.key">
-                  <option :value="m.id" x-text="m.label"></option>
-                </template>
-              </select>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Reranking Model</label>
+              <div x-data="{ open:false, search: '' }" x-init="search = allModelOptions.find(o=>o.id===$store.ui.settingsData.reranking_model)?.label || $store.ui.settingsData.reranking_model || ''" @click.outside="open=false" class="relative">
+                <input type="text" x-model="search" @focus="open=true; $el.select()" @input="open=true" placeholder="(provider default) — search..." class="input text-sm w-full" autocomplete="off" />
+                <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                  <div @click="$store.ui.settingsData.reranking_model=''; search=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!$store.ui.settingsData.reranking_model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">(provider default)</div>
+                  <template x-for="m in allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))" :key="m.key">
+                    <div @click="$store.ui.settingsData.reranking_model=m.id; search=m.label; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="$store.ui.settingsData.reranking_model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                      <span x-text="m.label" class="truncate"></span><i x-show="$store.ui.settingsData.reranking_model===m.id" class="ph ph-check text-xs"></i>
+                    </div>
+                  </template>
+                  <div x-show="allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+                </div>
+              </div>
             </div>
             <div>
               <label
@@ -283,19 +283,19 @@
               />
             </div>
             <div>
-              <label
-                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
-                >Jobs Model</label
-              >
-              <select
-                x-model="$store.ui.settingsData.jobs_model"
-                class="input text-sm"
-              >
-                <option value="">(auto-pick loaded model)</option>
-                <template x-for="m in allModelOptions" :key="m.key">
-                  <option :value="m.id" x-text="m.label"></option>
-                </template>
-              </select>
+              <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Jobs Model</label>
+              <div x-data="{ open:false, search: '' }" x-init="search = allModelOptions.find(o=>o.id===$store.ui.settingsData.jobs_model)?.label || $store.ui.settingsData.jobs_model || ''" @click.outside="open=false" class="relative">
+                <input type="text" x-model="search" @focus="open=true; $el.select()" @input="open=true" placeholder="(auto) — search..." class="input text-sm w-full" autocomplete="off" />
+                <div x-show="open" x-cloak class="absolute left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                  <div @click="$store.ui.settingsData.jobs_model=''; search=''; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)]" :class="!$store.ui.settingsData.jobs_model ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">(auto-pick loaded model)</div>
+                  <template x-for="m in allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase()))" :key="m.key">
+                    <div @click="$store.ui.settingsData.jobs_model=m.id; search=m.label; open=false" class="px-3 py-2 text-xs cursor-pointer hover:bg-[var(--bg-tertiary)] flex items-center justify-between" :class="$store.ui.settingsData.jobs_model===m.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : ''">
+                      <span x-text="m.label" class="truncate"></span><i x-show="$store.ui.settingsData.jobs_model===m.id" class="ph ph-check text-xs"></i>
+                    </div>
+                  </template>
+                  <div x-show="allModelOptions.filter(o=> !search || o.label.toLowerCase().includes(search.toLowerCase()) || o.id.toLowerCase().includes(search.toLowerCase())).length===0" class="px-3 py-2 text-xs text-[var(--text-tertiary)]">No matches</div>
+                </div>
+              </div>
             </div>
           </div>
           <p class="text-xs text-[var(--text-tertiary)] mt-3">

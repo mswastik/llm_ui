@@ -1,0 +1,46 @@
+<!-- SNIPPET: SCREENSHOT REVEAL (cinematic 3D camera on product screenshots) -->
+<!-- Use for: product feature demos, dashboard walkthroughs, UI showcases -->
+<!-- Track block: 60-64 -->
+<!--
+  VISIBILITY RULE (user-locked): NO shadows of any kind on or around
+  screenshots. No box-shadow (not even a soft one), no drop-shadow filter,
+  no blurred glow elements near the card, no dark vignette behind it.
+  Edge definition comes ONLY from a solid 1px border. Screenshot scenes
+  must sit on a FLAT background patch so corners stay clean.
+-->
+
+<div class="clip" id="scr-stage" data-start="10.0" data-duration="12.0" data-track-index="60" style="left:160px;top:180px;width:1600px;height:720px;perspective:1200px;">
+  <!-- Flat backdrop patch: cancels the global radial-gradient vignette +
+       corner glows so nothing dark bleeds around the card edges -->
+  <div style="position:absolute;left:-40px;top:-40px;width:1680px;height:800px;background:#0e1524;"></div>
+  <div id="scr-card" class="clip" style="width:1600px;height:720px;border-radius:16px;overflow:hidden;border:1px solid rgba(20,184,166,0.35);">
+    <img id="scr-img" src="screenshots/dashboard.png" style="width:100%;height:100%;object-fit:cover;" alt="Product screenshot">
+    <!-- Gradient overlay at bottom for label readability (bottom-only,
+         never touches corners) -->
+    <div style="position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(transparent,rgba(11,15,26,0.8));"></div>
+  </div>
+</div>
+
+<!-- Feature callout badge -->
+<div class="clip" id="scr-label" data-start="13.0" data-duration="8.0" data-track-index="61" style="left:200px;top:240px;">
+  <div style="background:rgba(20,184,166,0.15);border:1px solid rgba(20,184,166,0.4);border-radius:8px;padding:12px 20px;">
+    <div class="kicker" style="font-size:16px;">Feature Name</div>
+  </div>
+</div>
+
+<!-- GSAP → paste after // ANIM_INJECT -->
+<script type="text/note">
+// Cinematic entrance: card starts tilted back and zoomed in, then settles flat
+tl.fromTo("#scr-card",{rotateX:-18,scale:1.3,opacity:0},{rotateX:0,scale:1,opacity:1,duration:1.2,ease:"power3.out"},10.0);
+
+// Subtle floating motion after entrance (keeps it alive)
+tl.to("#scr-card",{y:-4,duration:2.5,ease:"sine.inOut",yoyo:true,repeat:1},11.5);
+
+// Callout badge pops in with a slight delay
+tl.fromTo("#scr-label",{opacity:0,x:-20,scale:0.9},{opacity:1,x:0,scale:1,duration:0.6,ease:"back.out(2)"},13.0);
+
+// Exit: pull camera back and fade (target an inner non-clip wrapper if the
+// stage itself is a .clip element — see Clip-Safe Exit Pattern pitfall)
+tl.to("#scr-card",{rotateX:8,scale:0.95,opacity:0,duration:0.7,ease:"power2.in"},21.0);
+tl.set("#scr-card",{opacity:0},21.75);
+</script>

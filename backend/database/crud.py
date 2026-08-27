@@ -1,4 +1,4 @@
-from sqlalchemy import select, desc, update, delete
+from sqlalchemy import select, desc, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from datetime import datetime, timezone
@@ -102,16 +102,16 @@ async def add_message(
     blocks: Optional[List[Dict]] = None,
     extra_metadata: Optional[Dict] = None,
     version: int = 1,
-    version_group: Optional[str] = None
+    version_group: Optional[str] = None,
+    turn_index: Optional[float] = None
 ) -> Dict:
     """Add a message to a conversation.
     
-    Args:
-        blocks: List of message blocks (content, thinking, tool_call) in sequential order
-        extra_metadata: Additional metadata (blocks will be stored here under 'blocks' key)
         version: Message version number (for versioned regeneration)
         version_group: UUID shared by all versions of the same response
-    
+        turn_index: Stable timeline slot. Defaults to max(turn_index)+1000 for the
+                    conversation. Regenerated versions pass the superseded message's
+                    slot explicitly so every version renders at the same position.
     For backward compatibility, thinking and tool_calls are also extracted and stored
     in their respective columns.
     """
@@ -123,6 +123,12 @@ async def add_message(
         metadata['blocks'] = blocks
     
     # Extract thinking and tool_calls for backward compatibility
+    if turn_index is None:
+        result = await db.execute(
+            select(func.coalesce(func.max(Message.turn_index), 0.0))
+            .where(Message.conversation_id == conversation_id)
+        )
+        turn_index = float(result.scalar() or 0.0) + 1000.0
     thinking = None
     tool_calls = None
     
@@ -162,7 +168,8 @@ async def add_message(
         thinking=thinking,
         extra_metadata=metadata,
         version=version,
-        version_group=version_group
+        version_group=version_group,
+        turn_index=turn_index
     )
     db.add(message)
 
@@ -187,7 +194,7 @@ async def add_message(
         "blocks": message.extra_metadata.get('blocks') if message.extra_metadata else None,
         "version": message.version,
         "version_group": message.version_group,
-        "created_at": message.created_at.isoformat(),
+        "turn_index": message.turn_index,
     }
 
 
@@ -208,7 +215,7 @@ async def get_conversation_messages(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at)
+        .order_by(Message.turn_index.asc(), Message.created_at.asc())
     )
     messages = result.scalars().all()
     
@@ -243,6 +250,7 @@ async def get_conversation_messages(
             "blocks": msg.extra_metadata.get('blocks') if msg.extra_metadata else None,
             "version": msg.version,
             "version_group": msg.version_group,
+            "turn_index": msg.turn_index,
             "created_at": msg.created_at.isoformat(),
         }
         for msg in messages
@@ -563,16 +571,127 @@ async def update_message(db: AsyncSession, message_id: str, content: str) -> Opt
     }
 
 
-async def delete_message(db: AsyncSession, message_id: str) -> bool:
-    """Delete a message"""
+async def update_assistant_message_full(
+    db: AsyncSession,
+    message_id: str,
+    content: str,
+    thinking: Optional[str] = None,
+    blocks: Optional[List[Dict]] = None,
+    extra_metadata: Optional[Dict] = None,
+) -> Optional[Dict]:
+    """Update an existing assistant message in-place (for incremental streaming saves).
+
+    Updates content, thinking, tool_calls (derived from blocks), and blocks in
+    extra_metadata. Used for placeholder + periodic commits so a stop/restart
+    never loses the entire response. The previous response is already committed
+    in its own row — this only touches the current turn's placeholder.
+    """
+    result = await db.execute(select(Message).where(Message.id == message_id))
+    message = result.scalar_one_or_none()
+    if not message:
+        return None
+
+    message.content = content or ""
+    # Re-derive thinking / tool_calls from blocks exactly like add_message does
+    # so the columns stay consistent with the render source of truth (blocks).
+    if blocks is not None:
+        # Use the same consolidation as _save_assistant_message (but keep it raw for now)
+        thinking_parts = []
+        for b in blocks:
+            if b.get("type") == "thinking":
+                thinking_parts.append(b.get("content", ""))
+        thinking_val = "\n".join(thinking_parts) if thinking_parts else thinking
+
+        tool_calls = None
+        tool_blocks = [b for b in blocks if b.get("type") == "tool_call"]
+        if tool_blocks:
+            tool_calls = []
+            for idx, block in enumerate(tool_blocks):
+                tid = block.get("id") or block.get("tool_call_id") or f"{block.get('name','tool')}_{idx}"
+                tool_calls.append({
+                    "id": tid,
+                    "name": block.get("name"),
+                    "arguments": block.get("arguments", {}),
+                    "status": block.get("status", "completed"),
+                    "progress": block.get("progress", 100),
+                })
+        message.thinking = thinking_val
+        message.tool_calls = tool_calls
+
+        # Merge blocks into extra_metadata
+        meta = dict(message.extra_metadata or {})
+        if extra_metadata:
+            meta.update(extra_metadata)
+        meta["blocks"] = blocks
+        # Preserve model/metrics if already there and not overridden
+        if thinking is not None and "thinking" not in str(blocks):
+            pass  # thinking already set above
+        message.extra_metadata = meta
+    else:
+        if thinking is not None:
+            message.thinking = thinking
+        if extra_metadata:
+            meta = dict(message.extra_metadata or {})
+            meta.update(extra_metadata)
+            message.extra_metadata = meta
+
+    await db.flush()
+    await db.commit()
+    return {
+        "id": message.id,
+        "conversation_id": message.conversation_id,
+        "role": message.role,
+        "content": message.content,
+        "tool_calls": message.tool_calls,
+        "thinking": message.thinking,
+        "metadata": message.extra_metadata,
+        "blocks": message.extra_metadata.get("blocks") if message.extra_metadata else None,
+        "version": message.version,
+        "version_group": message.version_group,
+        "created_at": message.created_at.isoformat(),
+    }
+
+
+async def delete_message(db: AsyncSession, message_id: str, version: Optional[int] = None) -> bool:
+    """Delete a message.
+
+    With version=N and the message belonging to a version_group, deletes that
+    specific version row instead (resolved via the group — the frontend only
+    knows the displayed representative's id).
+    """
+    if version is not None:
+        anchor = (
+            await db.execute(select(Message).where(Message.id == message_id))
+        ).scalar_one_or_none()
+        if not anchor:
+            return False
+        if not anchor.version_group:
+            if version != anchor.version:
+                return False
+            await db.delete(anchor)
+            return True
+        row = (
+            await db.execute(
+                select(Message).where(
+                    Message.version_group == anchor.version_group,
+                    Message.conversation_id == anchor.conversation_id,
+                    Message.version == version,
+                )
+            )
+        ).scalar_one_or_none()
+        if not row:
+            return False
+        await db.delete(row)
+        return True
+
     result = await db.execute(
         select(Message).where(Message.id == message_id)
     )
     message = result.scalar_one_or_none()
-    
+
     if not message:
         return False
-    
+
     await db.delete(message)
     return True
 

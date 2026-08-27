@@ -50,6 +50,11 @@ class Message(Base):
     version = Column(Integer, default=1)
     version_group = Column(String, nullable=True)  # UUID shared by all versions of the same response
 
+    # Stable timeline slot. Every version of a regenerated response inherits the
+    # original message's turn_index so mid-thread regenerations render in place;
+    # normal messages get max(turn_index) + 1000 at insert time.
+    turn_index = Column(Float, nullable=True)
+
     # Store thinking content from reasoning models (e.g., DeepSeek)
     thinking = Column(Text, nullable=True)
 
@@ -236,6 +241,39 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # ── FTS5 for memory search (VRAM-free, no embedding model) ──────────
+    # Replaces the embedding-based semantic search for memory. FTS5 gives
+    # BM25-ranked full-text search without loading Qwen3-4B-Embedding into
+    # VRAM (which evicts the 35B main model on limited VRAM and forces a
+    # full 27k prompt re-process next turn).
+    try:
+        from sqlalchemy import text as _text
+        import json as _json
+        async with engine.begin() as conn:
+            await conn.execute(_text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts "
+                "USING fts5(id UNINDEXED, content, tags, scope UNINDEXED, tokenize='porter unicode61')"
+            ))
+            # Backfill existing rows if FTS is empty (e.g. upgrade from pre-FTS install)
+            cnt = (await conn.execute(_text("SELECT count(*) FROM memory_fts"))).scalar() or 0
+            if cnt == 0:
+                rows = (await conn.execute(_text("SELECT id, content, tags, scope FROM memory_entries"))).fetchall()
+                for r in rows:
+                    try:
+                        _tags = r[2]
+                        if isinstance(_tags, str):
+                            _tags = _json.loads(_tags)
+                        _tags_str = " ".join(t for t in (_tags or []) if isinstance(t, str))
+                    except Exception:
+                        _tags_str = ""
+                    await conn.execute(_text(
+                        "INSERT OR IGNORE INTO memory_fts (id, content, tags, scope) VALUES (:id, :content, :tags, :scope)"
+                    ), {"id": r[0], "content": r[1] or "", "tags": _tags_str, "scope": r[3] or "global"})
+                if rows:
+                    print(f"[DB] Backfilled memory_fts with {len(rows)} rows")
+    except Exception as e:
+        print(f"[DB] memory_fts init failed (non-fatal, falls back to LIKE): {e}")
+
     # ── Migration: add disabled_tools column to mcp_servers ──────────────
     # SQLite's create_all does not alter existing tables, so new columns on
     # an already-created table must be added via ALTER TABLE.
@@ -298,6 +336,41 @@ async def init_db():
         print("[DB] Migrated messages: added version column")
     except OperationalError:
         pass
+
+    # ── Migration: add turn_index column to messages ───────────────────
+    # Stable timeline slot: versions of a regenerated answer share the slot,
+    # so history ordering is independent of when a version was created.
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql(
+                    "ALTER TABLE messages ADD COLUMN turn_index FLOAT"
+                )
+            )
+        print("[DB] Migrated messages: added turn_index column")
+    except OperationalError:
+        pass
+
+    # Backfill legacy rows: one monotonic slot per conversation in creation order.
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(
+                lambda sync_conn: sync_conn.exec_driver_sql("""
+                    WITH ranked AS (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY conversation_id ORDER BY created_at, rowid
+                        ) AS rn
+                        FROM messages WHERE turn_index IS NULL
+                    )
+                    UPDATE messages SET turn_index = (
+                        SELECT rn * 1000.0 FROM ranked WHERE ranked.id = messages.id
+                    )
+                    WHERE turn_index IS NULL AND id IN (SELECT id FROM ranked)
+                """)
+            )
+        print("[DB] Backfilled messages.turn_index for legacy rows")
+    except Exception as e:
+        print(f"[DB] turn_index backfill failed (non-fatal): {e}")
 
     try:
         async with engine.begin() as conn:

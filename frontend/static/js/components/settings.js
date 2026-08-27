@@ -138,6 +138,13 @@ const settings = () => {
     return out
   },
 
+  // ponytail: filter helper for searchable model selects
+  filteredModels(term) {
+    const t = (term || '').trim().toLowerCase()
+    if (!t) return this.allModelOptions
+    return this.allModelOptions.filter(o => o.label.toLowerCase().includes(t) || o.id.toLowerCase().includes(t))
+  },
+
   async loadProviders() {
     try {
       const data = await api.get('/api/providers')

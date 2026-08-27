@@ -61,9 +61,9 @@ MEMORY_SEARCH_DEFINITION = {
     "function": {
         "name": "memory_search",
         "description": (
-            "Semantic search over long-term memory. Tags shown in system prompt "
-            "(e.g. `project-x`, `preference`) narrow the search when provided. "
-            "Use query for meaning, tags for explicit label filter."
+            "Full-text search (FTS5, BM25, porter stemming) over long-term memory. "
+            "No embedding model, no VRAM — instant. Use query for keywords/phrases, "
+            "tags for explicit label filter (e.g. `project-x`)."
         ),
         "parameters": {
             "type": "object",
@@ -100,54 +100,70 @@ MEMORY_TOOL_DEFINITIONS = [
 
 class MemoryTool:
     def __init__(self, rag_service=None):
-        self.rag_service = rag_service  # optional; used for embeddings
-
-    async def _embed(self, text: str):
-        """Embedding via RAG pipeline; returns None if unavailable."""
-        if not self.rag_service:
-            return None
-        try:
-            return await self.rag_service._get_embedding(text)
-        except Exception as e:
-            print(f"[MEMORY] embedding failed: {e}")
-            return None
+        self.rag_service = rag_service  # kept for compat, not used for memory (FTS5 now VRAM-free)
 
     async def _search(self, query: str, top_k: int = 5, limit: int = 200, tags: Optional[List[str]] = None) -> List[Dict]:
-        async with get_db() as db:
-            entries = await list_memory_entries(db, limit=limit)
-        # Tag pre-filter (if provided)
+        """
+        FTS5 full-text search (porter, BM25) — no embedding model, no VRAM.
+        Benefits over embedding for memory:
+        * No Qwen3-4B-Embedding load → 35B stays in VRAM → next turn KV hits
+        * Instant, deterministic, no network, works offline
+        * Good for small, curated facts (exact terms, tags, project names)
+        * Embedding helps only for heavy paraphrase/synonym (e.g. “favourite colour”
+          vs “I like blue”) which is rare for memory; FTS5 stemming covers most.
+        * If you have large paraphrased memory and enough VRAM, set
+          memory_search_use_embedding=true to re-enable semantic fallback.
+        """
+        from database.memory_crud import fts_search_memory
+        from database.models import get_db as _get_db
+        # Tag-aware FTS5 search (VRAM-free)
+        try:
+            async with _get_db() as db:
+                results = await fts_search_memory(db, query, top_k=top_k, tags=tags)
+            if results:
+                return results
+        except Exception as e:
+            print(f"[MEMORY] FTS search failed, falling back: {e}")
+
+        # Fallback: if FTS found nothing and embedding is explicitly enabled, try semantic
+        try:
+            from backend.settings import settings_manager as _sm
+            use_emb = bool(_sm.get_settings().get("memory_search_use_embedding", False))
+        except Exception:
+            use_emb = False
+        if not use_emb:
+            return []
+        # Embedding fallback (loads Qwen3-4B-Embedding → evicts 35B on limited VRAM)
+        if not self.rag_service:
+            return []
+        try:
+            query_emb = await self.rag_service._get_embedding(query)
+        except Exception as e:
+            print(f"[MEMORY] embedding fallback failed: {e}")
+            return []
+        if query_emb is None:
+            return []
+        # Score remaining entries via cosine (costly, VRAM-heavy)
+        async with _get_db() as db:
+            from database.memory_crud import list_memory_entries as _list
+            entries = await _list(db, limit=limit)
         if tags:
             tag_set = set(t.strip() for t in tags if t.strip())
             if tag_set:
                 entries = [e for e in entries if tag_set & set(e.get("tags") or [])]
-        query_emb = await self._embed(query)
-
-        if query_emb is not None:
-            import numpy as np
-            scored = []
-            for e in entries:
-                emb = await self._embed(e["content"])
-                if emb is None:
-                    continue
-                score = float(np.dot(query_emb, emb) / (
-                    (np.linalg.norm(query_emb) * np.linalg.norm(emb)) or 1.0))
-                scored.append((score, e))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            results = [e for _, e in scored[:max(1, min(top_k, len(scored)))]]
-            if results:
-                return results
-
-        # Keyword fallback
-        q_lower = query.lower()
-        terms = [t for t in q_lower.split() if len(t) > 2]
+        import numpy as np
         scored = []
         for e in entries:
-            c = e["content"].lower()
-            score = sum(1 for t in terms if t in c)
-            if score:
-                scored.append((score, e))
+            try:
+                emb = await self.rag_service._get_embedding(e["content"])
+            except Exception:
+                continue
+            if emb is None:
+                continue
+            score = float(np.dot(query_emb, emb) / ((np.linalg.norm(query_emb) * np.linalg.norm(emb)) or 1.0))
+            scored.append((score, e))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [e for _, e in scored[:top_k]]
+        return [e for _, e in scored[:max(1, min(top_k, len(scored)))]]
 
     async def execute(self, tool_name: str, arguments: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
         try:

@@ -15,7 +15,7 @@ from tools.terminal_tool import TerminalTool, TERMINAL_TOOL_DEFINITION
 from tools.memory_tool import MemoryTool, MEMORY_TOOL_DEFINITIONS
 from tools.admin_tool import AdminTool, ADMIN_TOOL_DEFINITIONS
 from tools.skills_tool import (
-    SKILL_TOOL_DEFINITIONS, get_skill, write_skill, skill_index,
+    SKILL_TOOL_DEFINITIONS, get_skill, write_skill, delete_skill, skill_index,
     MAX_SKILL_CONTENT_CHARS, list_skills,
 )
 from database.models import get_db
@@ -177,6 +177,35 @@ class ToolExecutor:
                            "progress": 100,
                            "result": {"name": skill["name"], "description": skill["description"],
                                       "skill_available": True}}
+
+            elif tool_name == "update_skill":
+                name = str(arguments.get("name", "")).strip()
+                description = str(arguments.get("description", "")).strip()
+                instructions = str(arguments.get("instructions", "")).strip()
+                if not name or not instructions:
+                    yield {"type": "tool_error", "tool": tool_name, "error": "name and instructions are required"}
+                else:
+                    skill = write_skill(name, description or name, instructions)
+                    yield {"type": "tool_progress", "tool": tool_name,
+                           "status": f"Updated skill: {skill['name']}",
+                           "progress": 100,
+                           "result": {"name": skill["name"], "description": skill["description"],
+                                      "skill_available": True}}
+
+            elif tool_name == "delete_skill":
+                name = str(arguments.get("name", "")).strip()
+                if not name:
+                    yield {"type": "tool_error", "tool": tool_name, "error": "name is required"}
+                else:
+                    deleted = delete_skill(name)
+                    if deleted:
+                        yield {"type": "tool_progress", "tool": tool_name,
+                               "status": f"Deleted skill: {name}",
+                               "progress": 100,
+                               "result": {"deleted": True, "name": name}}
+                    else:
+                        yield {"type": "tool_error", "tool": tool_name,
+                               "error": f"Skill '{name}' not found"}
             else:
                 # MCP tool execution
                 yield {"type": "tool_progress", "tool": tool_name, "status": f"Starting {tool_name}...", "progress": 0}

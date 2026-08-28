@@ -998,6 +998,84 @@ const chatComponent = () => ({
     return lines.join('\n')
   },
 
+  // Token counts render as 12.4K / 1.2M — raw counts are unreadable at a glance.
+  formatTokens(n) {
+    if (n == null || isNaN(n)) return '—'
+    const v = Number(n)
+    if (v >= 1e6) {
+      const m = v / 1e6
+      return (m >= 100 ? Math.round(m) : m.toFixed(1)).toString().replace(/\.0$/, '') + 'M'
+    }
+    if (v >= 1e3) {
+      const k = v / 1e3
+      return (k >= 100 ? Math.round(k) : k.toFixed(1)).toString().replace(/\.0$/, '') + 'K'
+    }
+    return String(Math.round(v))
+  },
+
+  // Context window of the model that produced this message. Falls back to the
+  // live selection because streaming metrics arrive before the model list does
+  // not carry a window for a model we never resolved one for.
+  contextWindow(message) {
+    const model = message?.metadata?.model
+    if (model) {
+      const m = this.availableModels.find(x => x.id === model)
+      if (m?.context_window) return m.context_window
+    }
+    const cur = this.availableModels.find(x => x.id === this.selectedModel)
+    return cur?.context_window || null
+  },
+
+  // Tokens occupying the window. A tool-loop turn re-sends a growing prompt each
+  // iteration, so the aggregated `total_tokens` double-counts — the last
+  // iteration's total is the real occupancy.
+  contextUsed(message) {
+    const m = this.getMetrics(message)
+    if (!m) return null
+    const its = m._iterations
+    if (Array.isArray(its) && its.length) {
+      const last = its[its.length - 1] || {}
+      const v = last.total_tokens ?? ((last.prompt_tokens || 0) + (last.completion_tokens || 0))
+      if (v) return v
+    }
+    return m.total_tokens ?? ((m.prompt_tokens || 0) + (m.completion_tokens || 0)) ?? null
+  },
+
+  // 0-100, clamped; null when the window is unknown.
+  contextPct(message) {
+    const win = this.contextWindow(message)
+    const used = this.contextUsed(message)
+    if (!win || !used) return null
+    return Math.min(100, Math.round((used / win) * 100))
+  },
+
+  // Colour escalates with pressure so a glance is enough: accent → warning → error.
+  contextColor(pct) {
+    if (pct == null) return 'var(--text-tertiary)'
+    if (pct >= 90) return 'var(--error)'
+    if (pct >= 70) return 'var(--warning)'
+    return 'var(--accent-primary)'
+  },
+
+  // Always-visible label, e.g. "12.4K / 32K · 39%" or "12.4K tok" when no window.
+  contextLabel(message) {
+    const used = this.contextUsed(message)
+    if (!used) return ''
+    const win = this.contextWindow(message)
+    if (!win) return this.formatTokens(used) + ' tok'
+    const pct = this.contextPct(message)
+    return `${this.formatTokens(used)} / ${this.formatTokens(win)} · ${pct}%`
+  },
+
+  contextTitle(message) {
+    const used = this.contextUsed(message)
+    const win = this.contextWindow(message)
+    if (!used) return 'Context usage unavailable'
+    if (!win) return `${used.toLocaleString()} tokens used (context window unknown for this model)`
+    const pct = this.contextPct(message)
+    return `${used.toLocaleString()} of ${win.toLocaleString()} tokens — ${pct}% of the context window`
+  },
+
   // ─── Tool Approval ─────────────────────────────────────
   async respondApproval(block, approved) {
     if (block._approving) return

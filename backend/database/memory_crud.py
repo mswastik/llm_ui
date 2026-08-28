@@ -5,6 +5,7 @@ Entries live in the `memory_entries` table with scope:
   'global' | 'agent:<id>' | 'conversation:<id>'
 """
 from typing import Dict, List, Optional
+import re
 
 from database.models import MemoryEntry
 
@@ -12,12 +13,18 @@ MAX_INJECTION_CHARS = 3000
 
 
 async def _fts_sync_insert(db, entry_id: str, content: str, tags: List[str], scope: str):
-    """Keep memory_fts in sync — best-effort, never raises."""
+    """Keep memory_fts in sync — best-effort, never raises.
+
+    FTS5 has no unique constraint on `id`, so `INSERT OR REPLACE` is just an
+    INSERT — updates would accumulate stale duplicate rows. Delete-then-insert
+    guarantees exactly one index row per entry.
+    """
     try:
         from sqlalchemy import text
         tags_str = " ".join(t for t in (tags or []) if isinstance(t, str))
+        await db.execute(text("DELETE FROM memory_fts WHERE id = :id"), {"id": entry_id})
         await db.execute(
-            text("INSERT OR REPLACE INTO memory_fts (id, content, tags, scope) VALUES (:id, :content, :tags, :scope)"),
+            text("INSERT INTO memory_fts (id, content, tags, scope) VALUES (:id, :content, :tags, :scope)"),
             {"id": entry_id, "content": content or "", "tags": tags_str, "scope": scope or "global"},
         )
     except Exception as e:
@@ -58,6 +65,88 @@ async def create_memory_entry(
     await db.flush()
     await _fts_sync_insert(db, entry.id, content, tags or [], scope)
     return _row(entry)
+
+
+def _content_tokens(text: str) -> set:
+    """Lowercase alphanumeric tokens (len>2) minus stopwords — dedup fingerprint."""
+    _STOP = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+             "to", "of", "and", "or", "in", "on", "for", "with", "that", "this",
+             "it", "its", "as", "at", "by", "from", "not", "but", "all", "also"}
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(t) > 2 and t not in _STOP}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    return inter / len(a | b)
+
+
+async def find_near_duplicate(db, content: str, threshold: float = 0.6):
+    """Return an existing entry stating essentially the same fact, else None.
+
+    Cheap funnel: FTS OR-rank the candidate's tokens, then token-set Jaccard on
+    the returned rows. Containment (short old entry fully absorbed by the new
+    one, or vice versa) is boosted past the threshold. No VRAM, deterministic.
+    """
+    toks = _content_tokens(content)
+    if len(toks) < 3:
+        return None
+    candidates = await fts_search_memory(db, " ".join(sorted(toks)), top_k=15)
+    best, best_score = None, 0.0
+    for e in candidates:
+        et = _content_tokens(e.get("content", ""))
+        s = _jaccard(toks, et)
+        if et and len(et & toks) / max(1, min(len(et), len(toks))) >= 0.9:
+            s = max(s, 0.75)
+        if s > best_score:
+            best, best_score = e, s
+    return best if best_score >= threshold else None
+
+
+async def create_memory_entry_dedup(db, content: str, scope: str = "global",
+                                    tags=None, source: str = "manual",
+                                    importance: float = 0.5, threshold: float = 0.6):
+    """create_memory_entry guarded by find_near_duplicate.
+
+    Returns (entry, None) when saved, or (None, existing_entry) when a near
+    duplicate already lives in the store (any scope — memory_search reads
+    across scopes, so a global copy satisfies an agent-scope request too).
+    """
+    dup = await find_near_duplicate(db, content, threshold=threshold)
+    if dup:
+        return None, dup
+    entry = await create_memory_entry(
+        db, content, scope=scope, tags=tags, source=source, importance=importance
+    )
+    return entry, None
+
+
+async def get_recall_for_query(db, query: str, top_k: int = 5, max_chars: int = 1200) -> str:
+    """Compact <relevant_memories> block for the current user message.
+
+    Appended to the USER TURN (never the system prompt) so the KV prefix stays
+    hot — keyword/FTS recall is instant and VRAM-free.
+    """
+    hits = await fts_search_memory(db, query, top_k=top_k)
+    if not hits:
+        return ""
+    lines, used = [], 0
+    for e in hits:
+        line = "- " + (e.get("content", "").strip().replace("\n", " "))[:300]
+        if used + len(line) > max_chars:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return ""
+    return (
+        "<relevant_memories>\n"
+        "Auto-recalled from long-term memory (keyword match). May be stale: if a "
+        "line conflicts with what the user says now, follow the user.\n"
+        + "\n".join(lines) + "\n</relevant_memories>"
+    )
 
 
 async def list_memory_entries(db, scope: Optional[str] = None, limit: int = 200) -> List[Dict]:
@@ -241,9 +330,11 @@ async def get_memory_for_injection(
         # Static — does not include counts or tag list, so KV stays hot
         hint = (
             "### Persistent memory is available.\n"
-            "Use memory_search(query, top_k=5) to recall past facts, preferences, "
-            "project details or decisions. You can also call memory_read(scope=\"global\", limit=20). "
-            "Call memory_search when the user references a past preference, project, or person."
+            "Relevant durable facts may already appear in a <relevant_memories> block "
+            "inside the user's message — use them without searching. For anything else "
+            "(past preferences, projects, decisions, people) call memory_search(query, top_k=5); "
+            "use memory_read(scope=\"global\", limit=20) to browse. Save new durable facts "
+            "with memory_write (concise, standalone, tagged)."
         )
         chunks.append(hint)
 

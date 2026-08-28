@@ -10,8 +10,8 @@ import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from database.memory_crud import (
-    create_memory_entry, delete_memory_entry, get_memory_entry,
-    list_memory_entries,
+    create_memory_entry, delete_memory_entry, find_near_duplicate,
+    get_memory_entry, list_memory_entries,
 )
 from database.models import get_db
 
@@ -24,7 +24,9 @@ MEMORY_WRITE_DEFINITION = {
             "information that should be remembered ACROSS conversations (user "
             "preferences, project facts, decisions, learned tricks). Scope "
             "'global' for everything, 'agent:<name>' for agent-specific memory. "
-            "Keep each entry concise and standalone."
+            "Keep each entry concise and standalone. Duplicates are rejected — "
+            "if the existing entry is outdated, memory_delete it first, then "
+            "write the new fact. Never store secret values (API keys, passwords)."
         ),
         "parameters": {
             "type": "object",
@@ -177,6 +179,13 @@ class MemoryTool:
                     scope = "global"
                 tags = arguments.get("tags") or []
                 async with get_db() as db:
+                    dup = await find_near_duplicate(db, content)
+                    if dup:
+                        yield {"type": "tool_progress", "tool": tool_name,
+                               "status": "Skipped — near-duplicate already in memory", "progress": 100,
+                               "result": {"existing_id": dup["id"], "existing_content": dup["content"],
+                                          "hint": "To update an outdated fact: memory_delete the existing id, then memory_write the new one."}}
+                        return
                     entry = await create_memory_entry(
                         db, content, scope=scope, tags=tags, source="manual"
                     )

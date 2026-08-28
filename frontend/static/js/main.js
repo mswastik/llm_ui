@@ -59,7 +59,8 @@ import { chatComponent } from './components/chat.js?v=79'
 import { settings } from './components/settings.js?v=72'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
-import { agentsPanel } from './components/agents_panel.js?v=69'
+import { agentsPanel } from './components/agents_panel.js?v=70'
+import { capabilityPicker } from './components/tag_picker.js?v=1'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {
@@ -95,7 +96,8 @@ Alpine.data('modalNotes', createModal('notes', 'openNotes', 'closeNotes'))
 Alpine.data('modalJobs', jobsModal)
 Alpine.data('agentsPanel', agentsPanel)
 Alpine.data('skillsPanel', skillsPanel)
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel')
+Alpine.data('capabilityPicker', capabilityPicker)
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel, capabilityPicker')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

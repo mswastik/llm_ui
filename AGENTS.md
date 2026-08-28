@@ -11,7 +11,7 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 | **Settings** | `backend/settings.py` | `SettingsManager` singleton; `settings.json` on disk |
 | **DB Models** | `backend/database/models.py` | SQLAlchemy models (Conversation, Message, Agent, MCPServer, Document) |
 | **DB CRUD** | `backend/database/crud.py` | Async CRUD helpers for Conversation, Message, MCPServer, Document |
-| **Agent CRUD** | `backend/database/agent_crud.py` | Agent-specific CRUD (create, update, soft-delete, default) |
+| **Agent CRUD** | `backend/database/crud.py` | Agent create/update/soft-delete; `get_all_agents(active_only)` |
 | **LLM Client** | `backend/llm_client/client.py` | llama.cpp OpenAI-compatible streaming client |
 | **MCP Client** | `backend/mcp_client/client.py` | `MCPClientManager` — connects/disconnects MCP servers via FastMCP |
 | **Tool Executor** | `backend/tools/tool_executor.py` | Dispatches custom+MCP tools, yields `tool_progress` events |
@@ -65,7 +65,7 @@ backend/
 ├── database/
 │   ├── models.py            # SQLAlchemy ORM: Conversation, Message, Agent, MCPServer, Document
 │   ├── crud.py              # Async CRUD for Conversation, Message, MCPServer, Document
-│   └── agent_crud.py        # Async CRUD for Agent (soft-delete, default)
+│   ├── provider_crud.py     # Async CRUD for LLM providers + cached model lists
 ├── llm_client/client.py     # LLMClient — streaming chat with llama.cpp
 ├── mcp_client/client.py     # MCPClientManager — server lifecycle, tool discovery/calls
 └── tools/
@@ -82,8 +82,7 @@ backend/
 frontend/
 ├── static/js/
 │   ├── main.js              # Entry point — imports Alpine ESM, registers stores+components, calls Alpine.start()
-│   ├── store.js             # Alpine stores: chat, ui + createModal() factory
-│   ├── utils.js             # API client, markdown, formatters, helpers
+│   ├── utils.js             # API client, markdown (markdownUtils), formatters, helpers
 │   ├── services/
 │   │   ├── sse.js           # SSEService — fetch-based SSE streaming
 │   │   └── tts.js           # TTSService — audio playback
@@ -91,7 +90,10 @@ frontend/
 │       ├── chat.js          # Chat: send, stream, tool calls, regeneration, TTS (exports chatComponent)
 │       ├── sidebar.js       # Sidebar: conversations, resize, load/delete (exports sidebar)
 │       ├── settings.js      # Settings: app config, MCP server management (exports settings)
-│          All component files export named factories — registration happens in main.js
+│       ├── agents_panel.js  # Settings→Agents: persona + capability config, options for the pickers
+│       ├── tag_picker.js    # capabilityPicker() — shared searchable multi-select (empty = allow all)
+│       └── skills.js / jobs.js / stt.js
+         All component files export named factories — registration happens in main.js
 ├── templates/
 │   ├── base.html            # Tailwind + marked.js CDN; defines store data on window; loads main.js as ES module
 │   ├── index.html           # Main layout (sidebar + chat + all modals: settings, agents, mcp, documents)
@@ -223,11 +225,12 @@ export function createModal(storeKey, openMethod, closeMethod) {
 
 Agents are pre-configured AI personalities stored in the `agents` table:
 
-- Each agent has: `name`, `system_prompt`, `model`, `temperature`, `top_k`, `max_tokens`, `enabled_tools`, `enabled_mcp_servers`, `enable_rag`, `rag_similarity_threshold`, `conversation_starters`
-- Conversations link to agents via `conversation.agent_id`
-- When a conversation has an agent, the agent's config overrides chat defaults
-- Agents support soft-delete (`is_active = 0`)
-- CRUD via `/api/agents` endpoints, managed through the AI Agents modal
+- Each agent has: `name`, `system_prompt`, `model`, `provider_id`, `temperature`, `top_k`, `max_tokens`, `enabled_tools`, `enabled_mcp_servers`, `enabled_skills`, `enable_rag`, `rag_similarity_threshold`, `conversation_starters`
+- Conversations link to agents via `conversation.agent_id`. `agent_id = NULL` means **no agent**: the Settings `system_prompt` applies and every tool is available. There is deliberately no seeded "Default" agent row — it duplicated the null case and rendered twice in the chat dropdown (`_retire_default_agent()` soft-deletes any legacy one at startup)
+- When a conversation has an agent, its config overrides chat defaults — model, provider, and `temperature`/`top_k`/`max_tokens` all reach the LLM call
+- Capability lists are *empty-means-all*: an empty `enabled_tools` / `enabled_mcp_servers` / `enabled_skills` allows everything, a non-empty list restricts to exactly those. `enabled_tools` is gated against `custom_tool_catalogue()` (`backend/tools/tool_executor.py`), so a newly added tool cannot silently escape an agent's restriction
+- Agents support soft-delete (`is_active = 0`); `GET /api/agents` returns active agents only
+- CRUD via `/api/agents`, configured in **Settings → Agents**; the picker's tool list comes from `GET /api/tools`
 
 ### 5. MCP Server Management
 
@@ -435,10 +438,10 @@ RAG uses raw SQLite (not SQLAlchemy) for embeddings:
 
 ### Add a New Tool
 
-1. **Backend**: Add to `ToolExecutor.custom_tools` dict in `backend/tools/tool_executor.py`
-2. Add tool definition to `get_tool_definitions()` return list
-3. Implement `_tool_name_with_progress()` async generator yielding `tool_progress` events
-4. **Frontend**: Tool calls are auto-displayed via the block system — no frontend changes needed
+1. **Backend**: Add an `elif tool_name == "...":` branch to `ToolExecutor.execute_tool()` and implement a `_tool_name_with_progress()` async generator yielding `tool_progress` events
+2. Append the tool's definition to the matching `*_TOOL_DEFINITIONS` list (memory/skills/admin) or one of the single definitions in `CUSTOM_TOOL_GROUPS` (`backend/tools/tool_executor.py`)
+3. **Nothing else.** The agent capability picker and the per-agent exclusion gate both read `custom_tool_catalogue()`, so the tool is immediately toggleable and correctly gated. Do **not** add tool names to any other list — a second hand-maintained catalogue is exactly the drift bug this replaced
+4. **Frontend**: tool calls are auto-displayed via the block system — no UI changes needed
 
 ### Add Web Search via MCP
 
@@ -452,7 +455,7 @@ Web search is provided by MCP servers instead of a built-in adapter:
 
 1. Add route decorator to `backend/app/main.py`
 2. Use `async with get_db() as db:` for DB access
-3. Import CRUD functions from `backend/database/crud.py` or `agent_crud.py`
+3. Import CRUD functions from `backend/database/crud.py` (agents included) or `provider_crud.py`
 4. Return JSON response
 
 ### Add a New Database Field

@@ -359,8 +359,8 @@ class MCPClientManager:
             raise
 
     def _parse_tool_result(self, result: CallToolResult) -> Dict[str, Any]:
-        """Parse FastMCP CallToolResult to dict with text content and sources."""
-        parsed = {"content": [], "is_error": getattr(result, 'isError', False), "sources": []}
+        """Parse FastMCP CallToolResult to dict with text content, images, and sources."""
+        parsed = {"content": [], "is_error": getattr(result, 'isError', False), "sources": [], "images": []}
 
         if result.content:
             for item in result.content:
@@ -372,12 +372,44 @@ class MCPClientManager:
                         parsed["sources"].extend(text_sources)
                     if hasattr(item, 'source') and item.source:
                         parsed["sources"].append({"title": str(item.source), "url": str(item.source)})
+                elif hasattr(item, 'type') and item.type == "image":
+                    # MCP ImageContent: data is base64, mimeType is image type
+                    b64_data = getattr(item, 'data', None) or getattr(item, 'blob', None) or ""
+                    mime = getattr(item, 'mimeType', None) or getattr(item, 'mime_type', None) or "image/png"
+                    # Keep a text placeholder for legacy string-based tool plumbing, but also expose structured image
+                    if b64_data:
+                        parsed["content"].append({"type": "image", "data": b64_data, "mimeType": mime})
+                        parsed["images"].append({"base64": b64_data, "mime_type": mime, "source": "mcp:image"})
+                    else:
+                        parsed["content"].append({"type": getattr(item, 'type', 'unknown'), "data": str(item)})
+                elif hasattr(item, 'type') and item.type == "resource":
+                    # EmbeddedResource: resource may be BlobResourceContents with blob (base64)
+                    res = getattr(item, 'resource', None)
+                    if res is not None:
+                        blob = getattr(res, 'blob', None)
+                        mime = getattr(res, 'mimeType', None) or getattr(res, 'mime_type', None) or ""
+                        text_val = getattr(res, 'text', None)
+                        if blob and mime.startswith("image/"):
+                            parsed["content"].append({"type": "image", "data": blob, "mimeType": mime})
+                            parsed["images"].append({"base64": blob, "mime_type": mime, "source": "mcp:resource"})
+                        elif text_val is not None:
+                            parsed["content"].append({"type": "text", "text": text_val})
+                        elif blob:
+                            # Non-image blob → keep as generic
+                            parsed["content"].append({"type": "resource", "mimeType": mime, "data": blob})
+                        else:
+                            parsed["content"].append({"type": getattr(item, 'type', 'unknown'), "data": str(item)})
+                    else:
+                        parsed["content"].append({"type": getattr(item, 'type', 'unknown'), "data": str(item)})
                 else:
                     parsed["content"].append({"type": getattr(item, 'type', 'unknown'), "data": str(item)})
 
         # Deduplicate sources by URL
         seen = set()
         parsed["sources"] = [s for s in parsed.get("sources", []) if not (s.get("url") and s["url"] in seen or seen.add(s["url"]))]
+        # Remove empty images key for backward compat if none
+        if not parsed["images"]:
+            parsed.pop("images", None)
         return parsed
 
     @staticmethod

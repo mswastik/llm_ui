@@ -1,39 +1,12 @@
 /**
  * Agents Panel Component — AI agent management, now hosted inside the
  * Settings dialog (Agents tab). Persona + capability configuration.
+ *
+ * The custom-tool list comes from GET /api/tools (the executor's own registry)
+ * rather than a hand-maintained copy here, so the picker can never fall behind
+ * the tools an agent is actually allowed to call.
  */
-import { api } from '../utils.js'
-
-// Custom tool catalogue (names must match backend exclusion list in main.py).
-const TOOL_GROUPS = [
-  { label: 'General', tools: [
-    { name: 'generate_speech', label: 'Text-to-speech (generate_speech)' },
-    { name: 'run_command', label: 'Terminal (run_command)' },
-    { name: 'run_job', label: 'Jobs (run_job)' },
-  ]},
-  { label: 'Skills', tools: [
-    { name: 'load_skill', label: 'Load skills' },
-    { name: 'create_skill', label: 'Create skills' },
-    { name: 'search_skills', label: 'Search skill registry' },
-    { name: 'install_skill', label: 'Install registry skills' },
-  ]},
-  { label: 'Memory', tools: [
-    { name: 'memory_write', label: 'Write memory' },
-    { name: 'memory_read', label: 'Read memory' },
-    { name: 'memory_search', label: 'Search memory' },
-    { name: 'memory_delete', label: 'Delete memory' },
-  ]},
-  { label: 'Admin', tools: [
-    { name: 'list_agents', label: 'List agents' },
-    { name: 'create_agent', label: 'Create agents' },
-    { name: 'delete_agent', label: 'Delete agents' },
-    { name: 'list_mcp_servers', label: 'List MCP servers' },
-    { name: 'add_mcp_server', label: 'Add MCP servers' },
-    { name: 'remove_mcp_server', label: 'Remove MCP servers' },
-    { name: 'list_providers', label: 'List providers' },
-    { name: 'add_provider', label: 'Add providers' },
-  ]},
-]
+import { api, markdownUtils } from '../utils.js'
 
 const agentsPanel = () => ({
   agents: [],
@@ -50,13 +23,13 @@ const agentsPanel = () => ({
   availableProviders: [],
   mcpServers: [],
   skills: [],
-  toolGroups: TOOL_GROUPS,
+  toolCatalogue: [],
   modelSearch: '',
 
   async init() {
     await Promise.all([
       this.loadAgents(), this.loadModels(), this.loadProviders(),
-      this.loadMcpServers(), this.loadSkills()
+      this.loadMcpServers(), this.loadSkills(), this.loadToolCatalogue()
     ])
   },
 
@@ -83,6 +56,14 @@ const agentsPanel = () => ({
     } catch (e) { this.skills = [] }
   },
 
+  // Authoritative custom-tool list — grouped server-side by owning module.
+  async loadToolCatalogue() {
+    try {
+      const r = await api.get('/api/tools')
+      this.toolCatalogue = r.tools || []
+    } catch (e) { this.toolCatalogue = [] }
+  },
+
   async loadModels() {
     try {
       const r = await api.get('/api/models')
@@ -106,6 +87,40 @@ const agentsPanel = () => ({
     return this.availableProviders.find(p => p.id === id)?.name || ''
   },
 
+  // ─── Capability picker options ───────────────────────────
+  // Shape consumed by capabilityPicker(): {value, label, group, description, badge}
+  get mcpOptions() {
+    return this.mcpServers.map(s => ({
+      value: s.name,
+      label: s.name,
+      group: s.enabled ? 'Enabled' : 'Disabled',
+      description: `${(s.tools || []).length} tool(s)`,
+      badge: s.enabled ? '' : 'disabled',
+    }))
+  },
+
+  get toolOptions() {
+    return this.toolCatalogue.map(t => ({
+      value: t.name,
+      label: t.name,
+      group: t.group || 'Other',
+      description: (t.description || '').split('\n')[0].slice(0, 140),
+      badge: '',
+    }))
+  },
+
+  get skillOptions() {
+    return this.skills.map(s => ({
+      value: s.name,
+      label: s.name,
+      group: s.draft ? 'Drafts' : 'Installed',
+      description: s.description || '',
+      badge: s.draft ? 'draft' : '',
+    }))
+  },
+
+  renderMarkdown: (t) => markdownUtils.render(t),
+
   newAgent() {
     this.editing = null
     this.modelSearch = ''
@@ -121,7 +136,7 @@ const agentsPanel = () => ({
 
   editAgent(agent) {
     this.editing = agent
-    this.modelSearch = ''
+    this.modelSearch = agent.model || ''
     this.formData = {
       name: agent.name || '',
       description: agent.description || '',
@@ -154,7 +169,8 @@ const agentsPanel = () => ({
       try { d = text ? JSON.parse(text) : {} } catch { d = { detail: text } }
       if (res.ok) {
         const agentData = d.agent || d
-        if (this.editing) {
+        const wasEditing = !!this.editing
+        if (wasEditing) {
           const idx = this.agents.findIndex(a => a.id === this.editing.id)
           if (idx !== -1) this.agents[idx] = agentData
         } else {
@@ -162,7 +178,7 @@ const agentsPanel = () => ({
         }
         this.showCreate = false
         this.editing = null
-        this.$store.ui.showToast(this.editing ? 'Agent updated' : 'Agent created', 'success')
+        this.$store.ui.showToast(wasEditing ? 'Agent updated' : 'Agent created', 'success')
         // refresh chat's agent list
         window.dispatchEvent(new CustomEvent('agents-updated'))
       } else {
@@ -182,6 +198,7 @@ const agentsPanel = () => ({
       await api.delete('/api/agents/' + id)
       this.agents = this.agents.filter(a => a.id !== id)
       this.$store.ui.showToast('Agent deleted', 'success')
+      window.dispatchEvent(new CustomEvent('agents-updated'))
     } catch (e) { this.$store.ui.showToast('Failed to delete', 'error') }
   }
 })

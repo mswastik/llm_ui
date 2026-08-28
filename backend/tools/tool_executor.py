@@ -49,6 +49,45 @@ RUN_JOB_DEFINITION = {
 }
 
 
+# ── Custom-tool catalogue: the single source of truth ─────────────────────
+# Grouped by the module that owns each definition, so the agent capability
+# picker and the backend allow-list gate can never drift apart: adding a tool
+# to any *_TOOL_DEFINITIONS list surfaces it in the UI with no second list to
+# maintain. query_documents is deliberately absent — RAG is gated by the
+# agent's enable_rag flag rather than by enabled_tools.
+CUSTOM_TOOL_GROUPS: List[tuple] = [
+    ("General", [TTS_TOOL_DEFINITION, TERMINAL_TOOL_DEFINITION, RUN_JOB_DEFINITION]),
+    ("Memory", list(MEMORY_TOOL_DEFINITIONS)),
+    ("Skills", list(SKILL_TOOL_DEFINITIONS)),
+    ("Admin", list(ADMIN_TOOL_DEFINITIONS)),
+]
+
+
+def _definition_name(definition: Dict) -> str:
+    return ((definition or {}).get("function") or {}).get("name", "")
+
+
+def custom_tool_catalogue() -> List[Dict[str, str]]:
+    """[{name, group, description}] for every custom tool the executor dispatches."""
+    entries = []
+    for label, definitions in CUSTOM_TOOL_GROUPS:
+        for definition in definitions:
+            name = _definition_name(definition)
+            if name:
+                fn = (definition or {}).get("function") or {}
+                entries.append({
+                    "name": name,
+                    "group": label,
+                    "description": (fn.get("description") or "").strip(),
+                })
+    return entries
+
+
+def custom_tool_names() -> List[str]:
+    """Every custom tool name — the authoritative set for agent allow-listing."""
+    return [entry["name"] for entry in custom_tool_catalogue()]
+
+
 class ToolExecutor:
     """Executes tools with real-time progress updates."""
 
@@ -222,6 +261,28 @@ class ToolExecutor:
                     result = await self.mcp_manager.call_tool(server_name, actual_tool_name, arguments)
                 else:
                     result = {"error": "MCP manager not available"}
+
+                # Enrich with images from file paths mentioned in text (e.g. browser_screenshot /abs/path.png)
+                try:
+                    from tools.image_utils import collect_images_from_result, MAX_IMAGES_PER_TOOL, load_image_as_base64
+                    # Images already present from direct MCP ImageContent
+                    existing = list(result.get("images") or [])
+                    existing_b64 = {im.get("base64") or im.get("data") for im in existing if im.get("base64") or im.get("data")}
+                    file_images = collect_images_from_result(result, limit=MAX_IMAGES_PER_TOOL - len(existing))
+                    # Deduplicate file images that duplicate an existing MCP image (same screenshot via both channels)
+                    if file_images and existing_b64:
+                        file_images = [im for im in file_images if im.get("base64") not in existing_b64]
+                    if file_images:
+                        # Merge, cap
+                        merged = existing + file_images
+                        result["images"] = merged[:MAX_IMAGES_PER_TOOL]
+                        # Keep content[].images in sync for consumers that read content
+                        for img in file_images:
+                            # Add synthetic content entry so _parse is not needed again
+                            if not any(c.get("type")=="image" and c.get("data")==img["base64"] for c in result.get("content",[])):
+                                result.setdefault("content", []).append({"type":"image","data":img["base64"],"mimeType":img["mime_type"]})
+                except Exception as _e:
+                    logger.warning(f"[IMAGE] enrich failed for {tool_name}: {_e}")
 
                 yield {"type": "tool_progress", "tool": tool_name, "status": "Processing result...", "progress": 75}
                 yield {"type": "tool_progress", "tool": tool_name, "status": "Complete", "progress": 100, "result": result}

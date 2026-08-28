@@ -143,7 +143,13 @@ def _safe_join(base: str, *parts: str) -> str:
 
 
 def _parse_frontmatter(content: str) -> tuple:
-    """Parse `---` frontmatter; returns (meta: dict, body: str)."""
+    """Parse `---` frontmatter; returns (meta: dict, body: str).
+
+    Handles YAML block scalars (`>`, `>-`, `|`, `|-` ...) for the multi-line
+    `description:` style used by marketplace skills — a naive line-wise parse
+    stored the literal '>' as the description and silently dropped the real
+    text from the skill index.
+    """
     meta: Dict[str, str] = {}
     body = content
     stripped = content.lstrip("\ufeff")
@@ -152,10 +158,24 @@ def _parse_frontmatter(content: str) -> tuple:
         if end != -1:
             fm = stripped[3:end]
             body = stripped[end + 4:].lstrip("\n")
-            for line in fm.splitlines():
-                if ":" in line:
+            lines = fm.splitlines()
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if ":" in line and not line[:1].isspace():
                     key, _, val = line.partition(":")
-                    meta[key.strip().lower()] = val.strip()
+                    key, val = key.strip().lower(), val.strip()
+                    if re.match(r"^[|>][-+]?[0-9]*$", val):
+                        parts = []
+                        i += 1
+                        while i < len(lines) and (lines[i][:1] in (" ", "\t") or not lines[i].strip()):
+                            parts.append(lines[i].strip())
+                            i += 1
+                        val = " ".join(p for p in parts if p).strip()
+                        meta[key] = val
+                        continue
+                    meta[key] = val
+                i += 1
     return meta, body
 
 

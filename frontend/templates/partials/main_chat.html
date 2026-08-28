@@ -7,6 +7,7 @@
   @dragover.prevent
   @dragleave="handleDragLeave()"
   @drop.prevent="handleDrop($event)"
+  @focus-chat-input.window="$refs.chatInput.focus()"
 >
   <!-- Drag & Drop Overlay -->
   <div
@@ -187,6 +188,29 @@
                       <template x-if="message.metadata?.model">
                         <span class="badge badge-primary" x-text="message.metadata.model"></span>
                       </template>
+                      <!-- Always-visible context usage: count / window + mini bar -->
+                      <template x-if="contextUsed(message)">
+                        <div
+                          class="flex items-center gap-1.5 text-[10px] font-mono leading-none text-[var(--text-tertiary)] cursor-default"
+                          :title="contextTitle(message)"
+                        >
+                          <i class="ph ph-arrows-out-simple text-[11px]"></i>
+                          <span :style="`color: ${contextColor(contextPct(message))}`" x-text="contextLabel(message)"></span>
+                          <!-- Segmented track: 10 ticks, filled by utilisation -->
+                          <span
+                            x-show="contextPct(message) != null"
+                            class="flex items-end gap-px h-2.5"
+                            aria-hidden="true"
+                          >
+                            <template x-for="i in 10" :key="i">
+                              <span
+                                class="w-[2px] rounded-[1px]"
+                                :style="`height: ${4 + i * 0.8}px; background: ${i * 10 <= (contextPct(message) ?? 0) ? contextColor(contextPct(message)) : 'var(--bg-progress)'}`"
+                              ></span>
+                            </template>
+                          </span>
+                        </div>
+                      </template>
                       <!-- Inline short label (tok/s · TTFT) -->
                       <template x-if="metricsShortLabel(message)">
                         <span class="text-xs text-[var(--text-tertiary)]" x-text="'· ' + metricsShortLabel(message)" :title="metricsTooltip(message)"></span>
@@ -201,14 +225,30 @@
                              class="absolute left-0 top-full mt-1.5 z-30 w-64 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] shadow-xl p-3 text-xs leading-4">
                           <div class="font-semibold text-[var(--text-primary)] mb-1.5 flex items-center gap-1"><i class="ph ph-lightning"></i> Performance</div>
                           <div class="space-y-1">
-                            <div class="flex justify-between" x-show="getMetrics(message)?.prompt_tokens != null"><span class="text-[var(--text-tertiary)]">Prompt</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.prompt_tokens ?? '—') + ' tok' + (getMetrics(message)?.cached_tokens ? ' (' + getMetrics(message).cached_tokens + ' cached)' : '')"></span></div>
-                            <div class="flex justify-between" x-show="getMetrics(message)?.completion_tokens != null"><span class="text-[var(--text-tertiary)]">Completion</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.completion_tokens ?? '—') + ' tok'"></span></div>
-                            <div class="flex justify-between" x-show="getMetrics(message)?.total_tokens != null"><span class="text-[var(--text-tertiary)]">Total</span><span class="font-mono text-[var(--text-primary)]" x-text="(getMetrics(message)?.total_tokens ?? '—') + ' tok'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.prompt_tokens != null"><span class="text-[var(--text-tertiary)]">Prompt</span><span class="font-mono text-[var(--text-primary)]" :title="(getMetrics(message)?.prompt_tokens ?? 0).toLocaleString() + ' tokens'" x-text="formatTokens(getMetrics(message)?.prompt_tokens) + ' tok' + (getMetrics(message)?.cached_tokens ? ' (' + formatTokens(getMetrics(message).cached_tokens) + ' cached)' : '')"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.completion_tokens != null"><span class="text-[var(--text-tertiary)]">Completion</span><span class="font-mono text-[var(--text-primary)]" :title="(getMetrics(message)?.completion_tokens ?? 0).toLocaleString() + ' tokens'" x-text="formatTokens(getMetrics(message)?.completion_tokens) + ' tok'"></span></div>
+                            <div class="flex justify-between" x-show="getMetrics(message)?.total_tokens != null"><span class="text-[var(--text-tertiary)]">Total</span><span class="font-mono text-[var(--text-primary)]" :title="(getMetrics(message)?.total_tokens ?? 0).toLocaleString() + ' tokens'" x-text="formatTokens(getMetrics(message)?.total_tokens) + ' tok'"></span></div>
                             <div class="border-t border-[var(--border)] my-1"></div>
                             <div class="flex justify-between" x-show="getMetrics(message)?.tokens_per_second != null"><span class="text-[var(--text-tertiary)]">Speed</span><span class="font-mono text-[var(--text-primary)]" x-text="formatTps(getMetrics(message)) || '—'"></span></div>
                             <div class="flex justify-between" x-show="getMetrics(message)?.prompt_per_second != null"><span class="text-[var(--text-tertiary)]">Prompt speed</span><span class="font-mono text-[var(--text-primary)]" x-text="getMetrics(message)?.prompt_per_second ? (getMetrics(message).prompt_per_second >= 10 ? Math.round(getMetrics(message).prompt_per_second) : getMetrics(message).prompt_per_second.toFixed(1)) + ' tok/s' : '—'"></span></div>
                             <div class="flex justify-between" x-show="getMetrics(message)?.ttft_ms != null"><span class="text-[var(--text-tertiary)]">TTFT</span><span class="font-mono text-[var(--text-primary)]" x-text="formatDuration(getMetrics(message)?.ttft_ms) || '—'"></span></div>
                             <div class="flex justify-between" x-show="getMetrics(message)?.total_duration_ms != null"><span class="text-[var(--text-tertiary)]">Duration</span><span class="font-mono text-[var(--text-primary)]" x-text="formatDuration(getMetrics(message)?.total_duration_ms) || '—'"></span></div>
+                            <div class="border-t border-[var(--border)] my-1" x-show="contextUsed(message)"></div>
+                            <div class="flex justify-between" x-show="contextUsed(message)"><span class="text-[var(--text-tertiary)]">Context</span><span class="font-mono" :style="`color: ${contextColor(contextPct(message))}`" x-text="contextLabel(message)"></span></div>
+                            <!-- Utilisation bar (window known) -->
+                            <div x-show="contextPct(message) != null" class="pt-0.5">
+                              <div class="h-1.5 w-full rounded-full overflow-hidden" style="background: var(--bg-progress)">
+                                <div class="h-full rounded-full" :style="`width: ${contextPct(message)}%; background: ${contextColor(contextPct(message))}`"></div>
+                              </div>
+                              <div class="flex justify-between mt-1 text-[10px]" :title="contextTitle(message)">
+                                <span class="text-[var(--text-tertiary)]" x-text="contextUsed(message)?.toLocaleString() + ' tok used'"></span>
+                                <span :style="`color: ${contextColor(contextPct(message))}`" x-text="'window ' + formatTokens(contextWindow(message))"></span>
+                              </div>
+                            </div>
+                            <!-- No window resolved: bare count -->
+                            <div x-show="contextUsed(message) && contextPct(message) == null" class="text-[10px] text-[var(--text-tertiary)] pt-0.5">
+                              Context window unknown for this model
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -489,6 +529,18 @@
                                         <i class="ph ph-copy"></i> Copy
                                       </button>
                                     </div>
+
+                                    <!-- Tool-returned images (any tool: screenshot, fetch, ImageContent) -->
+                                    <template x-if="block.result?.images?.length > 0">
+                                      <div class="flex flex-wrap gap-2 mb-2">
+                                        <template x-for="(img, ii2) in block.result.images" :key="'img-'+ii2">
+                                          <a :href="'data:'+(img.mime_type||img.mimeType||'image/png')+';base64,'+(img.base64||img.data)" target="_blank" class="block rounded-md overflow-hidden border border-[var(--tool-border)] max-w-[360px]">
+                                            <img :src="'data:'+(img.mime_type||img.mimeType||'image/png')+';base64,'+(img.base64||img.data)" :alt="img.source || 'tool image'" class="w-full h-auto max-h-64 object-contain bg-white"/>
+                                            <div class="text-[10px] text-[var(--text-tertiary)] px-1.5 py-1 truncate max-w-[360px]" x-text="img.source"></div>
+                                          </a>
+                                        </template>
+                                      </div>
+                                    </template>
 
                                     <!-- Search Web Result -->
                                     <template x-if="block.name === 'search_web'">
@@ -1111,7 +1163,7 @@
                     :class="!selectedAgentId ? 'dropdown-item-active' : ''"
                   >
                     <i class="ph ph-check text-xs" x-show="!selectedAgentId"></i>
-                    <span>Default Agent</span>
+                    <span>No agent (settings prompt)</span>
                   </button>
                   <template x-for="agent in availableAgents" :key="agent.id">
                     <button
@@ -1132,7 +1184,7 @@
             <div class="relative" x-data="{ open: false, search: '' }" @click.outside="open = false; search = ''">
               <button
                 type="button"
-                @click="open = !open"
+                @click="open = !open; if (open) $nextTick(() => $refs.modelSearch && $refs.modelSearch.focus())"
                 class="dropdown-btn"
                 :class="selectedModel ? 'dropdown-btn-active' : ''"
                 title="Model"
@@ -1143,7 +1195,7 @@
               </button>
               <div x-show="open" x-cloak class="dropdown-panel min-w-[280px]">
                 <div class="px-2 py-2 border-b border-[var(--border-primary)]">
-                  <input type="text" x-model="search" placeholder="Search models..." class="input text-xs w-full" @click.stop @focus="$el.select()" />
+                  <input x-ref="modelSearch" type="text" x-model="search" placeholder="Search models..." class="input text-xs w-full" @click.stop @focus="$el.select()" />
                 </div>
                 <div class="max-h-[40vh] overflow-y-auto py-1">
                   <template x-for="prov in availableProviders" :key="prov.id">
@@ -1155,7 +1207,7 @@
                       <template x-for="model in modelsByProvider(prov.id).filter(m => !search || (m.name || m.id).toLowerCase().includes(search.toLowerCase()) || m.id.toLowerCase().includes(search.toLowerCase()))" :key="model.id">
                         <button
                           type="button"
-                          @click="selectModel(model.id); search = ''"
+                          @click="selectModel(model.id); search = ''; open = false; $dispatch('focus-chat-input')"
                           class="dropdown-item"
                           :class="selectedModel === model.id ? 'dropdown-item-active' : ''"
                         >

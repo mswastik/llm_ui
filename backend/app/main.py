@@ -31,7 +31,7 @@ from database.crud import (
     get_message_versions, update_assistant_message_full
 )
 from mcp_client.client import MCPClientManager, MCPServerConfig
-from tools.tool_executor import ToolExecutor
+from tools.tool_executor import ToolExecutor, custom_tool_catalogue, custom_tool_names
 from llm_client.client import LLMClient
 from backend.settings import settings_manager
 from backend.database.backup import backup_scheduler
@@ -66,28 +66,59 @@ async def _bootstrap_default_provider():
         print(f"[PROVIDER] bootstrap failed: {e}")
 
 
-async def _bootstrap_default_agent():
-    """Seed a Default agent so the Agents tab always has something to edit.
-    Ensures a 'Default' entry exists even if user already created custom agents."""
+async def _backfill_context_windows():
+    """Re-fetch cached provider models that lack a context_window.
+
+    The models JSON column was written before fetch_models learned to capture
+    each model's window (llama.cpp reports --ctx-size in /v1/models). One cheap
+    refresh per affected provider fixes existing installs without asking the
+    user to re-add anything. Providers already carrying windows are skipped, so
+    this is a no-op on normal restarts.
+    """
     try:
-        from database.crud import get_all_agents, create_agent
+        from database.provider_crud import list_providers, update_provider
+        from tools.provider_service import fetch_models
         async with get_db() as db:
-            agents = await get_all_agents(db)
-            if any(a.name == "Default" for a in agents):
-                return
-            default_prompt = settings_manager.get_settings().get("system_prompt") or "You are a helpful AI assistant."
-            await create_agent(db, {
-                "name": "Default",
-                "description": "Default agent — fallback persona when no agent selected (empty enabled lists = all tools)",
-                "system_prompt": default_prompt,
-                "model": settings_manager.get_settings().get("llama_cpp_model") or "",
-                "temperature": settings_manager.get_settings().get("default_temperature", 0.7),
-                "max_tokens": settings_manager.get_settings().get("default_max_tokens", 4096),
-            })
+            providers = await list_providers(db, include_api_key=True)
+            stale = [p for p in providers
+                     if (p.get("models") or []) and not any(m.get("context_window") for m in p["models"])]
+            for p in stale:
+                try:
+                    fresh = await fetch_models(p["base_url"], p.get("api_key"), timeout=8)
+                    if any(m.get("context_window") for m in fresh):
+                        await update_provider(db, p["id"], models=fresh)
+                        print(f"[PROVIDER] {p['name']}: backfilled context windows for {len(fresh)} models")
+                except Exception as e:
+                    print(f"[PROVIDER] {p.get('name')}: context backfill skipped: {str(e)[:120]}")
             await db.commit()
-            print("[AGENT] bootstrapped Default agent")
     except Exception as e:
-        print(f"[AGENT] bootstrap Default failed: {e}")
+        print(f"[PROVIDER] context backfill failed: {e}")
+
+
+async def _retire_default_agent():
+    """Soft-delete the seeded 'Default' agent row, once.
+
+    It duplicated the meaning of an empty agent selection (no agent → settings
+    system prompt + all tools) and showed up as a second, confusing 'Default'
+    entry next to the chat dropdown's own default option. Retiring it leaves the
+    null selection as the single default path. Conversations still bound to it
+    resolve to no agent, which is exactly what the row pretended to be.
+    """
+    try:
+        from sqlalchemy import update as _upd
+        from database.models import Agent as _Agent
+        async with get_db() as db:
+            result = await db.execute(
+                _upd(_Agent)
+                .where(_Agent.name == "Default")
+                .where(_Agent.is_active == 1)
+                .values(is_active=0)
+            )
+            if result.rowcount:
+                await db.commit()
+                print(f"[AGENT] retired {result.rowcount} seeded Default agent row(s)")
+    except Exception as e:
+        print(f"[AGENT] Default retirement failed: {e}")
 
 
 async def _reconcile_pending_tool_messages():
@@ -134,10 +165,9 @@ async def _reconcile_pending_tool_messages():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    await init_db()
-    await _reconcile_pending_tool_messages()
     await _bootstrap_default_provider()
-    await _bootstrap_default_agent()
+    await _backfill_context_windows()
+    await _retire_default_agent()
     await mcp_manager.initialize()
     backup_scheduler.start()
     yield
@@ -255,7 +285,7 @@ async def get_conversation_context(conversation_id: str):
                 }
         from datetime import datetime
         current_date = datetime.now().strftime("%Y-%m-%d")
-        identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app."
+        identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app. Memory: relevant durable facts may be appended to the user's message in a <relevant_memories> block — use them. Before answering about past work, preferences, projects or people, call memory_search. When the user states a durable fact or preference (or says 'remember X'), call memory_write immediately: concise, standalone, tagged. Never store secret values — at most where they are kept."
         system_prompt_content = agent_config["system_prompt"] if agent_config and agent_config.get("system_prompt") else ""
         if system_prompt_content:
             system_prompt_content = f"{system_prompt_content}\n\n{identity_hint}\n\nCurrent date: {current_date}"
@@ -341,9 +371,22 @@ async def get_conversation_context(conversation_id: str):
                         except Exception:
                             cres = str(b.get("result") or "No result")
                         llm_messages.append({"role":"tool","content":cres,"tool_call_id":tid})
+                        # Vision replay for context preview (so token counting is accurate)
+                        try:
+                            _pimgs = (b.get("result") or {}).get("images") if isinstance(b.get("result"), dict) else None
+                            if _pimgs:
+                                _pparts = [{"type":"text","text": f"[Tool {b.get('name','tool')} returned {len(_pimgs)} image(s)]"}]
+                                for _pim in _pimgs:
+                                    _pb64 = _pim.get("base64") or _pim.get("data") or ""
+                                    _pmime = _pim.get("mime_type") or _pim.get("mimeType") or "image/png"
+                                    if _pb64:
+                                        _pparts.append({"type":"image_url","image_url":{"url": f"data:{_pmime};base64,{_pb64}"}})
+                                if len(_pparts) > 1:
+                                    llm_messages.append({"role":"user","content": _pparts})
+                        except Exception:
+                            pass
                     if post_content and post_content.strip():
                         llm_messages.append({"role":"assistant","content":post_content})
-            if system_prompt_content:
                 llm_messages.insert(0, {"role": "system", "content": system_prompt_content})
             mcp_tools = []
             if mcp_manager:
@@ -361,15 +404,7 @@ async def get_conversation_context(conversation_id: str):
                 enabled_custom = set(agent_config["enabled_tools"])
                 if "query_documents" not in enabled_custom:
                     effective_enable_rag = False
-                for ct in (
-                    "generate_speech", "run_command",
-                    "memory_write", "memory_read", "memory_search", "memory_delete",
-                    "load_skill", "create_skill", "run_job",
-                    "list_agents", "create_agent", "delete_agent",
-                    "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
-                    "list_providers", "add_provider", "search_skills", "install_skill",
-                    "list_conversations", "delete_conversation", "fetch_conversation",
-                ):
+                for ct in custom_tool_names():
                     if ct not in enabled_custom:
                         exclude_tools.append(ct)
             all_tools = tool_executor.get_tool_definitions(
@@ -626,39 +661,52 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
                                         tools=None, thinking_mode: str = None, message_blocks: list = None):
     """Auto-extract durable facts from the last user↔assistant exchange (Phase 2).
 
-    Insight-based: runs after every assistant turn; the LLM decides if the
-    exchange contains durable insights worth remembering (project facts,
-    preferences, decisions, bug fixes, content/workflow outcomes, etc.).
-    Returns [] when nothing durable — no fixed cadence.
+    Runs every N user turns (settings.memory_auto_extract_interval; <=0 disables).
+    The LLM decides whether the exchange holds durable insights; each candidate
+    fact is then checked against the existing store (FTS + token-Jaccard dedup)
+    so regenerations and follow-up turns cannot re-add the same fact.
 
     When `llm_messages` is provided, the prompt is appended to the existing
     prefix for KV cache reuse (like title generation).
     """
     try:
         from settings import settings_manager as _sm
-        # Allow disabling via setting (0 = disabled), but otherwise always run — insight decision is LLM-driven, not cadence.
-        _interval = _sm.get_settings().get("memory_auto_extract_interval", 1)
-        if isinstance(_interval, int) and _interval <= 0:
+        # memory_auto_extract_interval = run every N user turns (<=0 disables).
+        # Cadence bounds extraction cost and duplicate pressure; the dedup guard
+        # below covers the residual overlap.
+        _interval = _sm.get_settings().get("memory_auto_extract_interval", 3)
+        if not isinstance(_interval, int) or isinstance(_interval, bool):
+            _interval = 3
+        if _interval <= 0:
             return {"action": "memory", "status": "skipped", "detail": {"reason": "memory extraction disabled"}}
         msgs = await get_conversation_messages(db, conversation_id)
+        if _interval > 1:
+            _user_turns = sum(1 for m in msgs if m["role"] == "user")
+            if _user_turns % _interval != 0:
+                return {"action": "memory", "status": "skipped", "detail": {"reason": f"cadence: runs every {_interval} user turns (turn {_user_turns})"}}
         last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
         last_assistant = next((m["content"] for m in reversed(msgs) if m["role"] == "assistant"), None)
         if not last_user or not last_assistant:
             return {"action": "memory", "status": "skipped", "detail": {"reason": "no exchange found"}}
+        # Show the extractor what is already saved so it can skip covered ground
+        # (write-side dedup below is the safety net, not the primary mechanism).
+        from database.memory_crud import fts_search_memory
+        try:
+            _existing = await fts_search_memory(db, last_user, top_k=6)
+        except Exception:
+            _existing = []
+        _existing_block = "\n".join(f"- {e['content']}" for e in _existing) or "(none)"
         prompt = (
-            "Extract durable insights worth remembering from this conversation exchange. "
-            "Save facts that would help in future sessions: user preferences, project details, "
-            "decisions made, bugs fixed, workflows discovered, content created, or any learning "
-            "that could aid future tasks. Only save concrete, reusable information — not generic chatter.\n"
-            "CRITICAL: Each fact must be a complete, standalone sentence (15-120 chars) a stranger could understand without context.\n"
-            "Examples:\n"
-            "- GOOD: 'User prefers dark mode for the editor and wants it enabled by default'\n"
-            "- GOOD: 'Project Alpha deadline is Friday, frontend is React with Tailwind'\n"
-            "- BAD: 'llm-ui' (single word/tag, no context)\n"
-            "- BAD: 'skills' (too vague)\n"
-            "Do NOT return single words, tags, or topic names like 'llm-ui', 'skills', 'tools', 'architecture' alone.\n"
-            'Output ONLY a JSON array of strings. Each string must be a concise, standalone sentence '
-            "(15-120 chars, at least 3 words, must contain a verb) that would still be useful later. If nothing truly durable or insightful, output [].\n\n"
+            "Extract durable insights worth remembering from this conversation exchange.\n"
+            "ALREADY SAVED (skip anything these already cover):\n"
+            f"{_existing_block}\n\n"
+            "Rules:\n"
+            "- Save ONLY facts that stay useful months from now: user preferences and corrections, identity/context, project decisions, environment/tool quirks, durable workflow lessons.\n"
+            "- Do NOT save in-progress task state ('pending', 'awaiting review'), one-off actions or logs ('cleanup done', 'deleted N files'), or anything only this transcript shows.\n"
+            "- Never store secret VALUES (API keys, passwords, tokens) — at most where they are kept.\n"
+            "- Each fact: one complete standalone sentence (15-160 chars, contains a verb) a stranger could understand. No single words or tags like 'llm-ui', 'skills', 'tools', 'architecture'.\n"
+            "- Give each fact 1-3 short kebab-case tags (e.g. \"finance\", \"verit-analytics\", \"tts\").\n"
+            'Output ONLY a JSON array of objects: {"fact": "...", "tags": ["..."]}. If nothing durable, output [].\n\n'
             f"User: {last_user[:1500]}\n\nAssistant: {last_assistant[:1500]}"
         )
         # KV-friendly path: append to existing prefix (like title generation)
@@ -693,49 +741,70 @@ async def _extract_memory_from_exchange(db, conversation_id: str, llm_client, ag
         raw = "".join(parts)
         import re
         import json as _json
+
+        def _sanitize(s: str) -> str:
+            # Fallback line-parsing used to store raw JSON lines verbatim:
+            # `"some fact…",` — strip quotes and trailing commas.
+            s = s.strip().rstrip(",").strip()
+            while len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+                s = s[1:-1].strip().rstrip(",").strip()
+            return s
+
+        # --- Parse: JSON objects {"fact","tags"} preferred, bare strings tolerated ---
+        items = []  # list of (fact, tags)
         m = re.search(r"\[.*\]", raw, re.DOTALL)
+        parsed = None
         if m:
             try:
                 parsed = _json.loads(m.group(0))
-                items = [str(x).strip() for x in parsed if str(x).strip()]
             except _json.JSONDecodeError:
-                items = [l.strip("- ").strip() for l in raw.splitlines() if l.strip().startswith("-")]
+                parsed = None
+        if isinstance(parsed, list):
+            for x in parsed:
+                if isinstance(x, dict):
+                    fact = _sanitize(str(x.get("fact") or x.get("content") or ""))
+                    tags = [str(t).strip().lower() for t in (x.get("tags") or []) if str(t).strip()][:3]
+                else:
+                    fact, tags = _sanitize(str(x or "")), []
+                if fact:
+                    items.append((fact, tags))
         else:
-            items = [l.strip("- ").strip() for l in raw.splitlines()
-                     if l.strip() and len(l.strip()) > 5 and not l.strip().startswith("```")]
-        # --- Filter out single-word tags / junk (VRAM-free FTS will index these, but they are useless) ---
-        # The model sometimes returns ["llm-ui","skills","tools"] instead of sentences.
+            for l in raw.splitlines():
+                t = l.strip()
+                if not t or t.startswith("```"):
+                    continue
+                fact = _sanitize(t.lstrip("- ").strip('"'))
+                if fact and len(fact) > 5 and not fact.startswith("{"):
+                    items.append((fact, []))
+        # --- Filter single-word/tag junk (FTS would index these, but useless) ---
         _filtered = []
-        for _it in items:
-            _s = str(_it).strip()
-            if not _s:
+        for _f, _tags in items:
+            if len(_f) < 15 or _f.count(" ") < 2:
+                print(f"[MEMORY] filtered short/single-word: '{_f[:60]}'")
                 continue
-            # Must be at least 15 chars, at least 3 words, contain a space and a verb-like char
-            if len(_s) < 15 or _s.count(" ") < 2:
-                print(f"[MEMORY] filtered short/single-word: '{_s[:60]}'")
+            if _f.lower() in {"llm-ui", "llm_ui", "skills", "tools", "architecture"}:
+                print(f"[MEMORY] filtered known tag: '{_f}'")
                 continue
-            # Reject pure tags / single hyphenated word without sentence structure
-            if _s.lower() in {"llm-ui", "llm_ui", "skills", "tools", "architecture"}:
-                print(f"[MEMORY] filtered known tag: '{_s}'")
-                continue
-            # Must look like a sentence (contains at least one verb-ish word ending or common verb)
-            # Simple heuristic: contains is/are/was/were/prefer/uses/needs/wants/fixed/decided etc. or length > 25
-            # For now just require it not be a single token and length > 15 (already above)
-            _filtered.append(_s)
+            _filtered.append((_f, _tags))
         items = _filtered
         if not items:
             return {"action": "memory", "status": "skipped", "detail": {"reason": "no durable facts found (filtered)"}}
-        from database.memory_crud import create_memory_entry
+        from database.memory_crud import create_memory_entry_dedup
         scope = f"agent:{agent_id}" if agent_id is not None else "global"
-        added = 0
-        for item in items[:10]:
-            await create_memory_entry(db, item, scope=scope, source="auto")
-            added += 1
+        added, skipped = [], 0
+        for fact, tags in items[:10]:
+            entry, dup = await create_memory_entry_dedup(db, fact, scope=scope, tags=tags, source="auto")
+            if dup:
+                skipped += 1
+                print(f"[MEMORY] dedup skip (≈ {dup['id'][:8]}): {fact[:70]}")
+            else:
+                added.append(fact)
         if added:
             await db.commit()
-            print(f"[MEMORY] auto-extracted {added} fact(s) (scope={scope})")
-            return {"action": "memory", "status": "completed", "detail": {"facts": items[:10], "count": added, "scope": scope}}
-        return {"action": "memory", "status": "skipped", "detail": {"reason": "no facts saved"}}
+            print(f"[MEMORY] auto-extracted {len(added)} fact(s), {skipped} dedup-skipped (scope={scope})")
+            return {"action": "memory", "status": "completed",
+                    "detail": {"facts": added, "count": len(added), "skipped_duplicates": skipped, "scope": scope}}
+        return {"action": "memory", "status": "skipped", "detail": {"reason": f"all {skipped} candidate(s) already in memory"}}
     except Exception as e:
         print(f"[MEMORY] extraction failed: {e}")
         import traceback as _tb2
@@ -847,6 +916,45 @@ async def _save_assistant_message(db, conversation_id: str, assistant_message: s
     return saved
 
 
+
+def _aggregate_turn_metrics(turn_metrics: List[Dict]) -> Optional[dict]:
+    """Collapse per-LLM-call metrics for one turn into what we persist.
+
+    Single call: its own metrics. Tool-loop turns: sum counts/durations, keep the
+    first TTFT, and retain `_iterations` so the UI can recover the real final
+    context occupancy (a summed prompt_tokens double-counts the re-sent prefix).
+    Returns None for a turn that never completed an LLM call.
+    """
+    if not turn_metrics:
+        return None
+    if len(turn_metrics) == 1:
+        return turn_metrics[0]
+    prompt_sum = sum((m.get("prompt_tokens") or 0) for m in turn_metrics)
+    compl_sum = sum((m.get("completion_tokens") or 0) for m in turn_metrics)
+    total_sum = sum((m.get("total_tokens") or 0) for m in turn_metrics)
+    ttft_first = next((m.get("ttft_ms") for m in turn_metrics if m.get("ttft_ms") is not None), None)
+    dur_sum = sum((m.get("total_duration_ms") or 0) for m in turn_metrics)
+    cached_sum = None
+    if any(m.get("cached_tokens") is not None for m in turn_metrics):
+        cached_sum = sum((m.get("cached_tokens") or 0) for m in turn_metrics)
+    agg_tps = None
+    gen_ms = (dur_sum - (ttft_first or 0)) if ttft_first else dur_sum
+    if compl_sum and gen_ms > 0:
+        agg_tps = round(compl_sum / (gen_ms / 1000), 2)
+    final = {
+        "ttft_ms": ttft_first,
+        "total_duration_ms": dur_sum,
+        "prompt_tokens": prompt_sum or None,
+        "completion_tokens": compl_sum or None,
+        "total_tokens": total_sum or (prompt_sum + compl_sum if prompt_sum or compl_sum else None),
+        "cached_tokens": cached_sum,
+        "tokens_per_second": agg_tps,
+        "prompt_per_second": turn_metrics[0].get("prompt_per_second"),
+    }
+    final["_iterations"] = turn_metrics
+    return final
+
+
 def _expand_final_for_autos(
     assistant_message: str, thinking_content: str, message_blocks: List[Dict]
 ) -> List[Dict]:
@@ -923,16 +1031,19 @@ def _expand_final_for_autos(
 
 
 
+
 async def _persist_partial_turn(conversation_id: str, assistant_message: str,
                                 thinking_content: str, message_blocks: List[Dict],
                                 model: Optional[str], version: int,
                                 version_group: Optional[str],
                                 turn_index: Optional[float],
-                                placeholder_id: Optional[str]) -> Optional[str]:
+                                placeholder_id: Optional[str],
+                                turn_metrics: Optional[List[Dict]] = None) -> Optional[str]:
     """Best-effort persist of a partial turn on crash/cancel/error, using a
     fresh DB session (the generator's session is gone by then). Returns the
     saved row id when known so clients can repair their local placeholder."""
     try:
+        _fm = _aggregate_turn_metrics(turn_metrics or [])
         async with get_db() as pdb:
             if placeholder_id:
                 cons = []
@@ -947,19 +1058,25 @@ async def _persist_partial_turn(conversation_id: str, assistant_message: str,
                         cons.append(dict(b))
                 full_c = "".join(x.get("content", "") for x in cons if x.get("type") == "content") or assistant_message
                 full_t = "".join(x.get("content", "") for x in cons if x.get("type") == "thinking") or thinking_content
+                _extra: Dict = {}
+                if model:
+                    _extra["model"] = model
+                if _fm:
+                    _extra["metrics"] = _fm
                 if full_c.strip() or full_t.strip() or cons:
                     await update_assistant_message_full(
                         pdb, placeholder_id,
                         content=full_c,
                         thinking=full_t,
                         blocks=cons or message_blocks,
-                        extra_metadata={"model": model} if model else None,
+                        extra_metadata=_extra or None,
                     )
                 return placeholder_id
             saved = await _save_assistant_message(
                 pdb, conversation_id, assistant_message, thinking_content,
                 message_blocks, model, version, version_group,
-                turn_index=turn_index
+                turn_index=turn_index,
+                metrics=_fm
             )
             return saved["id"] if isinstance(saved, dict) else None
     except Exception as e:
@@ -1003,6 +1120,10 @@ async def _core_stream_handler(
     assistant_message = ""
     thinking_content = ""
     message_blocks: List[Dict] = []
+    # Per-LLM-call metrics for this turn. Declared here (not inside the DB block)
+    # so the cancel/error teardown handlers always see whatever completed calls
+    # recorded — those turns used to be saved with no metrics at all.
+    turn_metrics: List[Dict] = []
     try:
         await _register_stream(conversation_id, request_id)
         async with get_db() as db:
@@ -1031,6 +1152,14 @@ async def _core_stream_handler(
                             "enabled_mcp_servers": agent.enabled_mcp_servers or [],
                             "enabled_skills": agent.enabled_skills or []
                         }
+
+            # Agent sampling reaches the LLM here. Values are taken verbatim from
+            # the agent row; 0 / None means "not configured" so the client keeps
+            # falling back to the settings defaults (previous behaviour).
+            _ac = agent_config or {}
+            _agent_temperature = _ac.get("temperature") or None
+            _agent_top_k = _ac.get("top_k") or None
+            _agent_max_tokens = _ac.get("max_tokens") or None
 
             # Resolve LLM provider — single entity: model implies provider (live chat overrides default/agent)
             # Default from settings is fallback only when no live model selected
@@ -1142,7 +1271,7 @@ async def _core_stream_handler(
             current_date = datetime.now().strftime("%Y-%m-%d")
             
             # Build system prompt with current date + app identity (local llm_ui)
-            identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app."
+            identity_hint = "You are running inside llm_ui — a local, single-user chat app on this machine. Conversations, memory, agents, skills and files you manage are all inside llm_ui unless the user explicitly names an external app. Memory: relevant durable facts may be appended to the user's message in a <relevant_memories> block — use them. Before answering about past work, preferences, projects or people, call memory_search. When the user states a durable fact or preference (or says 'remember X'), call memory_write immediately: concise, standalone, tagged. Never store secret values — at most where they are kept."
             system_prompt_content = agent_config["system_prompt"] if agent_config and agent_config.get("system_prompt") else ""
             if system_prompt_content:
                 system_prompt_content = f"{system_prompt_content}\n\n{identity_hint}\n\nCurrent date: {current_date}"
@@ -1402,7 +1531,7 @@ async def _core_stream_handler(
                         if tcs:
                             llm_msg["tool_calls"] = tcs
                         llm_messages.append(llm_msg)
-                        # Tool results
+                        # Tool results + vision injection for replay
                         for idx, b in enumerate(tool_blocks):
                             tid = b.get("id")
                             if not tid and idx < len(tcs):
@@ -1419,12 +1548,53 @@ async def _core_stream_handler(
                                 "content": tool_result_str,
                                 "tool_call_id": tid
                             })
-                        # Second assistant: final answer (without tool_calls) — only if there is post content/thinking
+                            # Replay images stored in block result (from screenshot / MCP ImageContent)
+                            try:
+                                _rimgs = (result or {}).get("images") if isinstance(result, dict) else None
+                                if _rimgs:
+                                    _rparts = [{"type": "text", "text": f"[Tool {b.get('name','tool')} returned {len(_rimgs)} image(s)]"}]
+                                    for _rim in _rimgs:
+                                        _rb64 = _rim.get("base64") or _rim.get("data") or ""
+                                        _rmime = _rim.get("mime_type") or _rim.get("mimeType") or "image/png"
+                                        if _rb64:
+                                            _rparts.append({"type": "image_url", "image_url": {"url": f"data:{_rmime};base64,{_rb64}"}})
+                                    if len(_rparts) > 1:
+                                        llm_messages.append({"role": "user", "content": _rparts})
+                            except Exception:
+                                pass
                         if (post_content and post_content.strip()) or post_thinking:
                             post_msg = {"role": "assistant", "content": post_content}
                             if post_thinking:
                                 post_msg["reasoning_content"] = post_thinking
                             llm_messages.append(post_msg)
+
+            # ── Auto-recall: keyword-search long-term memory for the CURRENT user
+            # message and append hits to the user turn itself (never the system
+            # prompt → KV prefix stays hot, DB row untouched, prompt copy only).
+            # This is what makes the memory store actually reach answers without
+            # the model having to think of calling memory_search.
+            try:
+                from database.memory_crud import get_recall_for_query
+                _lu_idx = next((i for i in range(len(llm_messages) - 1, -1, -1)
+                                if llm_messages[i].get("role") == "user"), None)
+                if _lu_idx is not None:
+                    _c = llm_messages[_lu_idx].get("content")
+                    if isinstance(_c, str):
+                        _q = _c
+                    elif isinstance(_c, list):
+                        _q = " ".join(p.get("text", "") for p in _c if isinstance(p, dict) and p.get("type") == "text")
+                    else:
+                        _q = ""
+                    if _q.strip():
+                        _recall = await get_recall_for_query(db, _q, top_k=5)
+                        if _recall:
+                            if isinstance(_c, str):
+                                llm_messages[_lu_idx]["content"] = _c + "\n\n" + _recall
+                            elif isinstance(_c, list):
+                                llm_messages[_lu_idx]["content"] = list(_c) + [{"type": "text", "text": "\n\n" + _recall}]
+                            print(f"[MEMORY] auto-recalled {_recall.count(chr(10)) - 3} entr(ies) into user turn")
+            except Exception as e:
+                print(f"[MEMORY] auto-recall failed: {e}")
             
             # Prepend system prompt to messages
             if system_prompt_content:
@@ -1490,12 +1660,16 @@ async def _core_stream_handler(
                             _cons.append(dict(_b))
                     _full_content = "".join(b.get("content","") for b in _cons if b.get("type")=="content")
                     _full_thinking = "".join(b.get("content","") for b in _cons if b.get("type")=="thinking")
+                    _extra = {"model": model} if model else {}
+                    _fm = _aggregate_turn_metrics(turn_metrics)
+                    if _fm:
+                        _extra["metrics"] = _fm
                     await update_assistant_message_full(
                         db, placeholder_id,
                         content=_full_content,
                         thinking=_full_thinking,
                         blocks=_cons if _cons else message_blocks,
-                        extra_metadata={"model": model} if model else None,
+                        extra_metadata=_extra or None,
                     )
                 except Exception as _e:
                     print(f"[PERSIST] flush failed: {_e}")
@@ -1536,15 +1710,7 @@ async def _core_stream_handler(
                 enabled_custom = set(agent_config["enabled_tools"])
                 if "query_documents" not in enabled_custom:
                     effective_enable_rag = False
-                for custom_tool in (
-                    "generate_speech", "run_command",
-                    "memory_write", "memory_read", "memory_search", "memory_delete",
-                    "load_skill", "create_skill", "run_job",
-                    "list_agents", "create_agent", "delete_agent",
-                    "list_mcp_servers", "add_mcp_server", "remove_mcp_server",
-                    "list_providers", "add_provider", "search_skills", "install_skill",
-                    "list_conversations", "delete_conversation", "fetch_conversation",
-                ):
+                for custom_tool in custom_tool_names():
                     if custom_tool not in enabled_custom:
                         exclude_tools.append(custom_tool)
             elif agent_config is not None:
@@ -1589,7 +1755,6 @@ async def _core_stream_handler(
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 35  # Prevent infinite loops
             tool_iteration = 0
-            turn_metrics: list[dict] = []  # one entry per LLM call in this turn
             while tool_iteration < max_tool_iterations:
                 tool_iteration += 1
                 print(f"[DEBUG] Conversation loop iteration {tool_iteration}")
@@ -1605,7 +1770,10 @@ async def _core_stream_handler(
                     async for chunk in _stream_with_stall_timeout(
                         llm_client.stream_chat(llm_messages, model=model, tools=all_tools,
                                                base_url=provider_base_url, api_key=provider_api_key,
-                                               thinking_mode=thinking_mode),
+                                               thinking_mode=thinking_mode,
+                                               temperature=_agent_temperature,
+                                               max_tokens=_agent_max_tokens,
+                                               top_k=_agent_top_k),
                         initial_timeout=600,
                         stall_timeout=60
                     ):
@@ -1851,7 +2019,21 @@ async def _core_stream_handler(
                             "content": tool_result_str,
                             "tool_call_id": f"{pending_tool_call['name']}_{i}"
                         })
-
+                        # Vision: if tool returned images (MCP ImageContent or screenshot file path), inject as user image message
+                        try:
+                            _imgs = (tool_result or {}).get("images") if isinstance(tool_result, dict) else None
+                            if _imgs:
+                                _parts = [{"type": "text", "text": f"[Tool {pending_tool_call['name']} returned {len(_imgs)} image(s)]"}]
+                                for _im in _imgs:
+                                    _b64 = _im.get("base64") or _im.get("data") or ""
+                                    _mime = _im.get("mime_type") or _im.get("mimeType") or "image/png"
+                                    if _b64:
+                                        _parts.append({"type": "image_url", "image_url": {"url": f"data:{_mime};base64,{_b64}"}})
+                                if len(_parts) > 1:
+                                    llm_messages.append({"role": "user", "content": _parts})
+                                    print(f"[VISION] Injected {len(_imgs)} image(s) from tool {pending_tool_call['name']} into llm_messages")
+                        except Exception as _ve:
+                            print(f"[VISION] inject failed: {_ve}")
                     print(f"[DEBUG] All {len(pending_tool_calls)} tools executed, continuing conversation with results")
                     # Record skill usage (Phase 4) for the improvement loop.
                     try:
@@ -1879,37 +2061,8 @@ async def _core_stream_handler(
             print(f"[DEBUG] Total messages in llm_messages after {tool_iteration} iterations: {len(llm_messages)}")
             
             # Aggregate performance metrics across all LLM calls in this turn
-            final_metrics = None
-            if turn_metrics:
-                if len(turn_metrics) == 1:
-                    final_metrics = turn_metrics[0]
-                else:
-                    # Multi-iteration (tool loop): sum counts/durations, keep first TTFT
-                    prompt_sum = sum((m.get("prompt_tokens") or 0) for m in turn_metrics)
-                    compl_sum = sum((m.get("completion_tokens") or 0) for m in turn_metrics)
-                    total_sum = sum((m.get("total_tokens") or 0) for m in turn_metrics)
-                    ttft_first = next((m.get("ttft_ms") for m in turn_metrics if m.get("ttft_ms") is not None), None)
-                    dur_sum = sum((m.get("total_duration_ms") or 0) for m in turn_metrics)
-                    cached_sum = None
-                    if any(m.get("cached_tokens") is not None for m in turn_metrics):
-                        cached_sum = sum((m.get("cached_tokens") or 0) for m in turn_metrics)
-                    # Aggregated tok/s from totals (exclude first TTFT for generation speed)
-                    agg_tps = None
-                    gen_ms = (dur_sum - (ttft_first or 0)) if ttft_first else dur_sum
-                    if compl_sum and gen_ms > 0:
-                        agg_tps = round(compl_sum / (gen_ms / 1000), 2)
-                    final_metrics = {
-                        "ttft_ms": ttft_first,
-                        "total_duration_ms": dur_sum,
-                        "prompt_tokens": prompt_sum or None,
-                        "completion_tokens": compl_sum or None,
-                        "total_tokens": total_sum or (prompt_sum + compl_sum if prompt_sum or compl_sum else None),
-                        "cached_tokens": cached_sum,
-                        "tokens_per_second": agg_tps,
-                        "prompt_per_second": turn_metrics[0].get("prompt_per_second"),
-                    }
-                    # Keep raw per-iteration breakdown for debugging
-                    final_metrics["_iterations"] = turn_metrics
+            final_metrics = _aggregate_turn_metrics(turn_metrics)
+            if final_metrics and len(turn_metrics) > 1:
                 try:
                     yield f"data: {json.dumps({'type': 'metrics', 'metrics': final_metrics, 'aggregated': len(turn_metrics) > 1})}\n\n"
                 except Exception as _e:
@@ -2178,7 +2331,7 @@ async def _core_stream_handler(
         await _persist_partial_turn(
             conversation_id, assistant_message, thinking_content,
             message_blocks, model, version, version_group,
-            turn_index, placeholder_id
+            turn_index, placeholder_id, turn_metrics
         )
         raise  # Re-raise to properly propagate cancellation
     except Exception as e:
@@ -2193,7 +2346,7 @@ async def _core_stream_handler(
         saved_id = await _persist_partial_turn(
             conversation_id, assistant_message, thinking_content,
             message_blocks, model, version, version_group,
-            turn_index, placeholder_id
+            turn_index, placeholder_id, turn_metrics
         )
         try:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
@@ -2948,6 +3101,16 @@ async def delete_document_endpoint(document_id: str):
         return {"status": "success", "message": "Document deleted"}
 
 
+@app.get("/api/tools")
+async def list_custom_tool_catalogue():
+    """The authoritative custom-tool catalogue for the agent capability picker.
+
+    Served from the same definitions the executor dispatches, so the picker can
+    never drift from what an agent is actually allowed to call.
+    """
+    return {"tools": custom_tool_catalogue()}
+
+
 @app.get("/api/mcp/tools")
 async def list_available_tools():
     """List all tools from all MCP servers and custom tools"""
@@ -2967,7 +3130,12 @@ async def list_available_tools():
 
 @app.get("/api/models")
 async def list_available_models():
-    """List models across all enabled LLM providers (cached at connect/refresh)."""
+    """List models across all enabled LLM providers (cached at connect/refresh).
+
+    Each model carries `context_window` when it is known (see
+    _backfill_context_windows at startup). Absent means unknown — the UI shows a
+    bare token count instead of a fake utilisation percentage.
+    """
     from database.provider_crud import list_providers
     async with get_db() as db:
         providers = await list_providers(db)
@@ -2984,6 +3152,7 @@ async def list_available_models():
                 "owned_by": m.get("owned_by") or p.get("name"),
                 "provider_id": p.get("id"),
                 "provider_name": p.get("name"),
+                "context_window": m.get("context_window"),
             })
     return {"models": models, "providers": provider_list}
 

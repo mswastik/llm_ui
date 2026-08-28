@@ -40,6 +40,7 @@ class LLMClient:
         messages: List[Dict[str, str]],
         temperature: float = None,
         max_tokens: int = None,
+        top_k: int = None,
         tools: List[Dict] = None,
         model: str = None,
         max_retries: int = 3,
@@ -80,6 +81,11 @@ class LLMClient:
             "max_tokens": active_max_tokens,
             "cache_prompt": True,  # Reuse KV cache from previous request when prompt prefix matches
         }
+        # top_k is a llama.cpp extension, not part of the OpenAI schema, so it is
+        # only sent when a caller asks for it (agent config). Popped on the 400
+        # retry below for strict providers that reject unknown fields.
+        if top_k is not None:
+            payload["top_k"] = top_k
         # Add chat_template_kwargs if provided (for thinking suppression on models that support it)
         if chat_template_kwargs:
             payload["chat_template_kwargs"] = chat_template_kwargs
@@ -150,7 +156,7 @@ class LLMClient:
                             if response.status == 400:
                                 lower = error_text.lower()
                                 popped = False
-                                for key in ("stream_options", "reasoning_effort", "chat_template_kwargs", "thinking"):
+                                for key in ("stream_options", "reasoning_effort", "chat_template_kwargs", "thinking", "top_k"):
                                     if key in lower and key in payload:
                                         print(f"[DEBUG] Provider {current_base_url} rejected {key}, retrying without it")
                                         payload.pop(key, None)

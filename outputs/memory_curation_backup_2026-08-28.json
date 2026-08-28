@@ -1,0 +1,2372 @@
+[
+  {
+    "id": "2e4e24da-98e5-4737-aebd-9eff7178623b",
+    "scope": "global",
+    "content": "LinkedIn Multi-Account Setup:\n1. MCP Server `linkedin-prateek` → Prateek Gupta's LinkedIn (Verit Analytics)\n2. MCP Server `linkedin-swastik` → Swastik Mishra's LinkedIn (Stryker)\n\nBrowser Profiles for social_* tools:\n- `account=\"prateek\"` → Brave profile `~/.brave-profiles/prateek`, port 9222 → Agent: `social-media-prateek`\n- `account=\"swastik\"` → Brave profile `~/.brave-profiles/prateek2`, port 9223 → Agent: `social-media-swastik`\n\nEach agent MUST use its own account value on every social_* call. Never cross-use accounts.",
+    "tags": "[\"linkedin\", \"mcp-servers\", \"accounts\", \"browser-profiles\", \"agents\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 09:57:30.013497",
+    "updated_at": "2026-08-16 09:57:30.013501"
+  },
+  {
+    "id": "e816877b-acee-492c-8bec-de8a63d74655",
+    "scope": "global",
+    "content": "Browser launch commands for social media operations:\n- Prateek's agent: `brave --user-data-dir=/home/swastik/.brave-profiles/prateek --remote-debugging-port=9222 &`\n- Swastik's agent: `brave --user-data-dir=/home/swastik/.brave-profiles/prateek2 --remote-debugging-port=9223 &`\nAlways run the correct browser command before ANY social media operation. LinkedIn native tools (get_my_profile, etc.) don't need it. Never fail silently; initialize browser first.",
+    "tags": "[\"browser\", \"social-media\", \"automation\", \"launch\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 09:57:30.035536",
+    "updated_at": "2026-08-16 09:57:30.035541"
+  },
+  {
+    "id": "28f37782-4bc7-4592-aad5-f653ba7f01ef",
+    "scope": "global",
+    "content": "Browser MCP account mapping fix: The skill file uses \"prateek\"/\"swastik\" but the browser-mcp server reads from ~/.browser-mcp/profiles.json which must match. Updated profiles.json keys from \"default\"/\"a2\" to \"prateek\"/\"swastik\". Also changed config.py DEFAULT_ACCOUNT from \"default\" to \"prateek\". No server restart needed — profiles.json is read per-request.",
+    "tags": "[\"browser-mcp\", \"accounts\", \"profiles\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 10:18:15.981606",
+    "updated_at": "2026-08-16 10:18:15.981613"
+  },
+  {
+    "id": "93438a8a-42d2-4d05-aac7-fa121152fc73",
+    "scope": "global",
+    "content": "LinkedIn post creation UI fix: The social_post tool fails on profile pages because it looks for class=\"start-a-post\" which doesn't exist there. On linkedin.com/feed/, the correct flow is: 1) Navigate to /feed/ URL, 2) Find input element with aria-label=\"Start a post\", 3) Clicking it opens a dialog, 4) The editor has div.editor-content.ql-container containing div.ql-editor.ql-blank for text input. Always ensure browser is on linkedin.com/feed/ before attempting social_post.",
+    "tags": "[\"linkedin\", \"posting\", \"browser-ui\", \"fix\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 11:00:14.270681",
+    "updated_at": "2026-08-16 11:00:14.270685"
+  },
+  {
+    "id": "69aa8f27-dd87-4c9e-a0e5-9ee9086ebb51",
+    "scope": "global",
+    "content": "LinkedIn social_post tool troubleshooting: If \"start-a-post button not found\", navigate to https://www.linkedin.com/feed/ first (not profile page). The post editor uses aria-label=\"Start a post\" input → clicks open dialog with ql-container/ql-editor classes. After navigation, wait 3-5 seconds before calling social_post.",
+    "tags": "[\"linkedin\", \"social-post\", \"troubleshooting\", \"browser-fix\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 11:00:24.245438",
+    "updated_at": "2026-08-16 11:00:24.245443"
+  },
+  {
+    "id": "f41fdc91-699c-4d23-98a1-20af8625a254",
+    "scope": "global",
+    "content": "Verit Analytics LinkedIn: https://www.linkedin.com/company/verit-analytics/",
+    "tags": "[\"linkedin\", \"company\", \"verit-analytics\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-16 14:20:42.518277",
+    "updated_at": "2026-08-16 14:20:42.518281"
+  },
+  {
+    "id": "b5d21117-abba-4525-8cbc-02f787ab01e2",
+    "scope": "global",
+    "content": "Duplicate cleanup preference: when choosing which of two duplicate chats to delete, keep the one that is most detailed / highest quality (more assistant chars, more tool calls, more turns, longer span, richer thinking) — NOT simply the latest by timestamp. Use scripts/fetch_conversation.py (--metrics / --list) to compare before deleting.",
+    "tags": "[\"cleanup\", \"preference\", \"llm-ui\", \"tooling\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 05:08:32.286216",
+    "updated_at": "2026-08-21 05:08:32.286221"
+  },
+  {
+    "id": "15281738-8e06-42f5-861a-64489abfa34e",
+    "scope": "global",
+    "content": "User has an llm_ui repo where conversations/messages are stored in `llm_ui.db`",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 05:09:15.315012",
+    "updated_at": "2026-08-21 05:09:15.315016"
+  },
+  {
+    "id": "1efa5d2a-cb0c-4bad-8476-dc91e976a893",
+    "scope": "global",
+    "content": "A script `scripts/fetch_conversation.py` was built to fetch conversation content directly from `llm_ui.db`",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 05:09:15.315569",
+    "updated_at": "2026-08-21 05:09:15.315572"
+  },
+  {
+    "id": "2d204568-f158-4594-9ecc-85b616c0013e",
+    "scope": "global",
+    "content": "The fetch_conversation.py script supports modes: full content, --preview (truncated), --metrics JSON, --list --sort by depth, and --duplicates detection",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 05:09:15.315903",
+    "updated_at": "2026-08-21 05:09:15.315905"
+  },
+  {
+    "id": "69c93027-5015-4ddf-993f-8254fbdea7c7",
+    "scope": "global",
+    "content": "Conversation quality signals computed by the script include assistant_chars, tool_call_count, user/assistant turns, thinking_chars, distinct models, and session span_seconds",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 05:09:15.316132",
+    "updated_at": "2026-08-21 05:09:15.316134"
+  },
+  {
+    "id": "e3901fbe-e82b-42fd-9a52-ecd70fa97c2f",
+    "scope": "global",
+    "content": "\"The fetch_conversation tool is live and callable, returning full conversation content, quality metrics, and structured tool-call history.\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 09:52:51.822849",
+    "updated_at": "2026-08-21 09:52:51.822852"
+  },
+  {
+    "id": "76bc65c7-ceaa-4b5a-bdc7-07e1b10f62f1",
+    "scope": "global",
+    "content": "\"Native admin tools are located in admin_tool.py.\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 09:52:51.825331",
+    "updated_at": "2026-08-21 09:52:51.825351"
+  },
+  {
+    "id": "f4d77898-964d-42db-b0a2-b3e1b146e181",
+    "scope": "global",
+    "content": "REAL USER: Swastik Mishra — BITS Pilani alumnus, Supply Chain Analytics & Digital Transformation at Stryker (since 2022), ~17 years experience, based in Panvel, Maharashtra. NOTE: \"Prateek Gupta\" is a VIRTUAL IDENTITY/test persona he created to test LinkedIn features around Verit Analytics — NOT a separate person.",
+    "tags": "[\"accounts\", \"profiles\", \"identity\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.349206",
+    "updated_at": "2026-08-21 16:16:40.349211"
+  },
+  {
+    "id": "896b4635-c25f-4de1-abd3-7810b3b171f9",
+    "scope": "global",
+    "content": "LinkedIn Account Bifurcation: (1) mcp-server-linkedin → Prateek Gupta's account (Marketing at Verit Analytics, Bengaluru) — this is a VIRTUAL TEST PERSONA created by Swastik for testing LinkedIn features around Verit Analytics. (2) linkedin-mcp-2 → Swastik Mishra's real account (Supply Chain Analytics & Digital Transformation at Stryker, BITS Pilani). IMPORTANT: Current LinkedIn native tools (get_my_profile, get_person_profile, etc.) don't support specifying which MCP server to use — they default to the first server (Prateek's/mcp-server-linkedin). To access Swastik's account via linkedin-mcp-2 requires reconfiguring tool routing or a separate session.",
+    "tags": "[\"linkedin\", \"mcp-servers\", \"accounts\", \"bifurcation\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.353490",
+    "updated_at": "2026-08-21 16:16:40.353493"
+  },
+  {
+    "id": "98f7c279-3d51-4790-81ae-5ddeef5e3a36",
+    "scope": "global",
+    "content": "Verit Analytics: Supply chain analytics firm associated with Swastik (built/associated). Domain: veritanalytics.com. LinkedIn company page: https://www.linkedin.com/company/verit-analytics/. Product: demand planning / sales forecasting dashboard with modules for Forecast Management, Supply Chain Operations, Insights & Dashboards, Alerts.",
+    "tags": "[\"company\", \"verit-analytics\", \"business\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.354684",
+    "updated_at": "2026-08-21 16:16:40.354686"
+  },
+  {
+    "id": "b6d6fb1d-25b5-4cd1-8927-0e5992f4128a",
+    "scope": "global",
+    "content": "Investment Portfolio (as of Aug 2026): Net worth ~₹1.8–2.08 Cr. Risk profile: Moderate. Investment horizon: 5 years. Target allocation: 60% Equity / 30% Debt / 10% Cash (±5pp drift limit). Current holdings: Mirae Asset ELSS, HSBC Value Fund, Quant Small Cap, ICICI Multi-Asset Fund, Quant ELSS Tax Saver, Nippon India Small Cap. FD banks: HDFC Bank, ICICI Bank, IDFC Bank.",
+    "tags": "[\"finance\", \"investing\", \"portfolio\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.355703",
+    "updated_at": "2026-08-21 16:16:40.355706"
+  },
+  {
+    "id": "08ba52c7-de2f-4968-9cd1-9ad675dc3c3c",
+    "scope": "global",
+    "content": "Income & Tax: Salary ~₹45 Lakhs from Stryker Global Technology Centre Pvt Ltd (highest tax bracket). Uses New Tax Regime. FY 2025-26 slabs are widened: basic exemption ₹4L, surcharge 10% applies on income >₹50L. FD interest is taxable on accrual basis every year regardless of renewal/compounding.",
+    "tags": "[\"finance\", \"tax\", \"income\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.356592",
+    "updated_at": "2026-08-21 16:16:40.356595"
+  },
+  {
+    "id": "49003129-6db2-4218-a8e3-624534c6248c",
+    "scope": "global",
+    "content": "Note-taking & Knowledge Management: Trilium Notes (TriliumNext) is the primary tool — self-hosted SQLite DB, hierarchical tree structure, WYSIWYG rich-text editor, web clipping, JS scripting. Resume stored at Trilium note root/wBT1Q7CGM61g (with work experience under n4JVfaJ1krX1). Also uses Obsidian vault with folders: Finance, LLM, Parenting, Job, Learning, Health, Travel, People, Inventory, Vocabulary, Decisions, Excalidraw, Software, Misc.",
+    "tags": "[\"note-taking\", \"obsidian\", \"trilium\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.357513",
+    "updated_at": "2026-08-21 16:16:40.357516"
+  },
+  {
+    "id": "59f3de41-fb57-4658-b053-b7a0a0a161c9",
+    "scope": "global",
+    "content": "Content Creation Preferences: (1) Infographics — prefer HTML/CSS + Playwright rendering over PIL/Pillow for pixel-perfect layouts. (2) Social media assets directory: /home/swastik/social_media_assets/. (3) LinkedIn content tone — conversational, experience-driven, genuine; avoid AI-sounding \"hot take\" hooks like \"The dashboard doesn't solve the problem...\" or \"Companies don't fail because they lack data...\".",
+    "tags": "[\"content\", \"infographic\", \"linkedin\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.358497",
+    "updated_at": "2026-08-21 16:16:40.358501"
+  },
+  {
+    "id": "df66ffae-3c28-409b-b82e-bd22191e997a",
+    "scope": "global",
+    "content": "Infrastructure: Domain purchased from Namecheap.com, hosted website on Cloudflare Pages (connected via nameservers), email via Zoho Mail free tier for custom domain. Browser profile for Prateek's automation: /home/swastik/.brave-profiles/prateek (remote debugging port 9222). OpenMontage repo at /home/swastik/Downloads/repos/OpenMontage used for content generation tools; Playwright installed there.",
+    "tags": "[\"infrastructure\", \"domain\", \"cloudflare\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:16:40.359722",
+    "updated_at": "2026-08-21 16:16:40.359725"
+  },
+  {
+    "id": "a405e864-05e8-4737-a138-6b21e46fe89f",
+    "scope": "global",
+    "content": "\"Real user is Swastik Mishra; Prateek Gupta is a virtual test persona, not a real person\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.486864",
+    "updated_at": "2026-08-21 16:17:50.486869"
+  },
+  {
+    "id": "3cba3ba6-532d-4260-9828-5ad6c4e62c3d",
+    "scope": "global",
+    "content": "\"LinkedIn accounts are bifurcated: mcp-server-linkedin for Prateek/test, linkedin-mcp-2 for Swastik/real, with tool routing limitations\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.487381",
+    "updated_at": "2026-08-21 16:17:50.487383"
+  },
+  {
+    "id": "d67b7284-29aa-4970-8d52-2f7f452705ce",
+    "scope": "global",
+    "content": "\"Verit Analytics is the user's company with a domain, LinkedIn page, and product modules\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.487624",
+    "updated_at": "2026-08-21 16:17:50.487627"
+  },
+  {
+    "id": "68f80e6d-ce43-4b1a-a297-4d2f3d58018d",
+    "scope": "global",
+    "content": "\"Investment portfolio valued at ₹1.8–2.08 Cr with a 60/30/10 asset allocation target including holdings and FD banks\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.487841",
+    "updated_at": "2026-08-21 16:17:50.487843"
+  },
+  {
+    "id": "77c52c63-b162-4927-87a7-479a159b6f73",
+    "scope": "global",
+    "content": "\"Income is ₹45L salary under New Tax Regime with FY25-26 slabs and accrual FD taxation rules\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.488054",
+    "updated_at": "2026-08-21 16:17:50.488056"
+  },
+  {
+    "id": "9b77ec1b-04e2-45a9-ba08-47d048426ae9",
+    "scope": "global",
+    "content": "\"Note-taking uses Trilium as primary tool plus an Obsidian vault structure with resume note IDs\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.488255",
+    "updated_at": "2026-08-21 16:17:50.488257"
+  },
+  {
+    "id": "72184f2b-51c3-4728-b11d-02bb9eea694e",
+    "scope": "global",
+    "content": "\"Content preferences favor HTML/Playwright infographics, assets directory, and specific LinkedIn tone rules",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-21 16:17:50.488461",
+    "updated_at": "2026-08-21 16:17:50.488463"
+  },
+  {
+    "id": "58174b24-dc84-4836-a38e-b490808549e6",
+    "scope": "global",
+    "content": "Buffer API social media automation context: Valid key is VERIT_BUFFER_API_KEY (Prateek owns the Buffer account as Verit marketing team). BUFFER_API_KEY and ACCESS_TOKEN are stale (return 401) — the buffer_client.py never reads ACCESS_TOKEN. Direct CLI runs need env file sourced first; cron wrappers handle this automatically. Bare shells get 401 errors.",
+    "tags": "[\"buffer\", \"social-media\", \"automation\", \"api-keys\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-22 15:20:29.389057",
+    "updated_at": "2026-08-22 15:20:29.389062"
+  },
+  {
+    "id": "a1ea9684-3e24-4441-bb5d-50f0fa215982",
+    "scope": "global",
+    "content": "Chatterbox voice cloning: venv at ~/Downloads/repos/ank/ank-content/.venv-chatterbox (tts 0.1.7, cu128, RTX 5050 works). ChatterboxTTS.from_pretrained(device).generate(text, audio_prompt_path=ref.wav) → 24kHz wav; ref = first ~10s; ffmpeg-convert m4a → 24k mono wav first (librosa can't read m4a). Demo files in ~/Downloads/chatter-voice/.",
+    "tags": "[\"chatterbox\", \"tts\", \"voice-cloning\", \"tts\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-22 15:20:29.397403",
+    "updated_at": "2026-08-22 15:20:29.397407"
+  },
+  {
+    "id": "a88cc44b-153b-497e-b2a4-cf292b5643ca",
+    "scope": "global",
+    "content": "Design spec for marketing content (videos + infographics): dark slate bg #0b0f1a + teal accents #14b8a6/#2dd4bf, Space Grotesk display + Inter body, sharp 4px corners, brighter muted #b6c2d6/dim #8fa0b8 for readability. Matches all existing video content. Web/app UI separately uses DESIGN.md light tokens (DM Sans/navy-cyan) — do NOT apply those to video/infographic content. Verify CSS class names against tailwind.config.mjs + global.css before using in components.",
+    "tags": "[\"design\", \"marketing\", \"css\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-22 15:20:29.400079",
+    "updated_at": "2026-08-22 15:20:29.400082"
+  },
+  {
+    "id": "eaa32a91-b094-4ffb-8a34-286d4945864b",
+    "scope": "global",
+    "content": "Debugging/quality bar: User wants ROOT-CAUSE fixes not surface patches (rejected band-aids; wanted causing lines removed). Catches hardcoded CSS ignoring [data-theme]. \"Does not look refined\" = actionable critique. Verifies against the SERVED/compiled file in-browser, not source. Keep machine clean: delete throwaway test profiles/artifacts; restore config.yaml from backup after config-write tests (gateway doesn't hot-reload external edits — needs restart).",
+    "tags": "[\"workflow\", \"quality\", \"debugging\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-22 15:20:29.401532",
+    "updated_at": "2026-08-22 15:20:29.401535"
+  },
+  {
+    "id": "9f8cb6b5-96b6-4c86-b4c6-1d29aa81a1a7",
+    "scope": "global",
+    "content": "Project repo map: ~/Downloads/repos/ank = 3 SEPARATE git repos (ank-backend FastAPI on :8001, ank-frontend Astro on :4321, ank-content social/media). finapp is also a separate git repo. Workspace video projects have HyperFrames AGENTS.md. Full map and drafts in hermes-project-context-setup skill.",
+    "tags": "[\"projects\", \"repos\", \"infrastructure\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-22 15:45:41.698790",
+    "updated_at": "2026-08-22 15:45:41.698794"
+  },
+  {
+    "id": "896e8b2b-0914-4ffb-ab4d-686306622ea5",
+    "scope": "agent:1",
+    "content": "Verit Analytics LinkedIn posts created (2026-08-23): Seasonality Trap, ABC/XYZ Analysis, EOQ Misconception, Forecast Model Selection, WhatsApp Alerts",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 00:33:21.839336",
+    "updated_at": "2026-08-23 00:33:21.839340"
+  },
+  {
+    "id": "78d34aa4-b105-4176-8103-d0c9125fe95b",
+    "scope": "agent:1",
+    "content": "Verit Analytics content style: conversational, experience-driven, data-backed; avoid AI-sounding 'hot take' hooks like 'The dashboard doesn't solve...'",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 00:33:21.842375",
+    "updated_at": "2026-08-23 00:33:21.842378"
+  },
+  {
+    "id": "6cdf2eb2-b3b7-452d-a76f-a3d75522ee4c",
+    "scope": "agent:1",
+    "content": "5 new Verit Analytics LinkedIn posts drafted but not yet posted — topics: seasonal forecasting, ABC/XYZ classification, EOQ optimization, multi-model ensemble forecasting, WhatsApp inventory alerts",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 00:33:21.842617",
+    "updated_at": "2026-08-23 00:33:21.842619"
+  },
+  {
+    "id": "375f3f29-eb3a-4fe7-9e92-9fa3db8e1117",
+    "scope": "agent:1",
+    "content": "Verit Analytics target audience: SMBs and D2C brands in India; tone should use INR figures (₹) and Indian context (Diwali, etc.)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 00:33:21.842827",
+    "updated_at": "2026-08-23 00:33:21.842828"
+  },
+  {
+    "id": "d3094199-d731-4cc8-961c-2d4cd1fd645e",
+    "scope": "global",
+    "content": "Buffer LinkedIn scheduling for Verit Analytics: Channel ID = 6a4785775ab6d2f1069cf12e. All posts use \"--\" (double hyphen) instead of em-dash \"—\" to avoid Buffer rendering issues. Posts scheduled Mon-Fri at 10 AM IST (04:30 UTC):\n- Post 1 (Seasonality Trap): Scheduled 2026-08-24, ID 6a8a4ce1c5db1e9cdced9836\n- Post 2 (ABC/XYZ Analysis): Scheduled 2026-08-25, ID 6a8a4d19031ead5f4d41c54f\n- Post 3 (EOQ Misconception): Scheduled 2026-08-26, ID 6a8a4d6bbc455ba248e696a2\n- Post 4 (Model Selection): Scheduled 2026-08-27, ID 6a8a4da4deb4b57dfeadb559\n- Post 5 (WhatsApp Alerts): Scheduled 2026-08-28, ID 6a8a4dbedd02437c21a30e86",
+    "tags": "[\"buffer\", \"linkedin\", \"verit-analytics\", \"scheduling\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:02.358275",
+    "updated_at": "2026-08-23 01:33:02.358281"
+  },
+  {
+    "id": "dc6aff72-0ebd-4438-b49c-ab47d2b36703",
+    "scope": "agent:1",
+    "content": "Buffer LinkedIn channel ID for Verit Analytics: 6a4785775ab6d2f1069cf12e",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.289682",
+    "updated_at": "2026-08-23 01:33:30.289687"
+  },
+  {
+    "id": "7035957a-0ed7-4d97-b9db-ca8e97556410",
+    "scope": "agent:1",
+    "content": "Buffer API key stored in ~/.hermes/.env as VERIT_BUFFER_API_KEY",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.290550",
+    "updated_at": "2026-08-23 01:33:30.290553"
+  },
+  {
+    "id": "438b09c8-0782-494a-b21b-80ef2eccd940",
+    "scope": "agent:1",
+    "content": "buffer_client.py at /home/swastik/hermes_backup/social-media/buffer_client.py uses GraphQL at https://api.buffer.com",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.291049",
+    "updated_at": "2026-08-23 01:33:30.291052"
+  },
+  {
+    "id": "a90a04d7-d165-4626-8c3e-46eef50887fd",
+    "scope": "agent:1",
+    "content": "Buffer renders em-dash '—' as literal '\\u2014' — always use '--' (double hyphen) instead in post text",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.291409",
+    "updated_at": "2026-08-23 01:33:30.291412"
+  },
+  {
+    "id": "9de3872c-db35-4d8c-bf25-d53997b78f4d",
+    "scope": "agent:1",
+    "content": "Optimal LinkedIn posting time for Verit: Mon-Fri 10 AM IST (04:30 UTC)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.291743",
+    "updated_at": "2026-08-23 01:33:30.291745"
+  },
+  {
+    "id": "1a745037-0438-425e-93e6-7cf502e7c58c",
+    "scope": "agent:1",
+    "content": "5 posts scheduled Aug 24-28 2026: Seasonality Trap, ABC/XYZ Analysis, EOQ Misconception, Model Selection, WhatsApp Alerts",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.292059",
+    "updated_at": "2026-08-23 01:33:30.292061"
+  },
+  {
+    "id": "e9827498-a24f-4a4f-9782-7673a2e4cd65",
+    "scope": "agent:1",
+    "content": "Verit Analytics content tone: conversational, experience-driven, data-backed; avoid AI-sounding 'hot take' hooks",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 01:33:30.292374",
+    "updated_at": "2026-08-23 01:33:30.292377"
+  },
+  {
+    "id": "fad173b1-b927-431d-bfae-0ed2c3f5b84a",
+    "scope": "agent:1",
+    "content": "Verit Analytics LinkedIn infographics use HTML/CSS + Playwright rendering (not PIL) — 1200x1600 PNGs, saved to /home/swastik/social_media_assets/",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.120232",
+    "updated_at": "2026-08-23 02:40:39.120237"
+  },
+  {
+    "id": "8f35af4a-b2e0-400f-8533-141cacd2a09b",
+    "scope": "agent:1",
+    "content": "Buffer em-dash bug: Buffer API renders Unicode em-dash '—' as literal '\\u2014' — always use '--' (double hyphen) in post text",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.131594",
+    "updated_at": "2026-08-23 02:40:39.131598"
+  },
+  {
+    "id": "16dd5e86-dc5e-44af-8183-efcd7939f33a",
+    "scope": "agent:1",
+    "content": "Verit Analytics brand design: dark slate #0b0f1a bg, teal accents #14b8a6/#2dd4bf, Space Grotesk display + Inter body font, sharp 4px corners",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.132334",
+    "updated_at": "2026-08-23 02:40:39.132337"
+  },
+  {
+    "id": "0eb8f46d-848a-4e16-92f4-f0ebb39bf208",
+    "scope": "agent:1",
+    "content": "Buffer LinkedIn channel ID for Verit Analytics: 6a4785775ab6d2f1069cf12e (Prateek's Buffer account)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.132860",
+    "updated_at": "2026-08-23 02:40:39.132863"
+  },
+  {
+    "id": "41e0a2e3-bbab-4fdc-b6c3-9c6ffd144663",
+    "scope": "agent:1",
+    "content": "Verit Analytics content tone: conversational, experience-driven, genuine — avoid AI-sounding 'hot take' hooks",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.133290",
+    "updated_at": "2026-08-23 02:40:39.133292"
+  },
+  {
+    "id": "7539486c-2e97-4bde-a7d0-eb43d6860ad0",
+    "scope": "agent:1",
+    "content": "Buffer scheduling uses buffer_client.py with VERIT_BUFFER_API_KEY from ~/.hermes/.env, GraphQL API at https://api.buffer.com",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.133644",
+    "updated_at": "2026-08-23 02:40:39.133647"
+  },
+  {
+    "id": "4cf2967e-d8b9-43b4-9aaa-fd2a632d73f0",
+    "scope": "agent:1",
+    "content": "Playwright Chromium browsers installed in /home/swastik/Downloads/repos/searxng_search/.venv for rendering HTML infographics",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.134004",
+    "updated_at": "2026-08-23 02:40:39.134006"
+  },
+  {
+    "id": "235a7530-bc1f-4b72-bf49-3c94eaff70e1",
+    "scope": "agent:1",
+    "content": "Verit Analytics product: ML demand forecasting + inventory optimization for SMBs, modules include Forecast Mgmt, Supply Chain Ops, Insights & Dashboards, Alerts, WhatsApp notifications",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.134344",
+    "updated_at": "2026-08-23 02:40:39.134346"
+  },
+  {
+    "id": "88be3461-2280-4dc9-af15-de2bc52a3b8f",
+    "scope": "agent:1",
+    "content": "Buffer posts scheduled Mon-Fri at 10 AM IST (04:30 UTC) for optimal LinkedIn B2B engagement",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:40:39.134688",
+    "updated_at": "2026-08-23 02:40:39.134691"
+  },
+  {
+    "id": "4cd33b38-a1f1-4899-ae44-1ac43fcdb9eb",
+    "scope": "agent:1",
+    "content": "Buffer LinkedIn scheduling: Channel ID=6a4785775ab6d2f1069cf12e, use '--' not em-dash '—' to avoid Buffer rendering bug",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.237542",
+    "updated_at": "2026-08-23 02:50:14.237551"
+  },
+  {
+    "id": "49d3e9c8-5ccd-4c3a-8dcd-fb4e8be362be",
+    "scope": "agent:1",
+    "content": "Verit Analytics 5 text posts scheduled Mon-Fri Aug 24-28 at 10AM IST via Buffer (IDs: 6a8a4ce1... through 6a8a4dbe...)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.238658",
+    "updated_at": "2026-08-23 02:50:14.238661"
+  },
+  {
+    "id": "923672d7-9f22-49c0-94ca-5d97bb0f6d77",
+    "scope": "agent:1",
+    "content": "3 Verit Analytics infographics rendered at 1200x1400px in /home/swastik/social_media_assets/ using HTML/CSS + Playwright",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.239117",
+    "updated_at": "2026-08-23 02:50:14.239119"
+  },
+  {
+    "id": "4b0fa3b4-30a2-49ba-91dc-616356a2cae9",
+    "scope": "agent:1",
+    "content": "Infographic brand spec: dark slate #0b0f1a bg, teal accents #14b8a6/#2dd4bf, Space Grotesk display + Inter body, 4px corners",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.239508",
+    "updated_at": "2026-08-23 02:50:14.239511"
+  },
+  {
+    "id": "eec1d8e4-fbf9-45dc-af25-717620ae6deb",
+    "scope": "agent:1",
+    "content": "If infographic has gap between content and footer, reduce body height from 1600 to 1400px and use padding: 50px 70px 30px 70px",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.239885",
+    "updated_at": "2026-08-23 02:50:14.239888"
+  },
+  {
+    "id": "ec89ad3d-c884-4d19-9915-b25522984f36",
+    "scope": "agent:1",
+    "content": "Buffer API key stored in ~/.hermes/.env as VERIT_BUFFER_API_KEY; client at /home/swastik/hermes_backup/social-media/buffer_client.py",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 02:50:14.240252",
+    "updated_at": "2026-08-23 02:50:14.240254"
+  },
+  {
+    "id": "e3b77b19-0929-4cf4-8a4e-3eae45d6d31f",
+    "scope": "agent:1",
+    "content": "Buffer API renders em-dash '—' as literal '\\u2014' — always use '--' (double hyphen) in post text",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.122074",
+    "updated_at": "2026-08-23 03:04:06.122079"
+  },
+  {
+    "id": "ac44450f-2db6-4ee0-9c49-98870c355b75",
+    "scope": "agent:1",
+    "content": "Verit Analytics LinkedIn Buffer channel ID: 6a4785775ab6d2f1069cf12e",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.125397",
+    "updated_at": "2026-08-23 03:04:06.125400"
+  },
+  {
+    "id": "2a738f5c-31e1-4e1c-9567-0747a9d64ef8",
+    "scope": "agent:1",
+    "content": "Buffer scheduled posts: Post1=6a8a4ce1(Mon), Post2=6a8a4d19(Tue), Post3=6a8a4d6b(Wed), Post4=6a8a4da4(Thu), Post5=6a8a4dbe(Fri) — all 2026-08-24 to 28 at 04:30 UTC",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.125874",
+    "updated_at": "2026-08-23 03:04:06.125876"
+  },
+  {
+    "id": "d359b6d5-9992-4f4c-a6ec-877444c9fc58",
+    "scope": "agent:1",
+    "content": "Infographic CSS bug: body{display:flex;flex-direction:column}+footer{margin-top:auto} pushes footer to container bottom creating huge gap. Fix: remove flex, use fixed margin-top:30px on footer",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.126260",
+    "updated_at": "2026-08-23 03:04:06.126262"
+  },
+  {
+    "id": "60b4e20a-b33c-4d50-ae6f-80dae92c4a73",
+    "scope": "agent:1",
+    "content": "Verit infographic design spec: dark slate #0b0f1a bg, teal accents #14b8a6/#2dd4bf, Space Grotesk display + Inter body, sharp 4px corners, render at 1200x1600px via Playwright",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.126631",
+    "updated_at": "2026-08-23 03:04:06.126633"
+  },
+  {
+    "id": "66ca8875-0f33-4961-bfb7-6432ae82932e",
+    "scope": "agent:1",
+    "content": "Buffer scheduling uses buffer_client.py with VERIT_BUFFER_API_KEY from ~/.hermes/.env — must source env first or get 401 errors",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.126989",
+    "updated_at": "2026-08-23 03:04:06.126992"
+  },
+  {
+    "id": "48fa35d7-462b-4182-97d3-8bbdc04aa86e",
+    "scope": "agent:1",
+    "content": "Verit Analytics infographics saved to /home/swastik/social_media_assets/ — verit_abc_xyz_matrix.png, verit_analytics_maturity_curve.png, verit_safety_stock_formula.png",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 03:04:06.127346",
+    "updated_at": "2026-08-23 03:04:06.127348"
+  },
+  {
+    "id": "453e81ad-f6cd-4a3d-b1f3-b715d459aa79",
+    "scope": "global",
+    "content": "Buffer API scheduling for Verit Analytics: Channel ID = 6a4785775ab6d2f1069cf12e (linkedin). API key is VERIT_BUFFER_API_KEY stored in ~/.hermes/.env. Must source env first or get 401 errors. Buffer renders em-dash \"—\" as literal \"\\u2014\" — always use \"--\" (double hyphen) instead in post text.",
+    "tags": "[\"buffer\", \"verit-analytics\", \"linkedin\", \"api-keys\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 04:39:05.505950",
+    "updated_at": "2026-08-23 04:39:05.505955"
+  },
+  {
+    "id": "39128f92-6558-4c8d-8d8e-57472c09bab0",
+    "scope": "global",
+    "content": "Infographic rendering workflow that works: Render HTML at full 1600px height (correct font/spacing), measure actual content height via page.evaluate('document.body.scrollHeight'), resize viewport to match, then screenshot. Never use fixed-height body with flex+margin-top:auto — it forces footer to bottom creating huge gaps. Use margin-top: 45px on footer for proper spacing. Playwright available in /home/swastik/Downloads/repos/searxng_search/.venv/bin/python3. ImageMagick convert available at /usr/bin/convert.",
+    "tags": "[\"infographic\", \"playwright\", \"rendering\", \"workflows\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 04:39:05.513373",
+    "updated_at": "2026-08-23 04:39:05.513380"
+  },
+  {
+    "id": "e663ec96-1653-48a9-b831-2320966ce29e",
+    "scope": "global",
+    "content": "llm_ui skill management: update_skill and delete_skill tools were added to backend in Aug 2026. skills_tool.py has UPDATE_SKILL_DEFINITION and DELETE_SKILL_DEFINITION in SKILL_TOOL_DEFINITIONS list. tool_executor.py imports delete_skill and has handlers for both. Backend needs restart after changes since tools load at import time. write_skill() handles create OR overwrite (same function). update preserves helper files (scripts/, assets/), delete+create gives clean slate.",
+    "tags": "[\"llm-ui\", \"skills\", \"backend\", \"tools\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 04:39:05.516350",
+    "updated_at": "2026-08-23 04:39:05.516353"
+  },
+  {
+    "id": "7f5a6d2c-d8b4-4f3c-9e62-061036b9a93f",
+    "scope": "global",
+    "content": "Verit Analytics LinkedIn content style: conversational, experience-driven, genuine tone. Avoid AI-sounding \"hot take\" hooks like \"The dashboard doesn't solve the problem...\" or \"Companies don't fail because they lack data...\". Use specific numbers, real scenarios, actual observations. Structure: hook with observation/number → context → insight → actionable tip → natural brand mention → question/CTA. Target audience: SMBs/D2C in India. Topics: supply chain, inventory optimization, demand forecasting, analytics maturity.",
+    "tags": "[\"content\", \"linkedin\", \"verit-analytics\", \"tone\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 04:39:05.519478",
+    "updated_at": "2026-08-23 04:39:05.519481"
+  },
+  {
+    "id": "e195f315-42c9-417b-adbc-5a9307417a7d",
+    "scope": "global",
+    "content": "Infographic design specs for llm_ui marketing content: dark slate bg #0b0f1a + teal accents #14b8a6/#2dd4bf, Space Grotesk display + Inter body fonts, sharp 4px corners. Rendered via HTML/CSS + Playwright (not PIL/Pillow). Assets go to /home/swastik/social_media_assets/. LinkedIn posts should be text-only with image attachments, not embedded in post text.",
+    "tags": "[\"design\", \"infographic\", \"verit-analytics\", \"brand\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 04:39:05.522075",
+    "updated_at": "2026-08-23 04:39:05.522078"
+  },
+  {
+    "id": "09187f31-c526-4844-b522-1c77d7ca54e6",
+    "scope": "agent:1",
+    "content": "\"User switched from Hermes to llm_ui for all video generation workflows\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.157844",
+    "updated_at": "2026-08-23 06:31:50.157859"
+  },
+  {
+    "id": "14d517b6-cfa4-47ce-8259-b77cb9fbc66d",
+    "scope": "agent:1",
+    "content": "\"Verit Analytics is an ML supply-chain and demand-forecasting SaaS for small businesses\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.158905",
+    "updated_at": "2026-08-23 06:31:50.158907"
+  },
+  {
+    "id": "0498878b-0a87-4c46-a438-1c578d7fa170",
+    "scope": "agent:1",
+    "content": "\"Upgraded Verit skill installed at /home/swastik/Downloads/repos/llm_ui/skills/verit-explainer-video-upgraded/\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.159273",
+    "updated_at": "2026-08-23 06:31:50.159275"
+  },
+  {
+    "id": "177f53e5-7838-415e-89ef-2661dd5c4d0d",
+    "scope": "agent:1",
+    "content": "\"Video kit lives at /home/swastik/Downloads/repos/ank/ank-content/verit-video-kit/\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.159618",
+    "updated_at": "2026-08-23 06:31:50.159620"
+  },
+  {
+    "id": "9ac7be4f-5adb-43e7-9b65-0bcc8ecdb525",
+    "scope": "agent:1",
+    "content": "\"Chatterbox TTS venv is at /home/swastik/Downloads/repos/ank/ank-content/.venv-chatterbox/bin/python\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.159939",
+    "updated_at": "2026-08-23 06:31:50.159941"
+  },
+  {
+    "id": "1b370a78-1bd8-418d-905a-306096f7c1ad",
+    "scope": "agent:1",
+    "content": "\"Reference working example bullwhip explainer is at ~/workspace/bullwhip-explainer/\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.160284",
+    "updated_at": "2026-08-23 06:31:50.160286"
+  },
+  {
+    "id": "d2e0b764-586a-4ae4-ab76-b8cf0fae5fcd",
+    "scope": "agent:1",
+    "content": "\"User creates educational videos about supply chain concepts and SaaS product demos for YouTube\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.160591",
+    "updated_at": "2026-08-23 06:31:50.160593"
+  },
+  {
+    "id": "b869b349-0984-4c8b-8e50-956bfd9909eb",
+    "scope": "agent:1",
+    "content": "\"User decided NOT to install Blender — all effects use HyperFrames CSS 3D transforms + GSAP instead\",",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.160904",
+    "updated_at": "2026-08-23 06:31:50.160906"
+  },
+  {
+    "id": "802430b9-f229-4c08-a9a7-9668a2fb0183",
+    "scope": "agent:1",
+    "content": "\"Four new snippets added",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 06:31:50.161257",
+    "updated_at": "2026-08-23 06:31:50.161259"
+  },
+  {
+    "id": "75c6ae8a-4e16-4d71-826a-7f4eedf4778d",
+    "scope": "global",
+    "content": "HyperFrames (0.7.37) audio mixing FAILS on this machine (CachyOS ffmpeg 2:9.0.1-1) because modern ffmpeg removed the `-filter_complex_script` option that HyperFrames' audio stage requires -> \"FFmpeg exited with code 8\" -> video-only output. FIX: a wrapper at /home/swastik/tools/ffmpeg-wrap rewrites `-filter_complex_script <file>` into inline `-filter_complex \"<graph>\"` and delegates to /usr/bin/ffmpeg. Render with: HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap npx --yes hyperframes@0.7.37 render ...  (verified: produces valid AAC audio track).",
+    "tags": "[\"hyperframes\", \"ffmpeg\", \"audio\", \"render\", \"cachyos\", \"fix\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 12:29:01.910517",
+    "updated_at": "2026-08-23 12:29:01.910529"
+  },
+  {
+    "id": "2ded0bab-2e63-4579-b71e-d694b547156b",
+    "scope": "agent:1",
+    "content": "User wants new supply chain educational videos for Verit Analytics YouTube, better than old ones in ank-content",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.539844",
+    "updated_at": "2026-08-23 14:02:10.539860"
+  },
+  {
+    "id": "34aaaeee-bc0a-4135-a1f5-61bbce5037ad",
+    "scope": "agent:1",
+    "content": "Verit video skill upgraded with 3D effects: screenshot-reveal, parallax-text, zoom-pan, floating-badge snippets",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.541012",
+    "updated_at": "2026-08-23 14:02:10.541014"
+  },
+  {
+    "id": "59590982-36d6-4f01-b519-86d24c5867b8",
+    "scope": "agent:1",
+    "content": "Old Verit videos cover bullwhip, safety stock, EOQ, ABC classification, inventory turnover, forecasting steps",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.541548",
+    "updated_at": "2026-08-23 14:02:10.541551"
+  },
+  {
+    "id": "cffdb716-42ec-4e0c-a3e5-0699eef58a7e",
+    "scope": "agent:1",
+    "content": "Reference working example for Verit explainer pipeline lives at ~/workspace/bullwhip-explainer",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.541945",
+    "updated_at": "2026-08-23 14:02:10.541947"
+  },
+  {
+    "id": "511ec573-d62e-4776-821f-13d084ea0889",
+    "scope": "agent:1",
+    "content": "Chatterbox TTS venv is at ank-content/.venv-chatterbox, not ~/workspace/tts-env",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.542385",
+    "updated_at": "2026-08-23 14:02:10.542387"
+  },
+  {
+    "id": "9d60f46e-c413-4c97-9356-d833c3239e2e",
+    "scope": "agent:1",
+    "content": "Hyperframes CLI version 0.7.37 used for lint and render with fps 30 quality high",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.542732",
+    "updated_at": "2026-08-23 14:02:10.542734"
+  },
+  {
+    "id": "613b4cd3-ffaa-4980-8dff-553ea34ed9ed",
+    "scope": "agent:1",
+    "content": "Track-index convention: 0 voice, 1 bgm, 2-5 background, 10+ scene content in compositions",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 14:02:10.543103",
+    "updated_at": "2026-08-23 14:02:10.543104"
+  },
+  {
+    "id": "e440f9df-b1f1-4af0-8ff1-e33d8aa4940b",
+    "scope": "global",
+    "content": "Verit video skill updated (2026-08-23): added snippets/light-sweep.html (brand-native scene transition replacing registry shader demos), snippets/micro-effects.html (count-up innerText + random stagger grid pop-in + highlight pulse), rewrote snippets/screenshot-reveal.html. USER-LOCKED RULE: NO shadows on/around screenshots ever — no box-shadow blur rings, no glow blobs near cards, no vignette behind cards; use solid 1px teal border + flat #0e1524 backdrop patch to cancel the radial-gradient corner darkening. Also: HyperFrames `--cwd` flag doesn't relocate render output reliably — always cd into project dir; verify rendered MP4 has AAC stream via ffprobe (renders without HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap are video-only).",
+    "tags": "[\"verit\", \"skill-update\", \"hyperframes\", \"user-preference\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:02:23.233406",
+    "updated_at": "2026-08-23 15:02:23.233423"
+  },
+  {
+    "id": "e2750ebd-fc05-4f48-9ea5-fb0da0203ae3",
+    "scope": "agent:1",
+    "content": "HyperFrames renders must set HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap or audio is silently dropped",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.780817",
+    "updated_at": "2026-08-23 15:03:46.780825"
+  },
+  {
+    "id": "9ec28da3-81f5-4c99-a946-244184928834",
+    "scope": "agent:1",
+    "content": "Verit skill now includes light-sweep and micro-effects snippets for transitions and count-up animations",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.786192",
+    "updated_at": "2026-08-23 15:03:46.786195"
+  },
+  {
+    "id": "d57ac4fc-20fe-4775-9322-83fc561b5428",
+    "scope": "agent:1",
+    "content": "Screenshot-reveal snippet bans all shadows and uses flat backdrop patch to cancel vignette corner darkening",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.787338",
+    "updated_at": "2026-08-23 15:03:46.787345"
+  },
+  {
+    "id": "73656f33-7fe5-4ae6-9d6c-be4add4f79c7",
+    "scope": "agent:1",
+    "content": "Registry shader transition compositions clash with Verit branding and must not be embedded mid-video",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.788427",
+    "updated_at": "2026-08-23 15:03:46.788431"
+  },
+  {
+    "id": "08fe4db1-cf17-4ada-9e72-68398223c457",
+    "scope": "agent:1",
+    "content": "Clip elements need inner non-clip wrapper with opacity hard-kill to pass HyperFrames lint exit checks",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.789306",
+    "updated_at": "2026-08-23 15:03:46.789309"
+  },
+  {
+    "id": "dab0b339-ee55-4aa1-98ff-ba6f38be8cf1",
+    "scope": "agent:1",
+    "content": "Every HyperFrames clip element requires a unique track index or lint reports overlap errors",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:03:46.789919",
+    "updated_at": "2026-08-23 15:03:46.789922"
+  },
+  {
+    "id": "0fcb7ae1-a66d-4528-8ec2-c8823d2c3ea9",
+    "scope": "agent:1",
+    "content": "Verit product demo screenshots must not have dark borders, backdrop panels, or gradient scrims; user rejected the teal border and #0e1524 backdrop patch fix as ugly",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.432776",
+    "updated_at": "2026-08-23 15:23:42.432798"
+  },
+  {
+    "id": "976cdddb-0127-4e0e-bb06-2eacce7272f4",
+    "scope": "agent:1",
+    "content": "Dark top/bottom edges on Verit demo screenshots were caused by internal linear-gradient scrim overlay divs inside each screenshot card, not box-shadows",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.436776",
+    "updated_at": "2026-08-23 15:23:42.436779"
+  },
+  {
+    "id": "fc3dcc93-d32d-4632-b49d-545ad432d7e6",
+    "scope": "agent:1",
+    "content": "Verit product demo project lives at /home/swastik/workspace/verit-product-demo with renders output in its renders/ subdirectory",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.437462",
+    "updated_at": "2026-08-23 15:23:42.437465"
+  },
+  {
+    "id": "e8c7ecec-c05b-4cd5-8988-d0a1340a1404",
+    "scope": "agent:1",
+    "content": "HyperFrames renders use command npx hyperframes@0.7.37 render --fps 30 --quality high with HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.438395",
+    "updated_at": "2026-08-23 15:23:42.438400"
+  },
+  {
+    "id": "0dea019d-db4b-46ca-9785-2d20b9330ff9",
+    "scope": "agent:1",
+    "content": "Deadstock explainer video was finalized after fixing coin alignment to box center x=635px and shortening fall tween to y=230 to clear the caption",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.439578",
+    "updated_at": "2026-08-23 15:23:42.439581"
+  },
+  {
+    "id": "9a5080aa-2bff-4d0d-9bae-aa4cb09655c8",
+    "scope": "agent:1",
+    "content": "User prefers reverting visual patches by hand when a project has no git repo rather than keeping experimental styling",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:23:42.440454",
+    "updated_at": "2026-08-23 15:23:42.440457"
+  },
+  {
+    "id": "0e512673-3884-4d9e-8af1-9bda7e6b1b8e",
+    "scope": "agent:1",
+    "content": "Verit product demo screenshot scenes place scene titles above the card with a teal accent bar and captions as solid dark chips at the bottom-left of screenshots",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.591898",
+    "updated_at": "2026-08-23 15:34:03.591917"
+  },
+  {
+    "id": "dd63e6c8-49bb-45c4-b08d-bf79e504e870",
+    "scope": "agent:1",
+    "content": "User rejected translucent teal caption chips mid-screenshot because they were barely visible and wanted titles separated from captions",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.595296",
+    "updated_at": "2026-08-23 15:34:03.595300"
+  },
+  {
+    "id": "07656589-2fb6-4337-9b06-22cdc06249af",
+    "scope": "agent:1",
+    "content": "User dislikes dark borders or backdrop panels around screenshots in HyperFrames renders and prefers clean unbordered cards",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.595869",
+    "updated_at": "2026-08-23 15:34:03.595873"
+  },
+  {
+    "id": "025190be-04ea-4742-9648-ee6393774a8c",
+    "scope": "agent:1",
+    "content": "Verit product demo renders output to /home/swastik/workspace/verit-product-demo/renders/ with timestamped MP4 filenames",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.596357",
+    "updated_at": "2026-08-23 15:34:03.596360"
+  },
+  {
+    "id": "dc8c5348-4c91-4aae-9f46-46d5f6bfac97",
+    "scope": "agent:1",
+    "content": "HyperFrames render command for verit-product-demo uses npx hyperframes@0.7.37 render --fps 30 --quality high with HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.596831",
+    "updated_at": "2026-08-23 15:34:03.596834"
+  },
+  {
+    "id": "50b01fe0-92fb-4122-a483-e64e1e0cc4cc",
+    "scope": "agent:1",
+    "content": "verit-product-demo is not a git repository so edits must be verified with grep before and after patching",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.597297",
+    "updated_at": "2026-08-23 15:34:03.597300"
+  },
+  {
+    "id": "a9d769d4-5f39-45db-bb69-d9a4d7423bf5",
+    "scope": "agent:1",
+    "content": "Deadstock video YouTube title chosen direction: What Is Deadstock? The Hidden Profit Killer in Your Inventory",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.597753",
+    "updated_at": "2026-08-23 15:34:03.597756"
+  },
+  {
+    "id": "c9fe0495-8d28-42a7-84cd-25c2095582e2",
+    "scope": "agent:1",
+    "content": "Deadstock explainer YouTube tags cover deadstock, excess inventory, demand forecasting, ABC XYZ analysis, safety stock",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.598218",
+    "updated_at": "2026-08-23 15:34:03.598221"
+  },
+  {
+    "id": "7cd701f1-58c6-4f5a-9e61-38845e523336",
+    "scope": "agent:1",
+    "content": "User creates YouTube metadata (title, description, tags) alongside finished videos for Verit Analytics channel",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:34:03.598723",
+    "updated_at": "2026-08-23 15:34:03.598728"
+  },
+  {
+    "id": "62fd5695-9d7b-4f80-ba95-e57f4e19a606",
+    "scope": "agent:1",
+    "content": "Verit product demo video is 60 seconds with scenes at 0:00 hook, 0:10 solution, 0:16 cockpit, 0:26 upload, 0:34 forecast, 0:43 intelligence, 0:55 CTA",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.544306",
+    "updated_at": "2026-08-23 15:38:34.544315"
+  },
+  {
+    "id": "a9425687-6c02-4cfe-baf0-ca18151ee616",
+    "scope": "agent:1",
+    "content": "Verit demo video YouTube metadata was created with title options, timestamped description, and mixed intent tags",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.546034",
+    "updated_at": "2026-08-23 15:38:34.546037"
+  },
+  {
+    "id": "1bbfca33-2ca2-401d-a7fd-3120ce2d29f3",
+    "scope": "agent:1",
+    "content": "Verit demo video captions use solid dark chips at bottom-left of screenshots for readability over UI",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.546572",
+    "updated_at": "2026-08-23 15:38:34.546575"
+  },
+  {
+    "id": "12e70ded-6d9a-4a69-b7b5-74051632c7a8",
+    "scope": "agent:1",
+    "content": "Verit demo scene titles sit above screenshots left-aligned to card edge with teal accent bar styling",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.547054",
+    "updated_at": "2026-08-23 15:38:34.547056"
+  },
+  {
+    "id": "d577a426-8a3e-44c9-bca9-7d571bcbf8e9",
+    "scope": "agent:1",
+    "content": "Verit Analytics website placeholder URLs used in video description are veritanalytics.io/demo and veritanalytics.io/book-a-call",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.547522",
+    "updated_at": "2026-08-23 15:38:34.547524"
+  },
+  {
+    "id": "68a2dc59-5114-48be-85c3-fe8033443f95",
+    "scope": "agent:1",
+    "content": "User confirmed the Verit product demo video layout is completely fixed after caption and title repositioning",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:38:34.549379",
+    "updated_at": "2026-08-23 15:38:34.549387"
+  },
+  {
+    "id": "4e174c51-fc33-4331-9813-a605d4d2c857",
+    "scope": "global",
+    "content": "User feedback on Verit explainer videos: voiceover in last two videos was too fast — reduce narration speed slightly in future videos. Kokoro TTS is approved/available: installed in ank-content/.venv-chatterbox (works on CPU even when GPU busy; GPU may be full). Use KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M', device='cpu'), voice 'af_heart', speed=0.9 (~7% slower than default), output 24kHz via soundfile. Sample: ank-content/tts_samples/kokoro_af_heart_0.9.wav",
+    "tags": "[\"tts\", \"kokoro\", \"voiceover\", \"video-pipeline\", \"user-preference\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:30.523502",
+    "updated_at": "2026-08-23 15:47:30.523513"
+  },
+  {
+    "id": "b66821d3-c764-451d-8de3-d4cc8928df2e",
+    "scope": "agent:1",
+    "content": "User approved Kokoro TTS as a voice engine for Verit explainer videos, usable alongside Chatterbox",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.705888",
+    "updated_at": "2026-08-23 15:47:55.705892"
+  },
+  {
+    "id": "f5c6d726-40de-4d7f-90c6-80790ede26c6",
+    "scope": "agent:1",
+    "content": "Kokoro TTS is installed in ank-content/.venv-chatterbox and runs well on CPU when the GPU is busy",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.708874",
+    "updated_at": "2026-08-23 15:47:55.708880"
+  },
+  {
+    "id": "19624ea1-452d-4df4-ab8d-8b020b01c5f6",
+    "scope": "agent:1",
+    "content": "Use KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M', device='cpu') with voice 'af_heart' for narration",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.709351",
+    "updated_at": "2026-08-23 15:47:55.709353"
+  },
+  {
+    "id": "4f74e8e8-7ea7-44e2-9adb-b15738108b0c",
+    "scope": "agent:1",
+    "content": "Kokoro speed=0.9 slows narration about 7 percent and sounds natural, fixing user's too-fast voice feedback",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.709724",
+    "updated_at": "2026-08-23 15:47:55.709726"
+  },
+  {
+    "id": "770e95ee-c3de-467f-8643-6ca3d33c45d6",
+    "scope": "agent:1",
+    "content": "User found voiceover in the last two videos too fast and wants slower narration in future videos",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.710048",
+    "updated_at": "2026-08-23 15:47:55.710050"
+  },
+  {
+    "id": "a56a80eb-c6dc-4e80-b719-038cf006f786",
+    "scope": "agent:1",
+    "content": "Kokoro generates each sentence in 1-5 seconds on CPU, making it practical for full video narration",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.710388",
+    "updated_at": "2026-08-23 15:47:55.710390"
+  },
+  {
+    "id": "12f7b6f4-6237-4f00-923b-8f8b1ffe65ad",
+    "scope": "agent:1",
+    "content": "A sample file kokoro_af_heart_0.9.wav exists in ank-content/tts_samples for auditioning the slower pace",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:47:55.710768",
+    "updated_at": "2026-08-23 15:47:55.710770"
+  },
+  {
+    "id": "7490d43b-399f-4db4-b952-98b73bd6cb67",
+    "scope": "global",
+    "content": "Verit \"real world stories\" video series (scripts in ank-content/scripts/stories-*.txt): completed stories = Zara, Coca-Cola Africa (CCBA), BASF, P&G, Nokia, 7-Eleven + NEW (2026-08-23): stories-target.txt (Target Canada — 30% data accuracy, $7B exit, tool focus: Forecast Management/backtesting) and stories-kfc.txt (KFC UK 2018 chicken shortage — Bidvest 6 warehouses vs DHL 1 Rugby depot, ~75% closed, tool focus: Stockout Risk + Alerts). Format: [SCENE] blocks with layout/element/broll + narration after ---, ~530-600 narration words. Not yet rendered to output/ or added to videos.json. Future story candidates discussed: 2021 chip shortage (GM/Ford), Ever Given Suez, H&M 2018 excess inventory.",
+    "tags": "[\"verit-analytics\", \"stories\", \"video-pipeline\", \"content\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:52:48.371661",
+    "updated_at": "2026-08-23 15:52:48.371674"
+  },
+  {
+    "id": "5546b3c7-2953-40c6-9fe6-081d6e7a2914",
+    "scope": "agent:1",
+    "content": "Verit stories series scripts Target Canada and KFC UK 2018 added in scripts/stories-target.txt and scripts/stories-kfc.txt",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.775757",
+    "updated_at": "2026-08-23 15:53:56.775764"
+  },
+  {
+    "id": "be0c4ee2-7789-48c9-b3c3-da4a36bc9b39",
+    "scope": "agent:1",
+    "content": "Target Canada story uses ~30% data accuracy, $7B exit cost, and Forecast Management backtesting as its tool focus",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.777046",
+    "updated_at": "2026-08-23 15:53:56.777050"
+  },
+  {
+    "id": "9e0e5e0a-7cd2-49af-ae2b-82ca0fc5c442",
+    "scope": "agent:1",
+    "content": "KFC UK story uses Bidvest six warehouses vs DHL single Rugby depot and Stockout Risk Alerts as its tool focus",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.777608",
+    "updated_at": "2026-08-23 15:53:56.777611"
+  },
+  {
+    "id": "077f597b-b558-4fb0-be33-9f3e1cb9b4f5",
+    "scope": "agent:1",
+    "content": "Story scripts follow [SCENE] block format with narration after --- separators at roughly 530 to 600 words",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.778165",
+    "updated_at": "2026-08-23 15:53:56.778168"
+  },
+  {
+    "id": "784c8bc2-361a-44b9-9506-66888ec75390",
+    "scope": "agent:1",
+    "content": "Future Verit story candidates are the 2021 chip shortage, Ever Given Suez blockage, and H&M 2018 excess inventory",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.778639",
+    "updated_at": "2026-08-23 15:53:56.778642"
+  },
+  {
+    "id": "7f8a8b9f-15bd-488a-80d5-d96825c030d6",
+    "scope": "agent:1",
+    "content": "New story scripts are not yet rendered to output folders or added to videos.json",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.780491",
+    "updated_at": "2026-08-23 15:53:56.780494"
+  },
+  {
+    "id": "15647f57-f431-432f-88d2-5709e29aa221",
+    "scope": "agent:1",
+    "content": "Kokoro TTS runs on CPU with voice af_heart speed 0.9 for slower narration per user preference",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 15:53:56.781217",
+    "updated_at": "2026-08-23 15:53:56.781220"
+  },
+  {
+    "id": "03e18cfb-96ee-4a8b-96c3-69fe9eb960ee",
+    "scope": "agent:1",
+    "content": "User wants Verit story videos with better quality and longer duration than earlier ~90s stories, targeting around 2-4 minutes each",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.812638",
+    "updated_at": "2026-08-23 16:09:25.812661"
+  },
+  {
+    "id": "fe715ddd-a1db-48d1-9965-1392e0dad271",
+    "scope": "agent:1",
+    "content": "Verit story videos render at 1920x1080 30fps quality high using npx hyperframes@0.7.37",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.815423",
+    "updated_at": "2026-08-23 16:09:25.815428"
+  },
+  {
+    "id": "cb9576b6-1362-41de-97fe-5028c3232412",
+    "scope": "agent:1",
+    "content": "Kokoro TTS af_heart at speed 0.9 is the approved voice for Verit videos per user's slower narration preference",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.817237",
+    "updated_at": "2026-08-23 16:09:25.817242"
+  },
+  {
+    "id": "bce245b6-61e8-40fd-9608-42519e471849",
+    "scope": "agent:1",
+    "content": "Target Canada video project scaffolded in ~/workspace/stories-target with 125.7s of Kokoro narration across 7 scenes",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.818900",
+    "updated_at": "2026-08-23 16:09:25.818905"
+  },
+  {
+    "id": "f8ed94f2-5eed-4cc2-80ec-e500de9a1e06",
+    "scope": "agent:1",
+    "content": "KFC UK 2018 chicken shortage video project scaffolded in ~/workspace/stories-kfc with 123.4s of Kokoro narration across 7 scenes",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.820102",
+    "updated_at": "2026-08-23 16:09:25.820106"
+  },
+  {
+    "id": "0da05d34-8ed7-4ae2-867b-a4e8195a33c7",
+    "scope": "agent:1",
+    "content": "stories-target.txt covers Target Canada data accuracy failure and stories-kfc.txt covers KFC UK Bidvest to DHL depot switch crisis",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.820928",
+    "updated_at": "2026-08-23 16:09:25.820932"
+  },
+  {
+    "id": "3f7714f4-4078-4f88-bbd7-015e8575c33c",
+    "scope": "agent:1",
+    "content": "GSAP countUp helper using Math.round breaks decimal values like $2.1B so formatter must handle non-integer targets",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.821812",
+    "updated_at": "2026-08-23 16:09:25.821815"
+  },
+  {
+    "id": "55ee8c8d-b47c-4fb8-a1a9-92c4d8388d2f",
+    "scope": "agent:1",
+    "content": "HyperFrames compositions use audio tags with data-start and data-duration plus GSAP timelines registered on window.__timelines.main",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.822836",
+    "updated_at": "2026-08-23 16:09:25.822840"
+  },
+  {
+    "id": "a6a17a42-0dca-470a-86fd-85534e58b3bc",
+    "scope": "agent:1",
+    "content": "BGM generated via gen_bgm.py sized to total video length and mixed at volume 0.07 under voice track",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:09:25.823688",
+    "updated_at": "2026-08-23 16:09:25.823691"
+  },
+  {
+    "id": "6602fa3f-029d-4d32-a17a-887ef15dab01",
+    "scope": "agent:1",
+    "content": "Verit explainer videos are built in ~/workspace/<name> projects using hyperframes@0.7.37 with lint and render commands",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.642508",
+    "updated_at": "2026-08-23 16:27:57.642513"
+  },
+  {
+    "id": "24d55e3d-256b-4f45-9e3b-b6ed7bb2a71a",
+    "scope": "agent:1",
+    "content": "Hyperframes renders must use HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap or the MP4 will have no audio track",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.644131",
+    "updated_at": "2026-08-23 16:27:57.644136"
+  },
+  {
+    "id": "7948ebae-61b6-4f0e-9a2e-105611447b80",
+    "scope": "agent:1",
+    "content": "This machine's ffmpeg 9.x removed -filter_complex_script, breaking audio muxing in plain hyperframes renders",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.644872",
+    "updated_at": "2026-08-23 16:27:57.644874"
+  },
+  {
+    "id": "a684de00-0770-48c0-9544-b5825629cc8f",
+    "scope": "agent:1",
+    "content": "Verify rendered MP4s have an aac audio stream using ffprobe -show_entries stream=codec_type",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.645223",
+    "updated_at": "2026-08-23 16:27:57.645226"
+  },
+  {
+    "id": "4460c09a-a927-4008-b436-5885dfe50de4",
+    "scope": "agent:1",
+    "content": "Chatterbox TTS venv lives at /home/swastik/Downloads/repos/ank/ank-content/.venv-chatterbox/bin/python for voice and BGM generation",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.645568",
+    "updated_at": "2026-08-23 16:27:57.645570"
+  },
+  {
+    "id": "e22ca3e7-8804-49a1-87eb-2191ef7aa115",
+    "scope": "agent:1",
+    "content": "Verit video kit with templates and snippets is at /home/swastik/Downloads/repos/ank/ank-content/verit-video-kit/",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.645893",
+    "updated_at": "2026-08-23 16:27:57.645895"
+  },
+  {
+    "id": "ab37307b-ff28-4cd4-a6ad-e1f421ce0151",
+    "scope": "agent:1",
+    "content": "Two Verit story videos were created: Target Canada data failure (136s) and KFC UK 2018 chicken shortage (133s)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.646213",
+    "updated_at": "2026-08-23 16:27:57.646215"
+  },
+  {
+    "id": "b55a1505-ed97-4e83-b2bf-a71130cdccae",
+    "scope": "agent:1",
+    "content": "Target Canada video uses Kokoro af_heart voice at speed 0.9 while earlier videos used Chatterbox natural US voice",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.646544",
+    "updated_at": "2026-08-23 16:27:57.646545"
+  },
+  {
+    "id": "53531324-c7b2-460c-9983-2561394148ac",
+    "scope": "agent:1",
+    "content": "GSAP countUp helper must handle decimal targets like 2.1B or Math.round displays wrong values",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.646883",
+    "updated_at": "2026-08-23 16:27:57.646885"
+  },
+  {
+    "id": "ae3c71ca-a731-4990-b19c-b82b4c9753c7",
+    "scope": "agent:1",
+    "content": "Every hyperframes clip element needs a unique track index; duplicates are lint errors",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:27:57.647266",
+    "updated_at": "2026-08-23 16:27:57.647268"
+  },
+  {
+    "id": "70e69d4c-9aa2-4851-be12-c25b3177d142",
+    "scope": "agent:1",
+    "content": "Verit explainer videos live in ~/workspace/<name> projects and must render with HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap or audio is silently dropped",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.694963",
+    "updated_at": "2026-08-23 16:32:49.694996"
+  },
+  {
+    "id": "08dff634-b5de-49e4-805f-badb676a5e81",
+    "scope": "agent:1",
+    "content": "Completed Target Canada supply-chain story video (2m16s) at ~/workspace/stories-target/renders/stories-target_2026-08-23_22-00-05.mp4",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.698223",
+    "updated_at": "2026-08-23 16:32:49.698228"
+  },
+  {
+    "id": "535cc4af-1281-49f7-97a2-9c789214325f",
+    "scope": "agent:1",
+    "content": "Completed KFC UK chicken shortage story video (2m13s) at ~/workspace/stories-kfc/renders/stories-kfc_2026-08-23_22-01-22.mp4",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.699392",
+    "updated_at": "2026-08-23 16:32:49.699396"
+  },
+  {
+    "id": "cb94cc7d-da9c-4a19-85be-0f84001f6343",
+    "scope": "agent:1",
+    "content": "Fixed countUp GSAP helper to show one decimal for non-integer targets so $2.1B no longer rounds to $2B",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.700258",
+    "updated_at": "2026-08-23 16:32:49.700262"
+  },
+  {
+    "id": "53004de8-bbab-4ffd-a246-e7b15d501bc0",
+    "scope": "agent:1",
+    "content": "Verit brand story videos use Chatterbox natural-US voiceover WAVs per scene plus ambient BGM at volume 0.07",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.700978",
+    "updated_at": "2026-08-23 16:32:49.700981"
+  },
+  {
+    "id": "88b80b55-99ac-48e0-9232-c14a6d9d75c8",
+    "scope": "agent:1",
+    "content": "KFC video scenes cover DHL Rugby depot swap, M6 crash, ~700 closures, 97% recovery, and FCK apology ad",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.701762",
+    "updated_at": "2026-08-23 16:32:49.701766"
+  },
+  {
+    "id": "dc534fd2-f502-4850-a963-d3f8d634c459",
+    "scope": "agent:1",
+    "content": "Target video scenes cover Zellers conversion, weekend SAP migration, phantom inventory, and $7B write-down exit",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:32:49.702483",
+    "updated_at": "2026-08-23 16:32:49.702487"
+  },
+  {
+    "id": "87581771-d820-4881-a1d2-e0574c7e17c4",
+    "scope": "agent:1",
+    "content": "Hyperframes render quality tiers are draft, standard, and high, with high being the maximum available setting",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:43:03.687986",
+    "updated_at": "2026-08-23 16:43:03.687996"
+  },
+  {
+    "id": "54693f02-9606-4c0d-80c0-a8c25d2f3a83",
+    "scope": "agent:1",
+    "content": "All five Verit explainer videos are rendered at 1920x1080 30fps with h264 video and AAC audio",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:43:03.690458",
+    "updated_at": "2026-08-23 16:43:03.690462"
+  },
+  {
+    "id": "f3631fd3-87b6-40f7-ada1-7d4d80d5885f",
+    "scope": "agent:1",
+    "content": "The verit-product-demo, deadstock-explainer, and leadtime-explainer projects all pass lint with zero errors",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:43:03.691580",
+    "updated_at": "2026-08-23 16:43:03.691584"
+  },
+  {
+    "id": "36b95427-bf66-4f1a-9a48-41e1a04fd3fd",
+    "scope": "agent:1",
+    "content": "Older renders in verit-product-demo, deadstock-explainer, and leadtime-explainer already contain audio tracks and were unaffected by the silent-render bug",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:43:03.692894",
+    "updated_at": "2026-08-23 16:43:03.692899"
+  },
+  {
+    "id": "306d90c1-2c49-41d3-8ab9-412020c37e98",
+    "scope": "agent:1",
+    "content": "User requested full-quality re-renders of five videos but existing renders were already at maximum quality so duplicates were avoided",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 16:43:03.694192",
+    "updated_at": "2026-08-23 16:43:03.694196"
+  },
+  {
+    "id": "27d53de0-132d-45f6-ad6f-6279c7797ba4",
+    "scope": "agent:1",
+    "content": "Verit Analytics story videos end with a lesson card, Verit CTA (veritanalytics.com), and source citations that YouTube descriptions should mirror",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 17:15:04.126175",
+    "updated_at": "2026-08-23 17:15:04.126182"
+  },
+  {
+    "id": "a2725d1b-a4db-4edb-8bfe-2573e06cb7b3",
+    "scope": "agent:1",
+    "content": "Target Canada video's chosen title is 'How Bad Data Killed Target Canada in 24 Months' with description citing Target Corp. filings and CBC News",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 17:15:04.131238",
+    "updated_at": "2026-08-23 17:15:04.131243"
+  },
+  {
+    "id": "23513e59-b054-4e2f-9d75-d505eb1b0c29",
+    "scope": "agent:1",
+    "content": "KFC UK video's chosen title is 'How One Warehouse Took Down 900 KFCs' with description citing BBC and Reuters 2018 coverage",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 17:15:04.133030",
+    "updated_at": "2026-08-23 17:15:04.133037"
+  },
+  {
+    "id": "37075c61-bb16-48c2-8523-469d43b26a2b",
+    "scope": "agent:1",
+    "content": "Video scene copy lives in each project's index.html under ~/workspace/<project>/, which can be parsed to extract narration hooks for titles and descriptions",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 17:15:04.134174",
+    "updated_at": "2026-08-23 17:15:04.134178"
+  },
+  {
+    "id": "6693a9cc-c817-4b23-a57b-df01a1e27d6b",
+    "scope": "agent:1",
+    "content": "hyperframes render quality tiers are draft, standard, and high, where high is the maximum at 1080p30 h264 plus AAC audio",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-23 17:15:04.135027",
+    "updated_at": "2026-08-23 17:15:04.135032"
+  },
+  {
+    "id": "bbcd597f-5cf7-44b0-9446-acd8b35810f1",
+    "scope": "global",
+    "content": "User is preparing for leadership roles (Director/Sr Manager Supply Chain Analytics, Head of Demand Planning & Digital Excellence, Head of SC COE). Has 16 yrs supply chain + deep technical (Python/ML/AI agents) background, currently Manager at Stryker. Read \"Laws of Human Nature\" and \"Influence\" and is consciously working on people-leadership skill gaps: doer→enabler shift, influencing without authority, executive communication, EQ, delegation. Resume source notes live in Trilium under #root/wBT1Q7CGM61g with tags #dt/#sc/#ds/#da for filtering bullets by target role.",
+    "tags": "[\"career-development\", \"leadership\", \"resume\", \"supply-chain\"]",
+    "source": "manual",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:33:31.703984",
+    "updated_at": "2026-08-28 03:33:31.703990"
+  },
+  {
+    "id": "7c88a49b-2cad-453b-8668-14e571c8527d",
+    "scope": "agent:1",
+    "content": "User read 'Laws of Human Nature' and 'Influence' to identify personal leadership skill gaps",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.454690",
+    "updated_at": "2026-08-28 03:34:03.454695"
+  },
+  {
+    "id": "66f3562a-964f-40c0-9c56-3d5e39c4fc7d",
+    "scope": "agent:1",
+    "content": "User wants to develop leadership skills beyond resume updates to earn Director-level opportunities",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.455809",
+    "updated_at": "2026-08-28 03:34:03.455813"
+  },
+  {
+    "id": "f075e7ae-b214-4fc9-9d7d-01104715f57f",
+    "scope": "agent:1",
+    "content": "User's resume bullets are stored in Trilium note #root/wBT1Q7CGM61g tagged #dt, #sc, #ds, #da by role relevance",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.456348",
+    "updated_at": "2026-08-28 03:34:03.456350"
+  },
+  {
+    "id": "85f47c09-b238-4389-8175-b613059a4dc4",
+    "scope": "agent:1",
+    "content": "User targets Director/Sr Manager Supply Chain Analytics and Head of Demand Planning leadership roles",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.456695",
+    "updated_at": "2026-08-28 03:34:03.456697"
+  },
+  {
+    "id": "d20f79cc-be79-4da2-b1ae-dcb1c94befa8",
+    "scope": "agent:1",
+    "content": "User has 16 years supply chain experience with deep Python, ML, and AI agent technical skills",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.457022",
+    "updated_at": "2026-08-28 03:34:03.457024"
+  },
+  {
+    "id": "96cb2bef-d10c-45bd-a866-6ecabbcd1d9e",
+    "scope": "agent:1",
+    "content": "User is currently a Manager at Stryker leading APAC demand planning for a $1.6B business",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.457356",
+    "updated_at": "2026-08-28 03:34:03.457358"
+  },
+  {
+    "id": "521c96f8-9f58-4ded-bcea-69357542d71f",
+    "scope": "agent:1",
+    "content": "Assistant advised user to shift from doer to enabler and delegate more to develop leadership presence",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.457676",
+    "updated_at": "2026-08-28 03:34:03.457678"
+  },
+  {
+    "id": "442978ea-7e71-4c16-9028-5f2e40642b08",
+    "scope": "agent:1",
+    "content": "Assistant recommended user practice influencing without authority via stakeholder mapping and pre-alignment",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.457992",
+    "updated_at": "2026-08-28 03:34:03.457994"
+  },
+  {
+    "id": "db937864-18db-4cd7-9806-46d130b2c543",
+    "scope": "agent:1",
+    "content": "Assistant advised user to build executive communication skills using BLG and So What-first structures",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.458324",
+    "updated_at": "2026-08-28 03:34:03.458326"
+  },
+  {
+    "id": "3e5d4d29-3bda-4f46-94c7-3aea525e5913",
+    "scope": "agent:1",
+    "content": "Assistant recommended user develop EQ through feedback, journaling, and Goleman's six leadership styles",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:34:03.458637",
+    "updated_at": "2026-08-28 03:34:03.458639"
+  },
+  {
+    "id": "7f1137c4-2067-4f19-a598-6c7623d65605",
+    "scope": "agent:1",
+    "content": "User is creating a short AI-animated video series for 9-year-old girls about a girl living in a mountain",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.551243",
+    "updated_at": "2026-08-28 03:45:53.551247"
+  },
+  {
+    "id": "ec9d734b-d0a0-4fde-882e-3f4cb3fb1bdf",
+    "scope": "agent:1",
+    "content": "User has no prior animation knowledge and wants a beginner-friendly AI workflow",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.552314",
+    "updated_at": "2026-08-28 03:45:53.552317"
+  },
+  {
+    "id": "5278ff88-45be-4c32-a8e4-068c6554a305",
+    "scope": "agent:1",
+    "content": "Series plan: lock character and environment reference images first, then animate via image-to-video",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.552796",
+    "updated_at": "2026-08-28 03:45:53.552799"
+  },
+  {
+    "id": "98b709eb-ced5-4873-bb90-dd52c5387167",
+    "scope": "agent:1",
+    "content": "Recommended tool stack: Nano Banana Pro for character images, Kling 3.0 or Veo 3.1 for video, ElevenLabs for voices, CapCut for editing",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.553180",
+    "updated_at": "2026-08-28 03:45:53.553182"
+  },
+  {
+    "id": "7911dd96-1a8c-47c1-903c-da9d36af1f64",
+    "scope": "agent:1",
+    "content": "Character consistency requires a turnaround reference pack: front, 3/4, side, close-up, expressions, action poses",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.553513",
+    "updated_at": "2026-08-28 03:45:53.553516"
+  },
+  {
+    "id": "383d23e6-1539-4c6a-8ec5-afdcacaad3c0",
+    "scope": "agent:1",
+    "content": "YouTube kids content must be labeled Made for Kids under COPPA, which disables comments and personalized ads",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.553848",
+    "updated_at": "2026-08-28 03:45:53.553851"
+  },
+  {
+    "id": "3fece1f0-bf34-408d-a22f-5bf5443729e1",
+    "scope": "agent:1",
+    "content": "Kids channel ad revenue runs 50-80% lower than general content, so diversify beyond YouTube ads",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.554180",
+    "updated_at": "2026-08-28 03:45:53.554182"
+  },
+  {
+    "id": "69022f0a-17c2-4635-aba4-d04ab60caac4",
+    "scope": "agent:1",
+    "content": "Episodes planned at 60-90 seconds with 6-10 shots, hook in first 3 seconds, published as a playlist",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:45:53.554496",
+    "updated_at": "2026-08-28 03:45:53.554498"
+  },
+  {
+    "id": "2d3b0229-404b-4d97-879d-b65ff4fd2ab1",
+    "scope": "agent:1",
+    "content": "User is creating an animated video series for 9-year-old girls about a girl living in a mountain, using code-based animation not AI video generation",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.904673",
+    "updated_at": "2026-08-28 03:54:48.904678"
+  },
+  {
+    "id": "9eeafd13-a7e2-4b28-b7ce-82a3de16d169",
+    "scope": "agent:1",
+    "content": "User wants to produce videos using only their opencode subscription with free local tools like HyperFrames, GSAP, SVG, and Kokoro TTS",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.905689",
+    "updated_at": "2026-08-28 03:54:48.905692"
+  },
+  {
+    "id": "0506bfe9-8bfc-4a0e-9383-5be79a91ef6f",
+    "scope": "agent:1",
+    "content": "User rejected AI image/video generation models as too expensive and prefers HTML/CSS/SVG/JS animation",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.906174",
+    "updated_at": "2026-08-28 03:54:48.906177"
+  },
+  {
+    "id": "7438dadf-7102-4410-949d-fd8dd2f3362b",
+    "scope": "agent:1",
+    "content": "Recommended stack for the mountain-girl series is HyperFrames plus layered SVG character rigs animated with GSAP timelines",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.906583",
+    "updated_at": "2026-08-28 03:54:48.906586"
+  },
+  {
+    "id": "6fba073e-d670-4db8-8f09-16f6a9f3ccd0",
+    "scope": "agent:1",
+    "content": "Kokoro TTS with af_heart voice at speed 0.9 is the approved narration voice for the user's video projects",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.906929",
+    "updated_at": "2026-08-28 03:54:48.906931"
+  },
+  {
+    "id": "57aff233-0a82-4f92-b1f4-4031a83cc993",
+    "scope": "agent:1",
+    "content": "HyperFrames renders on this machine require HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap to produce audio output",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.907315",
+    "updated_at": "2026-08-28 03:54:48.907318"
+  },
+  {
+    "id": "4111cbef-88e2-4bf0-8053-b2b7ecac5119",
+    "scope": "agent:1",
+    "content": "Openmontage skills svg-character-animation and character-animation-qa were installed for the mountain-girl series project",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.907703",
+    "updated_at": "2026-08-28 03:54:48.907705"
+  },
+  {
+    "id": "b52e1b3a-fe89-4a02-9221-0481222e125a",
+    "scope": "agent:1",
+    "content": "Planned series kit structure is ~/workspace/mountain-girl with kit/characters, kit/environments, style.css, and per-episode folders",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.908056",
+    "updated_at": "2026-08-28 03:54:48.908058"
+  },
+  {
+    "id": "8df203cc-c1f8-4648-a36e-28b513333600",
+    "scope": "agent:1",
+    "content": "Character consistency in code animation is achieved by drawing SVG rigs once and reusing them across all episodes",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.908416",
+    "updated_at": "2026-08-28 03:54:48.908418"
+  },
+  {
+    "id": "a9a76f73-3c0a-4685-a789-a9ce9bc9a41d",
+    "scope": "agent:1",
+    "content": "Lip-sync in the mountain-girl series will use narration-driven storytelling or simple viseme mouth-shape swapping",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 03:54:48.908771",
+    "updated_at": "2026-08-28 03:54:48.908773"
+  },
+  {
+    "id": "6fde447d-7102-4392-b8f7-813ec6f661b4",
+    "scope": "agent:1",
+    "content": "User is creating an animated video series for 9-year-old girls about a girl living in a mountain, using only code-based animation with their opencode subscription",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.291541",
+    "updated_at": "2026-08-28 04:11:35.291547"
+  },
+  {
+    "id": "f2b88a60-4b5d-45bf-82bf-e830b2217891",
+    "scope": "agent:1",
+    "content": "User rejected AI image/video generation tools as too expensive and prefers HTML/CSS/SVG/JS animation rendered locally",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.292481",
+    "updated_at": "2026-08-28 04:11:35.292483"
+  },
+  {
+    "id": "39cb909c-1f89-4e35-be0c-d13d3f77f789",
+    "scope": "agent:1",
+    "content": "Maya character rig lives at ~/workspace/mountain-girl/kit/characters/maya.svg with GSAP pivots for head, arms, scarf, eyelids and mouth",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.292842",
+    "updated_at": "2026-08-28 04:11:35.292844"
+  },
+  {
+    "id": "4292c4e1-3ad9-45a3-81af-fd78170e8539",
+    "scope": "agent:1",
+    "content": "Maya design uses locked palette: teal jacket, coral scarf, mustard beanie, brown braids, freckles, dark leggings, brown boots",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.293277",
+    "updated_at": "2026-08-28 04:11:35.293279"
+  },
+  {
+    "id": "610b2824-3f79-4724-8739-d5102f4c386b",
+    "scope": "agent:1",
+    "content": "Maya preview with GSAP idle loop (blink, bob, wave) is at ~/workspace/mountain-girl/kit/characters/preview.html",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.293709",
+    "updated_at": "2026-08-28 04:11:35.293711"
+  },
+  {
+    "id": "6c3f65a1-f73b-4971-922a-64f84471bac4",
+    "scope": "agent:1",
+    "content": "User decided on SVG rigs over Blender for the series because opencode agent can drive the full SVG pipeline while Blender is binary and hard to automate",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.294056",
+    "updated_at": "2026-08-28 04:11:35.294058"
+  },
+  {
+    "id": "75b171d4-bb4f-4e22-a883-a49499f2d2fe",
+    "scope": "agent:1",
+    "content": "Series plan: build reusable SVG character/environment kit first, then produce 60-90s episodes via HyperFrames with Kokoro narration",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.294567",
+    "updated_at": "2026-08-28 04:11:35.294570"
+  },
+  {
+    "id": "1a1da734-3d55-43df-bde5-cf8d80239885",
+    "scope": "agent:1",
+    "content": "Browser automation accounts are 'prateek' and 'swastik', not 'default', configured in ~/.browser-mcp/profiles.json",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.295094",
+    "updated_at": "2026-08-28 04:11:35.295097"
+  },
+  {
+    "id": "5c314d7b-c7bc-48fa-8cc2-b8c1035532e4",
+    "scope": "agent:1",
+    "content": "Lip-sync strategy for the series is narration-driven storytelling or simple viseme mouth swaps, not phoneme-accurate sync",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 04:11:35.295520",
+    "updated_at": "2026-08-28 04:11:35.295522"
+  },
+  {
+    "id": "a87e802f-203a-4c0f-858a-e1d31f435ff2",
+    "scope": "agent:1",
+    "content": "User is creating an animated video series for 9-year-old girls about a girl living in a mountain, using only a single opencode subscription with free local tools",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.264843",
+    "updated_at": "2026-08-28 05:09:08.264848"
+  },
+  {
+    "id": "1f3a7151-0d5a-4562-ae95-f3db16f6d6bb",
+    "scope": "agent:1",
+    "content": "User rejected AI image/video generation due to cost and prefers code-based animation with HTML, CSS, SVG, JS, and Blender",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.266826",
+    "updated_at": "2026-08-28 05:09:08.266829"
+  },
+  {
+    "id": "15c0d10c-02c7-44b6-a26f-3cf15987a546",
+    "scope": "agent:1",
+    "content": "Mountain girl character rig 'Maya' was created at ~/workspace/mountain-girl/kit/characters/maya.svg with GSAP-animated parts and a preview.html idle loop",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.267245",
+    "updated_at": "2026-08-28 05:09:08.267247"
+  },
+  {
+    "id": "a143d171-e383-4686-baab-1f9514807115",
+    "scope": "agent:1",
+    "content": "Maya character design uses teal jacket, coral scarf, mustard beanie, brown braids, freckles, with named GSAP pivots for head, arms, lids, and mouth",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.267627",
+    "updated_at": "2026-08-28 05:09:08.267629"
+  },
+  {
+    "id": "556ab8da-67cb-4c4f-a41c-878a31468aff",
+    "scope": "agent:1",
+    "content": "User prefers Blender for higher quality and found blender-mcp (github.com/ahujasid/blender-mcp) which supports OpenCode as an MCP client",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.267954",
+    "updated_at": "2026-08-28 05:09:08.267956"
+  },
+  {
+    "id": "658990a4-d163-4111-b52b-86fb3eff37e1",
+    "scope": "agent:1",
+    "content": "blender-mcp setup requires uv, uvx blender-mcp in OpenCode MCP config, Blender addon install, and Start MCP Server in Blender sidebar",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.268266",
+    "updated_at": "2026-08-28 05:09:08.268268"
+  },
+  {
+    "id": "2c1cfcbe-3743-48b3-9e27-b5de072bc757",
+    "scope": "agent:1",
+    "content": "Agreed hybrid pipeline: SVG rigs for characters, Blender with Poly Haven assets for environments, composited in HyperFrames with parallax",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.268575",
+    "updated_at": "2026-08-28 05:09:08.268577"
+  },
+  {
+    "id": "beca746d-a8fa-46c3-ad60-dc31124fffb7",
+    "scope": "agent:1",
+    "content": "blender-mcp is weak for character modeling and rigging but strong for environments, lighting, HDRIs, and Poly Haven assets",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.268880",
+    "updated_at": "2026-08-28 05:09:08.268883"
+  },
+  {
+    "id": "6224d0d4-d975-466f-a23c-f012ba8bb5d6",
+    "scope": "agent:1",
+    "content": "Kokoro TTS af_heart at speed 0.9 is the approved narration voice and runs on CPU from ank-content/.venv-chatterbox",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.269187",
+    "updated_at": "2026-08-28 05:09:08.269189"
+  },
+  {
+    "id": "ca724b72-0974-435a-b68b-1ce3f9ebf8de",
+    "scope": "agent:1",
+    "content": "HyperFrames renders need HYPERFRAMES_FFMPEG_PATH=/home/swastik/tools/ffmpeg-wrap and AAC audio stream verified with ffprobe",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 05:09:08.269489",
+    "updated_at": "2026-08-28 05:09:08.269491"
+  },
+  {
+    "id": "860b7ade-1f78-49ce-91e0-fe30cdf43049",
+    "scope": "agent:1",
+    "content": "llm_ui cleanup on 2026-08-28 deleted 621 orphaned uploads and 8 duplicate threads, freeing ~335 MB",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.733714",
+    "updated_at": "2026-08-28 06:37:05.733719"
+  },
+  {
+    "id": "762682e8-b3bf-4343-b788-4eb7cd2d3c67",
+    "scope": "agent:1",
+    "content": "Pre-cleanup llm_ui DB backup saved as llm_ui_PRE-CLEANUP_2026-08-28.db in OneDrive Apps/llm_ui-backups folder",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.735225",
+    "updated_at": "2026-08-28 06:37:05.735228"
+  },
+  {
+    "id": "310ebac8-6502-4efc-bb65-c714a14ea696",
+    "scope": "agent:1",
+    "content": "Detect duplicate llm_ui conversations by first-user-message similarity; title matching misses forks and retries",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.735896",
+    "updated_at": "2026-08-28 06:37:05.735899"
+  },
+  {
+    "id": "29d2bfa3-004a-43c0-aed3-24e23aefc834",
+    "scope": "agent:1",
+    "content": "When deduping chat threads, keep the one with higher depth score (assistant chars/200 + assistant msgs*15)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.736347",
+    "updated_at": "2026-08-28 06:37:05.736349"
+  },
+  {
+    "id": "d460c544-fc8c-498e-8ca7-fc91fa971a77",
+    "scope": "agent:1",
+    "content": "llm_ui document_embeddings keys on chunk_id not document_id; join through document_chunks to filter by document",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.736744",
+    "updated_at": "2026-08-28 06:37:05.736746"
+  },
+  {
+    "id": "edfd4d48-9fe1-498b-9af0-e1a811f60f67",
+    "scope": "agent:1",
+    "content": "llm_ui skill dir social-media-scheduling contains skill named absolute-audit; dir names can mismatch SKILL.md",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.737332",
+    "updated_at": "2026-08-28 06:37:05.737334"
+  },
+  {
+    "id": "2fc2df7a-a221-4b74-b565-31a1255b29be",
+    "scope": "agent:1",
+    "content": "Kokoro TTS auto-read leaves orphaned .wav files in llm_ui uploads; 606 accumulated before one cleanup",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.737674",
+    "updated_at": "2026-08-28 06:37:05.737677"
+  },
+  {
+    "id": "61aabad3-3e14-47aa-8bb6-7b2da6f055a7",
+    "scope": "agent:1",
+    "content": "Agents LinkedIn A and LinkedIn B are disabled and reference nonexistent MCP servers mcp-server-linkedin and linkedin-mcp-2",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.738008",
+    "updated_at": "2026-08-28 06:37:05.738010"
+  },
+  {
+    "id": "b0651c61-374b-485d-85bb-38c8a0390627",
+    "scope": "agent:1",
+    "content": "finapp MCP server is disabled in llm_ui while the finance agent depends on it, so finance agent is non-functional",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.738332",
+    "updated_at": "2026-08-28 06:37:05.738334"
+  },
+  {
+    "id": "17f6ab53-93ff-4569-b0ee-57e5017c2aa6",
+    "scope": "agent:1",
+    "content": "Tier 3 llm_ui cleanup pending: delete LinkedIn A/B agents, dedupe 6 memory pairs, rename 2 skill dirs",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 06:37:05.738698",
+    "updated_at": "2026-08-28 06:37:05.738701"
+  },
+  {
+    "id": "5a47bcff-d1cc-46a8-b441-3a1c03315519",
+    "scope": "agent:1",
+    "content": "llm_ui cleanup on 2026-08-28 deleted 8 duplicate conversations, 24 skill_runs rows, and 621 orphaned uploads (331 MB)",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.413358",
+    "updated_at": "2026-08-28 07:16:52.413364"
+  },
+  {
+    "id": "97a5fc76-26ba-4d56-b62f-727deac0a68a",
+    "scope": "agent:1",
+    "content": "Pre-cleanup llm_ui DB snapshot saved at OneDrive/Apps/llm_ui-backups/llm_ui_PRE-CLEANUP_2026-08-28.db as restore point",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.414563",
+    "updated_at": "2026-08-28 07:16:52.414568"
+  },
+  {
+    "id": "c217d3a9-65e0-45eb-8b5d-9a735fec862d",
+    "scope": "agent:1",
+    "content": "LinkedIn A and B agents were deleted from llm_ui because social-media-swastik and social-media-prateek superseded them",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.415035",
+    "updated_at": "2026-08-28 07:16:52.415038"
+  },
+  {
+    "id": "366d269c-d7e7-49fe-9884-d935596affcb",
+    "scope": "agent:1",
+    "content": "finapp MCP server is disabled in llm_ui; re-enable it before using the finance agent or its portfolio tools fail",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.415399",
+    "updated_at": "2026-08-28 07:16:52.415403"
+  },
+  {
+    "id": "0bad1a56-c386-4383-b822-e1c669c6192a",
+    "scope": "agent:1",
+    "content": "browser-mcp profiles.json intentionally maps account swastik to .brave-profiles/prateek2 port 9223 despite confusing name",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.415829",
+    "updated_at": "2026-08-28 07:16:52.415832"
+  },
+  {
+    "id": "e7a76ccf-7b02-44d2-b995-0aeb9d33d400",
+    "scope": "agent:1",
+    "content": "llm_ui skill dirs social-media-scheduling and social-media-content-repurposer contain skills named absolute-audit and content-repurposer",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.416243",
+    "updated_at": "2026-08-28 07:16:52.416247"
+  },
+  {
+    "id": "00afa7a8-e4d1-49ed-bd72-c6695b137999",
+    "scope": "agent:1",
+    "content": "User deferred llm_ui skills rename and memory dedup cleanup pending a detailed personal review",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.416662",
+    "updated_at": "2026-08-28 07:16:52.416666"
+  },
+  {
+    "id": "8baa934c-394d-4c2a-8d4e-ad908080edb1",
+    "scope": "agent:1",
+    "content": "6 near-duplicate memory entry pairs exist in llm_ui memory_entries and await user review before deletion",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.417061",
+    "updated_at": "2026-08-28 07:16:52.417065"
+  },
+  {
+    "id": "1b2565a6-14ee-4f16-bc70-92e3037776f3",
+    "scope": "agent:1",
+    "content": "Orphaned llm_ui uploads were identified by scanning filename references across messages, documents, memory, and conversations",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.417416",
+    "updated_at": "2026-08-28 07:16:52.417420"
+  },
+  {
+    "id": "486953fc-5687-4133-a472-56e999840a6f",
+    "scope": "agent:1",
+    "content": "Most orphaned llm_ui uploads were leftover Kokoro TTS .wav files from auto-read responses",
+    "tags": "[]",
+    "source": "auto",
+    "importance": 0.5,
+    "created_at": "2026-08-28 07:16:52.417754",
+    "updated_at": "2026-08-28 07:16:52.417757"
+  }
+]

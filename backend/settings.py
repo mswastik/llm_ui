@@ -45,7 +45,10 @@ DEFAULTS = {
     # System Prompt
     "system_prompt": os.getenv(
         "SYSTEM_PROMPT",
-        "You are a helpful AI assistant. When you use tools, explain what you're doing and why."
+        "You are a helpful AI assistant. When you use tools, explain what you're doing and why. "
+        "You have persistent memory: call memory_search before answering questions about the user's "
+        "past work, preferences, projects or people, and call memory_write when the user states a "
+        "durable fact or preference. Never store secret values (keys, passwords, tokens) in memory."
     ),
 
     # SQLAlchemy Logging

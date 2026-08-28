@@ -1,0 +1,96 @@
+{#
+  Capability picker markup — one control, three call sites (MCP servers, custom
+  tools, skills). `cfg` is the JS object literal handed to the capabilityPicker
+  Alpine component (see static/js/components/tag_picker.js), so each call site
+  only declares how to read and write its own slice of formData.
+
+  Empty selection means "allow everything" — the same rule the backend
+  implements — so the footer spells that out instead of looking like a mistake.
+#}
+{% macro capability_picker(cfg, label, hint, trigger_hint, search_placeholder) %}
+<div class="rounded-lg border border-[var(--border-primary)] p-3"
+     x-data="capabilityPicker({{ cfg }})">
+  <div class="flex items-center justify-between gap-2 mb-1">
+    <label class="block text-xs font-medium text-[var(--text-secondary)]">{{ label }}</label>
+    <span class="text-[10px] font-mono text-[var(--text-tertiary)]" x-text="summaryText"></span>
+  </div>
+  <p class="text-xs text-[var(--text-tertiary)] mb-2">{{ hint }}</p>
+
+  <!-- Selected chips; empty means unrestricted -->
+  <div class="flex flex-wrap gap-1 mb-2" x-show="!unrestricted">
+    <template x-for="value in selected" :key="value">
+      <span class="badge text-[10px] flex items-center gap-1"
+            :class="orphaned.includes(value) ? 'badge-warning' : 'badge-primary'"
+            :title="orphaned.includes(value) ? 'No longer available — uncheck to drop it' : value">
+        <span x-text="labelFor(value)"></span>
+        <button type="button" @click="remove(value)" class="opacity-60 hover:opacity-100">&times;</button>
+      </span>
+    </template>
+  </div>
+
+  <button type="button" @click="togglePanel()"
+          class="input text-sm w-full text-left flex items-center justify-between gap-2">
+    <span :class="unrestricted ? 'text-[var(--text-tertiary)]' : ''"
+          x-text="unrestricted ? '{{ trigger_hint }}' : selected.length + ' of ' + _options().length + ' selected'"></span>
+    <i class="ph ph-caret-down text-xs" :class="open ? 'rotate-180' : ''" style="transition: transform .15s"></i>
+  </button>
+
+  <div x-show="open" x-cloak @click.outside="close()" class="relative">
+    <div class="absolute left-0 right-0 mt-1 z-30 bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-md shadow-lg">
+      <div class="p-2 border-b border-[var(--border-primary)] space-y-2">
+        <input x-ref="search" type="text" x-model="query" class="input text-xs w-full"
+               placeholder="{{ search_placeholder }}" autocomplete="off" />
+        <div class="flex flex-wrap gap-1" x-show="activeGroups.length > 1">
+          <button type="button" @click="tab = null" class="pill text-[10px]"
+                  :class="!tab ? 'pill-active' : 'pill-default'">All</button>
+          <template x-for="g in activeGroups" :key="g">
+            <button type="button" @click="tab = (tab === g ? null : g)" class="pill text-[10px]"
+                    :class="tab === g ? 'pill-active' : 'pill-default'" x-text="g"></button>
+          </template>
+        </div>
+      </div>
+
+      <div class="max-h-56 overflow-y-auto py-1">
+        <template x-for="group in (activeGroups.length > 1 ? (tab ? [tab] : activeGroups) : [''])" :key="group">
+          <div>
+            <div class="flex items-center justify-between px-3 pt-2 pb-1" x-show="group">
+              <span class="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)]" x-text="group"></span>
+              <button type="button" @click="toggleGroup(group)" class="text-[10px] text-[var(--text-link)] hover:underline"
+                      x-text="isGroupComplete(group) ? 'none' : 'all'"></button>
+            </div>
+            <template x-for="opt in visibleOptions.filter(o => !group || (o.group || '') === group)" :key="opt.value">
+              <label class="flex items-start gap-2 px-3 py-1.5 hover:bg-[var(--bg-hover)] cursor-pointer text-sm">
+                <input type="checkbox" :checked="isSelected(opt.value)" @change="toggle(opt.value)"
+                       class="mt-0.5 rounded" style="accent-color: var(--accent-primary)" />
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-center gap-1.5">
+                    <span class="truncate" x-text="opt.label || opt.value"></span>
+                    <span class="badge badge-warning text-[9px]" x-show="opt.badge" x-text="opt.badge"></span>
+                  </span>
+                  <span class="block text-[10px] text-[var(--text-tertiary)] line-clamp-1"
+                        x-show="opt.description" :title="opt.description" x-text="opt.description"></span>
+                </span>
+              </label>
+            </template>
+          </div>
+        </template>
+        <div x-show="visibleOptions.length === 0 && _options().length > 0" class="px-3 py-3 text-xs text-[var(--text-tertiary)]">
+          No matches
+        </div>
+        <div x-show="_options().length === 0" class="px-3 py-3 text-xs text-[var(--text-tertiary)]">
+          Nothing available to pick yet
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-2 px-2 py-1.5 border-t border-[var(--border-primary)]">
+        <div class="flex gap-2">
+          <button type="button" @click="selectVisible()" class="text-[10px] text-[var(--text-link)] hover:underline">Select shown</button>
+          <button type="button" @click="clearAll()" class="text-[10px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">Clear</button>
+        </div>
+        <span class="text-[10px]" :class="unrestricted ? 'text-[var(--text-tertiary)]' : 'text-[var(--accent-primary)]'"
+              x-text="unrestricted ? 'Unrestricted — every option applies' : 'Only the picked options apply'"></span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}

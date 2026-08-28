@@ -1018,10 +1018,96 @@ h4 { font-size: 1rem; font-weight: 600; }
     --sidebar-width: 260px;
   }
   html { font-size: 15px; }
-  .modal-content {
-    margin: 10px;
-    max-height: calc(100vh - 20px);
+  /* Fill the viewport on mobile. 100dvh tracks the visible area (no gap when the
+     browser chrome shows/hides); -webkit-fill-available is the older iOS fallback. */
+  html, body { height: 100%; }
+  body {
+    height: 100vh !important;
+    height: 100dvh !important;
+    min-height: -webkit-fill-available;
   }
+
+  /* Sidebar becomes an off-canvas drawer */
+  .app-sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 85vw !important;
+    max-width: 320px;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform var(--transition-base) !important;
+    box-shadow: var(--shadow-xl);
+  }
+  .app-sidebar.sidebar-mobile-open {
+    transform: translateX(0);
+  }
+
+  /* Modals go full-screen on mobile */
+  .modal-backdrop,
+  .modal-container {
+    padding: 0;
+    align-items: stretch;
+  }
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    height: 100%;
+    border-radius: 0;
+    margin: 0;
+  }
+
+  /* Composer controls: let pills wrap, and collapse selector buttons to icon-only
+     so they never overflow the viewport width. */
+  .composer-controls,
+  .composer-cluster {
+    flex-wrap: wrap;
+  }
+  .dropdown-btn > span,
+  .dropdown-btn > i.ph-caret-down {
+    display: none;
+  }
+  .dropdown-btn {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  /* Use more of the screen for messages on mobile */
+  .messages-wrap {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+  .message-user,
+  .message-assistant {
+    max-width: 100% !important;
+  }
+  /* Remove the assistant avatar on mobile so messages use the full width */
+  .msg-avatar { display: none; }
+
+  /* Dropdown panels must never overflow the viewport on mobile */
+  .dropdown-panel {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+    width: auto !important;
+    max-width: none !important;
+    margin-bottom: 0 !important;
+    max-height: 75vh;
+    z-index: 120;
+  }
+
+  /* Settings tab bar scrolls horizontally instead of overflowing on mobile */
+  .settings-tabs {
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .settings-tabs::-webkit-scrollbar { display: none; }
+  .settings-tabs button { white-space: nowrap; }
 }
 
 /* ---------- x-cloak ---------- */

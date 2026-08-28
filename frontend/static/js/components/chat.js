@@ -1013,41 +1013,66 @@ const chatComponent = () => ({
     return String(Math.round(v))
   },
 
-  // Context window of the model that produced this message. Falls back to the
-  // live selection because streaming metrics arrive before the model list does
-  // not carry a window for a model we never resolved one for.
-  contextWindow(message) {
-    const model = message?.metadata?.model
-    if (model) {
-      const m = this.availableModels.find(x => x.id === model)
-      if (m?.context_window) return m.context_window
+  // id→context_window index rebuilt only when the model list reference changes;
+  // _mwv bumps so cached per-message context invalidates when the list is replaced.
+  _ensureWinIdx() {
+    if (this._modelWindowRef !== this.availableModels) {
+      const idx = new Map()
+      for (const m of (this.availableModels || [])) if (m && m.context_window) idx.set(m.id, m.context_window)
+      this._modelWindowRef = this.availableModels
+      this._modelWindowIdx = idx
+      this._mwv = (this._mwv || 0) + 1
     }
-    const cur = this.availableModels.find(x => x.id === this.selectedModel)
-    return cur?.context_window || null
+  },
+  _winFor(modelId) {
+    if (!modelId) return null
+    return (this._modelWindowIdx && this._modelWindowIdx.get(modelId)) || null
+  },
+
+  // Compute {used, win, pct} ONCE per message and cache by message identity.
+  // The template calls these ~30× per message (10-tick bar + label + hover card);
+  // this collapses that to a single computation. It self-invalidates when the
+  // message's token totals, model, selected model, or the model list change — so
+  // live streaming and model switches stay correct.
+  _ctx(message) {
+    this._ensureWinIdx()
+    if (!this._ctxCache) this._ctxCache = new WeakMap()
+    const metrics = message ? this.getMetrics(message) : null
+    const meta = message && message.metadata
+    const model = meta ? meta.model : undefined
+    const sel = this.selectedModel
+    const sig = metrics
+      ? `${metrics.total_tokens | 0}:${metrics.prompt_tokens | 0}:${(metrics._iterations && metrics._iterations.length) | 0}`
+      : '-'
+    const mv = this._mwv || 0
+    const hit = this._ctxCache.get(message)
+    if (hit && hit.mv === mv && hit.sig === sig && hit.model === model && hit.sel === sel) return hit.val
+    let used = null
+    if (metrics) {
+      const its = metrics._iterations
+      if (Array.isArray(its) && its.length) {
+        const last = its[its.length - 1] || {}
+        used = last.total_tokens ?? ((last.prompt_tokens || 0) + (last.completion_tokens || 0))
+      }
+      if (!used) used = metrics.total_tokens ?? ((metrics.prompt_tokens || 0) + (metrics.completion_tokens || 0)) ?? null
+    }
+    const win = this._winFor(model) || this._winFor(sel) || null
+    const pct = (!win || !used) ? null : Math.min(100, Math.round((used / win) * 100))
+    const val = { used: used || null, win, pct }
+    this._ctxCache.set(message, { mv, sig, model, sel, val })
+    return val
   },
 
   // Tokens occupying the window. A tool-loop turn re-sends a growing prompt each
   // iteration, so the aggregated `total_tokens` double-counts — the last
   // iteration's total is the real occupancy.
-  contextUsed(message) {
-    const m = this.getMetrics(message)
-    if (!m) return null
-    const its = m._iterations
-    if (Array.isArray(its) && its.length) {
-      const last = its[its.length - 1] || {}
-      const v = last.total_tokens ?? ((last.prompt_tokens || 0) + (last.completion_tokens || 0))
-      if (v) return v
-    }
-    return m.total_tokens ?? ((m.prompt_tokens || 0) + (m.completion_tokens || 0)) ?? null
-  },
+  contextUsed(message) { return this._ctx(message).used },
 
   // 0-100, clamped; null when the window is unknown.
-  contextPct(message) {
-    const win = this.contextWindow(message)
-    const used = this.contextUsed(message)
-    if (!win || !used) return null
-    return Math.min(100, Math.round((used / win) * 100))
-  },
+  contextPct(message) { return this._ctx(message).pct },
+
+  // Context window size for the message's model (falls back to the live selection).
+  contextWindow(message) { return this._ctx(message).win },
 
   // Colour escalates with pressure so a glance is enough: accent → warning → error.
   contextColor(pct) {

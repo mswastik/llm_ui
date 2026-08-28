@@ -106,9 +106,9 @@ function buildCodeRenderer() {
     const previewBtn = previewable
       ? `<button type="button" class="code-copy-btn code-preview-btn" onclick="window.toggleHtmlPreview && window.toggleHtmlPreview(this)" title="Preview rendered output"><i class="ph ph-eye"></i></button>`
       : ''
-    const preview = previewable
-      ? `<iframe class="code-html-preview" sandbox="" style="display:none" title="Rendered output"></iframe>`
-      : ''
+    // The rendered-output iframe is created lazily by toggleHtmlPreview (only when
+    // Preview is clicked); emitting one sandboxed iframe per HTML/SVG block made
+    // long, code-heavy threads slow to open.
     return `<div class="code-block">` +
       `<div class="code-header">` +
       `<span>${label}</span>` +
@@ -117,7 +117,6 @@ function buildCodeRenderer() {
       `</span>` +
       `</div>` +
       `<pre class="code-body"><code>${body}</code></pre>` +
-      preview +
       `</div>`
   }
   return renderer
@@ -140,21 +139,37 @@ if (typeof window !== 'undefined') {
     }
   }
 
-  // Toggle the rendered-output iframe for html/svg code blocks. srcdoc is set
-  // from the code text at toggle time; the iframe is fully sandboxed (no
-  // scripts, no parent access) so model-generated HTML cannot run code.
+  // Toggle the rendered-output iframe for html/svg code blocks. The iframe is
+  // created on first use (not eagerly at markdown-render time) and fully sandboxed
+  // (no scripts, no parent access). Scripts + inline event handlers are stripped
+  // from the srcdoc first, so the sandbox can never run model code and the browser
+  // no longer logs "Blocked script execution in about:blank".
   window.toggleHtmlPreview = function (btn) {
     const block = btn?.closest('.code-block')
-    const iframe = block?.querySelector('.code-html-preview')
-    if (!iframe) return
-    if (!iframe.style.display || iframe.style.display === 'none') {
-      iframe.srcdoc = block.querySelector('.code-body')?.textContent || ''
-      iframe.style.display = 'block'
-      btn.classList.add('code-preview-active')
-    } else {
+    if (!block) return
+    let iframe = block.querySelector('.code-html-preview')
+    if (iframe && iframe.style.display !== 'none') {
       iframe.style.display = 'none'
       btn.classList.remove('code-preview-active')
+      return
     }
+    if (!iframe) {
+      iframe = document.createElement('iframe')
+      iframe.className = 'code-html-preview'
+      iframe.setAttribute('sandbox', '')
+      iframe.setAttribute('title', 'Rendered output')
+      iframe.style.display = 'none'
+      block.appendChild(iframe)
+    }
+    const raw = block.querySelector('.code-body')?.textContent || ''
+    const html = raw
+      .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+      .replace(/<script[^>]*\/>/gi, '')
+      .replace(/\son[a-z]+\s*=\s*"[^"]*"|\son[a-z]+\s*=\s*'[^']*'|\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+      .replace(/javascript:/gi, '')
+    iframe.srcdoc = html
+    iframe.style.display = 'block'
+    btn.classList.add('code-preview-active')
   }
 }
 

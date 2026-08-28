@@ -186,7 +186,25 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # Mount outputs directory (agent platform: job outputs, generated files)
 app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 templates = Jinja2Templates(directory="frontend/templates")
+# ══════════════════════════════ PWA ═══════════════════════════════
+_FRONTEND_STATIC = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "frontend", "static"
+)
 
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def pwa_manifest():
+    return FileResponse(
+        os.path.join(_FRONTEND_STATIC, "manifest.webmanifest"),
+        media_type="application/manifest+json",
+    )
+
+@app.get("/sw.js", include_in_schema=False)
+async def pwa_service_worker():
+    return FileResponse(
+        os.path.join(_FRONTEND_STATIC, "sw.js"),
+        media_type="text/javascript",
+    )
 # Initialize components
 llm_client = LLMClient()
 tool_executor = ToolExecutor(mcp_manager)

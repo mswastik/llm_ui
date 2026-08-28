@@ -23,14 +23,21 @@
   </div>
 
   <!-- Messages Container -->
+    <!-- Mobile top bar (hamburger to open the off-canvas sidebar) -->
+    <div class="md:hidden flex items-center gap-2 px-3 h-14 flex-shrink-0 border-b border-[var(--border-primary)] bg-[var(--bg-primary)]">
+      <button @click="$store.ui.openSidebarMobile()" class="btn btn-icon btn-ghost -ml-1" title="Open menu" aria-label="Open menu">
+        <i class="ph ph-list text-xl"></i>
+      </button>
+      <span class="font-semibold text-sm truncate" x-text="$store.chat.currentConversationTitle || 'New Chat'"></span>
+    </div>
   <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden">
-    <div class="mx-auto w-full px-3">
+    <div class="mx-auto w-full px-3 messages-wrap">
       <!-- Conversation Title (inline, subtle) -->
       <div class="pt-4 pb-1">
         <input
           :value="$store.chat.currentConversationTitle"
           @change="updateTitle($event)"
-          class="w-full text-center text-[0.8rem] font-medium text-[var(--text-tertiary)] bg-transparent border-none outline-none hover:text-[var(--text-secondary)] focus:text-[var(--text-primary)] transition-colors"
+      class="w-full text-center text-[0.8rem] font-medium text-[var(--text-tertiary)] bg-transparent border-none outline-none hover:text-[var(--text-secondary)] focus:text-[var(--text-primary)] transition-colors hidden md:block"
           placeholder="Untitled conversation"
         />
       </div>
@@ -81,9 +88,6 @@
       <div class="py-0 space-y-5">
         <!-- Empty State -->
         <div x-show="messages.length === 0" class="empty-state">
-          <div class="empty-state-icon">
-            <i class="ph ph-robot text-3xl"></i>
-          </div>
           <h2 class="text-xl font-semibold mb-2 text-[var(--text-primary)]">
             How can I help you today?
           </h2>
@@ -123,9 +127,6 @@
           >
             <!-- Assistant avatar -->
             <template x-if="message.role === 'assistant'">
-              <div class="msg-avatar">
-                <i class="ph ph-robot"></i>
-              </div>
             </template>
 
             <div
@@ -185,6 +186,7 @@
                   <!-- Model Badge + Performance Metrics -->
                   <template x-if="message.role === 'assistant' && (message.metadata?.model || getMetrics(message))">
                     <div class="mb-2 flex items-center gap-2 flex-wrap">
+                      <i class="ph ph-robot"></i>
                       <template x-if="message.metadata?.model">
                         <span class="badge badge-primary" x-text="message.metadata.model"></span>
                       </template>
@@ -1133,9 +1135,9 @@
           ></textarea>
 
           <!-- Controls bar: dropdowns + actions -->
-          <div class="flex items-center justify-between gap-1.5 mt-1">
+          <div class="composer-controls flex items-center justify-between gap-1.5 mt-1 flex-wrap md:flex-nowrap">
             <!-- Left cluster: agent / model / docs / MCP dropdowns -->
-            <div class="flex items-center gap-1.5 min-w-0">
+            <div class="composer-cluster flex items-center gap-1.5 min-w-0 flex-wrap md:flex-nowrap">
             <!-- Agent Selector -->
             <div
               class="relative"

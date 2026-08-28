@@ -2,12 +2,14 @@
   <aside
     x-data="sidebar"
     :style="`width: ${$store.ui.sidebarWidth}px`"
-    class="flex flex-col bg-[var(--bg-secondary)] border-r border-[var(--border-primary)] overflow-hidden relative flex-shrink-0 transition-[width] duration-[var(--transition-base)]"
+    class="app-sidebar flex flex-col bg-[var(--bg-secondary)] border-r border-[var(--border-primary)] overflow-hidden relative flex-shrink-0 transition-[width] duration-[var(--transition-base)]"
+    :class="{ 'sidebar-mobile-open': $store.ui.sidebarMobileOpen }"
+    @click="if ($store.ui.sidebarMobileOpen && window.matchMedia('(max-width: 768px)').matches && !$event.target.closest('input,textarea')) $store.ui.closeSidebarMobile()"
   >
     <!-- Resize Handle (always visible, wider for easier grabbing) -->
     <div
       @mousedown="startResize"
-      class="absolute right-0 top-0 w-2 h-full cursor-col-resize z-50 flex items-center justify-center hover:bg-[var(--accent-primary)]/15 active:bg-[var(--accent-primary)]/25 transition-colors"
+      class="absolute right-0 top-0 w-2 h-full cursor-col-resize z-50 hidden md:block flex items-center justify-center hover:bg-[var(--accent-primary)]/15 active:bg-[var(--accent-primary)]/25 transition-colors"
       :class="isResizing ? 'bg-[var(--accent-primary)]/20' : 'bg-transparent'"
     >
       <!-- Grip dots visible on hover -->

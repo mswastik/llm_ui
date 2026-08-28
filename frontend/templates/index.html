@@ -8,6 +8,13 @@
   <!-- ═══════════ MAIN CHAT AREA ═══════════ -->
   {% include "partials/main_chat.html" %}
 </div>
+<!-- Mobile sidebar backdrop -->
+<div
+  x-cloak
+  @click="$store.ui.closeSidebarMobile()"
+  class="fixed inset-0 z-[150] bg-black/50 md:hidden"
+  :class="{ 'hidden': !$store.ui.sidebarMobileOpen }"
+></div>
 
 <!-- ═══════════ SETTINGS MODAL ═══════════ -->
 {% include "partials/settings_modal.html" %}

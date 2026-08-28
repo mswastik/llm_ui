@@ -35,7 +35,7 @@ window.ttsService = ttsService
 // ═══════════════════════════════════════════════════════════
 // 3. Import utils (provides formatters, markdownUtils, helpers, api)
 // ═══════════════════════════════════════════════════════════
-import { helpers, formatters } from './utils.js?v=61'
+import { helpers, formatters } from './utils.js?v=62'
 window.helpers = helpers
 window.formatters = formatters
 
@@ -55,7 +55,7 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
 import { sidebar } from './components/sidebar.js?v=63'
-import { chatComponent } from './components/chat.js?v=79'
+import { chatComponent } from './components/chat.js?v=80'
 import { settings } from './components/settings.js?v=72'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
@@ -105,3 +105,14 @@ console.log('[main] Components registered: sidebar, chat, settings, modalDocumen
 console.log('[main] Starting Alpine.js...')
 Alpine.start()
 console.log('[main] Alpine.js started successfully')
+
+// ═════════════════════════════════════════════════
+// 7. Register PWA service worker (app-shell offline + installability)
+// ═════════════════════════════════════════════════
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('[PWA] Service worker registration failed:', err);
+    });
+  });
+}

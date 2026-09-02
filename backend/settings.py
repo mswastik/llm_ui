@@ -35,8 +35,9 @@ DEFAULTS = {
     "default_temperature": float(os.getenv("DEFAULT_TEMPERATURE", "0.7")),
     "default_max_tokens": int(os.getenv("DEFAULT_MAX_TOKENS", "16048")),
 
-    # File Upload Settings
-    "max_upload_size": int(os.getenv("MAX_UPLOAD_SIZE", "10485760")),
+    # File Upload Settings — 50 MB allows scanned PDFs (~20–40 MB) without
+    # forcing users to pre-split. Guarded to 200 MB max in update_settings.
+    "max_upload_size": int(os.getenv("MAX_UPLOAD_SIZE", "52428800")),
     "upload_dir": os.getenv("UPLOAD_DIR", "./uploads"),
 
     # CORS Settings

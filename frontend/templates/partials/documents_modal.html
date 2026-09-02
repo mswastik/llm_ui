@@ -1,9 +1,43 @@
 <!-- ═══════════ DOCUMENTS MODAL ═══════════ -->
 <div
-  x-data="{ open: false, closeModal() { $store.ui.closeDocuments(); this.open = false } }"
+  x-data="{
+    open: false,
+    _poll: null,
+    closeModal() { this.stopPoll(); $store.ui.closeDocuments(); this.open = false },
+    startPoll() {
+      if (this._poll) return;
+      this.refreshDocs();
+      this._poll = setInterval(() => this.refreshDocs(), 2500);
+    },
+    stopPoll() { if (this._poll) { clearInterval(this._poll); this._poll = null; } },
+    async refreshDocs() {
+      try {
+        const r = await fetch('/api/documents');
+        const d = await r.json();
+        const docs = d.documents || [];
+        $store.ui.documents = docs;
+        const hasPending = docs.some(x => x.status === 'processing' || x.status === 'pending');
+        if (!hasPending) this.stopPoll();
+        // toast on transitions is handled by caller; here just keeps badge live
+      } catch(e) { /* keep polling */ }
+    },
+    statusClass(s) {
+      if (s === 'completed') return 'badge-success';
+      if (s === 'failed') return 'badge-error';
+      if (s === 'processing' || s === 'pending') return 'badge-warning';
+      return 'badge';
+    },
+    statusLabel(s) {
+      if (s === 'completed') return 'Embedded';
+      if (s === 'processing') return 'Embedding…';
+      if (s === 'pending') return 'Queued';
+      if (s === 'failed') return 'Failed';
+      return s || 'unknown';
+    }
+  }"
   x-show="open"
   x-cloak
-  @open-documents.window="open = true"
+  @open-documents.window="open = true; startPoll()"
   @keydown.escape.window="closeModal()"
   class="modal-backdrop modal-backdrop-documents"
   @click.self="closeModal()"
@@ -38,29 +72,41 @@
           </div>
           <input
             type="file"
+            accept=".pdf,.docx,.txt,.md,.json,.yaml,.yml"
             class="hidden"
-            @change="$store.ui.documents = $store.ui.documents || []; const docs = $store.ui.documents; (async () => { const formData = new FormData(); formData.append('file', $event.target.files[0]); const res = await fetch('/api/documents/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); docs.unshift(data.document); $store.ui.showToast('Document uploaded!', 'success'); } else { const err = await res.json().catch(() => ({})); $store.ui.showToast('Error: ' + (err.detail || 'Upload failed'), 'error'); } })()"
+            @change="(async () => { const input = $event.target; const file = input.files && input.files[0]; if (!file) return; $store.ui.documents = $store.ui.documents || []; const docs = $store.ui.documents; const formData = new FormData(); formData.append('file', file); try { const res = await fetch('/api/documents/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); docs.unshift(data.document); $store.ui.showToast('Document uploaded — embedding started', 'success'); const modalEl = document.querySelector('[x-data].modal-backdrop-documents'); if (modalEl && modalEl.__x) { const comp = modalEl.__x.$data; if (comp && comp.startPoll) comp.startPoll(); } else { // fallback: poll from here if modal data not reachable
+                  let attempts = 0; const iv = setInterval(async () => { try { const r = await fetch('/api/documents'); const d = await r.json(); $store.ui.documents = d.documents || []; const still = (d.documents||[]).some(x=>x.status==='processing'||x.status==='pending'); if (!still || ++attempts > 40) clearInterval(iv); } catch {} }, 2500); }
+                } else { const err = await res.json().catch(() => ({})); $store.ui.showToast('Error: ' + (err.detail || 'Upload failed (' + res.status + ')'), 'error'); console.error('[documents] upload failed', res.status, err); } } catch (e) { $store.ui.showToast('Upload error: ' + e.message, 'error'); } finally { input.value = ''; } })()"
           />
         </label>
       </div>
       <div class="space-y-2">
         <template x-for="doc in ($store.ui.documents || [])" :key="doc.id">
-          <div class="flex items-center justify-between p-3 card">
-            <div class="flex items-center gap-3">
+          <div class="flex items-center justify-between p-3 card gap-3">
+            <div class="flex items-center gap-3 min-w-0 flex-1">
               <i
-                class="ph ph-file-text text-xl text-[var(--text-tertiary)]"
+                class="ph ph-file-text text-xl text-[var(--text-tertiary)] flex-shrink-0"
               ></i>
-              <div>
-                <p class="font-medium text-sm" x-text="doc.filename"></p>
+              <div class="min-w-0 flex-1">
+                <p class="font-medium text-sm truncate" x-text="doc.filename"></p>
                 <p
                   class="text-xs text-[var(--text-tertiary)]"
-                  x-text="doc.file_size ? formatters.formatFileSize(doc.file_size) + ' \u2022 ' + (doc.content_type || 'unknown') : (doc.content_type || 'unknown')"
+                  x-text="(doc.size_bytes || doc.file_size ? formatters.formatFileSize(doc.size_bytes || doc.file_size) + ' \u2022 ' : '') + (doc.file_type || doc.content_type || 'unknown')"
                 ></p>
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                  <span class="badge text-[11px] leading-none px-2 py-1" :class="statusClass(doc.status)" x-text="statusLabel(doc.status)"></span>
+                  <span x-show="doc.status === 'processing' || doc.status === 'pending'" class="ph ph-spinner animate-spin text-sm text-[var(--warning)]" title="Embedding in background — this stays live while you use other dialogs"></span>
+                  <span x-show="doc.status === 'completed' && doc.metadata && doc.metadata.chunks" class="text-xs text-[var(--text-tertiary)]" x-text="(doc.metadata && doc.metadata.chunks) ? doc.metadata.chunks + ' chunks' : ''"></span>
+                  <span x-show="doc.status === 'completed' && doc.processed_at" class="text-xs text-[var(--text-tertiary)]" x-text="'• ' + new Date(doc.processed_at).toLocaleTimeString()"></span>
+                </div>
+                <p x-show="doc.status === 'failed' && doc.metadata && doc.metadata.error" class="text-xs text-[var(--error)] mt-1 break-words" x-text="doc.metadata?.error ?? ''"></p>
+                <p x-show="doc.status === 'failed' && (!doc.metadata || !doc.metadata.error)" class="text-xs text-[var(--error)] mt-1">Embedding failed — check server logs or re-upload.</p>
               </div>
             </div>
             <button
               @click="if(confirm('Delete this document?')) { fetch('/api/documents/' + doc.id, { method: 'DELETE' }).then(() => { $store.ui.documents = $store.ui.documents.filter(d => d.id !== doc.id); $store.ui.showToast('Document deleted', 'success'); }).catch(() => $store.ui.showToast('Failed to delete', 'error')) }"
-              class="btn btn-icon btn-ghost text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--error-bg)]"
+              class="btn btn-icon btn-ghost text-[var(--text-tertiary)] hover:text-[var(--error)] hover:bg-[var(--error-bg)] flex-shrink-0"
+              title="Delete document and its embeddings"
             >
               <i class="ph ph-trash"></i>
             </button>
@@ -73,6 +119,9 @@
           <i class="ph ph-file-x text-3xl mb-2 block opacity-50"></i>
           No documents uploaded yet
         </div>
+        <p x-show="($store.ui.documents||[]).some(d=>d.status==='processing'||d.status==='pending')" class="text-xs text-center text-[var(--text-tertiary)] pt-2">
+          <i class="ph ph-spinner animate-spin inline-block mr-1"></i> Embedding — status refreshes automatically every 2.5s while this dialog is open.
+        </p>
       </div>
     </div>
   </div>

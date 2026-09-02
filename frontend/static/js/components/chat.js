@@ -618,10 +618,12 @@ const chatComponent = () => ({
     }
   },
 
-  // ─── Steering ──────────────────────────────────────────
-  // Interrupt the active response with a new instruction: abort the SSE (the
-  // backend saves the partial response and the message endpoint waits for it),
-  // then send the steering text as a normal follow-up message.
+  // ─── Steering (KV-preserving graceful interrupt) ─────────
+  // Old: hard abort -> llama.cpp slot KV evicted -> full re-prefill.
+  // New: queue a steer on the backend, keep rendering for ~0.8-1.2s until
+  // the server breaks gracefully at the next chunk boundary (clean aclose
+  // -> slot KV retained). Then abort fallback and send the follow-up; its
+  // prompt prefix reuses the cached KV (cached_tokens ~ prompt - steer).
   async steerCurrentStream() {
     const text = this.inputMessage.trim()
     if (!text) return
@@ -629,15 +631,38 @@ const chatComponent = () => ({
       this.$store.ui.showToast('No active conversation to steer', 'error')
       return
     }
+    const cid = this.$store.chat.currentConversationId
     this.inputMessage = ''
+    // 1) Queue steer server-side — the active stream will break gracefully
+    // at the next chunk boundary, flush the partial, and fast-unregister.
+    try {
+      await api.post(`/api/conversations/${encodeURIComponent(cid)}/steer`, { message: text })
+    } catch (e) {
+      console.warn('[steer] queue failed, falling back to hard abort', e)
+    }
+    this.$store.ui.showToast('Steering queued — finishing thought…', 'info')
+    // Flag for steer_ack from the stream
+    this._steerAcked = false
+    // 2) Grace window: keep streaming so the model can finish its current
+    // sentence and the backend can do a clean aclose (KV kept). Wait for
+    // steer_ack or at most ~1200ms. Minimum 400ms avoids aborting mid-token.
+    const t0 = Date.now()
+    while (Date.now() - t0 < 1200) {
+      if (this._steerAcked) break
+      await new Promise(r => setTimeout(r, 80))
+      // after 700ms we have given the server enough time to flush/break
+      if (Date.now() - t0 > 700 && this._steerAcked) break
+    }
+    // 3) Fallback abort if still streaming (server already broke gracefully,
+    // this is just client cleanup). The backend already fast-unregistered.
     sseService.abort()
     this.$store.chat.stopStreaming()
     this.isLoading = false
     this.$store.chat.isLoading = false
     this.$store.chat.toolStatus.active = false
-    // Small settle so the backend finalizes the cancelled stream (saves the
-    // partial) before the steering message is appended.
-    await new Promise(r => setTimeout(r, 300))
+    // 4) Small settle so the backend finalizes the partial before the
+    // steering message is appended (send_message polls _active_streams).
+    await new Promise(r => setTimeout(r, 250))
     this.inputMessage = text
     await this.sendMessage()
   },
@@ -714,6 +739,13 @@ const chatComponent = () => ({
     if (foreignConv && data.type !== 'done' && data.type !== 'error') return
 
     const msg = this.messages[msgIndex]
+
+    // steer_ack is a control signal — handle even without a target row
+    if (data.type === 'steer_ack') {
+      this._steerAcked = true
+      console.log('[steer] ack received — KV preserved')
+      return
+    }
 
     // Content/tool cases need a target row; done/error must survive without
     // one so global cleanup always runs.
@@ -1138,25 +1170,37 @@ const chatComponent = () => ({
   async deleteMessage(id, e) {
     e?.stopPropagation()
     const target = this.messages.find(m => m.id === id) || this.$store.chat.messages.find(m => m.id === id)
-    const vg = target?.version_group || null
+    if (!target) return
+    const vg = target.version_group || null
+    const ver = target.version || null
     if (!confirm('Delete this message?')) return
     try {
+      // Version-aware delete: backend resolves the exact row via
+      // (version_group, version) even if id is a stale representative.
+      // Without ?version it always deletes the row matching id, which for a
+      // deduplicated view is the *latest* — the bug you observed.
       try {
-        await api.delete(`/api/messages/${id}`)
+        if (vg && ver != null) {
+          await api.delete(`/api/messages/${encodeURIComponent(id)}?version=${encodeURIComponent(ver)}`)
+        } else {
+          await api.delete(`/api/messages/${encodeURIComponent(id)}`)
+        }
       } catch (err) {
         // Stale client-side id (e.g. a placeholder whose done event never
-        // patched it) — resolve the authoritative row for this slot from the
-        // server via the version group and retry once.
+        // patched it) — resolve the authoritative row for this slot and retry
+        // with the version-aware form.
         if (!vg) throw err
         const vs = await api.get(`/api/versions/${encodeURIComponent(vg)}`)
-        const tv = (vs.versions || []).find(v => v.version === target?.version) ||
+        const tv = (vs.versions || []).find(v => v.version === ver) ||
                    (vs.versions || []).slice(-1)[0]
         if (!tv) throw err
-        await api.delete(`/api/messages/${tv.id}`)
+        await api.delete(`/api/messages/${encodeURIComponent(tv.id)}?version=${encodeURIComponent(tv.version)}`)
+        // Use the resolved id for optimistic removal below
+        id = tv.id
       }
-      // Optimistically remove
+      // Optimistically remove the deleted row from the raw store
       this.$store.chat.removeMessage(id)
-      // If versioned, reload conversation to show previous version in-place (avoid blank)
+      // If versioned, reload to show the next-latest version in place
       if (vg) {
         try {
           const cid = this.$store.chat.currentConversationId
@@ -1341,6 +1385,10 @@ const chatComponent = () => ({
       // Determine the highest version number (for max_version)
       const maxVer = versions.reduce((max, v) => Math.max(max, v.version || 1), 1)
 
+      // Sync id to the target row so subsequent delete/edit act on the
+      // displayed version, not the stale latest. Keep group stable.
+      msg.id = targetVersion.id
+      msg.version_group = targetVersion.version_group || msg.version_group
       // Swap the message content with the target version
       msg.content = targetVersion.content
       msg.version = targetVersion.version

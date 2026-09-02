@@ -156,12 +156,24 @@ class LLMClient:
                             if response.status == 400:
                                 lower = error_text.lower()
                                 popped = False
-                                for key in ("stream_options", "reasoning_effort", "chat_template_kwargs", "thinking", "top_k"):
+                                for key in ("cache_prompt", "stream_options", "reasoning_effort", "chat_template_kwargs", "thinking", "top_k"):
                                     if key in lower and key in payload:
                                         print(f"[DEBUG] Provider {current_base_url} rejected {key}, retrying without it")
                                         payload.pop(key, None)
                                         popped = True
-                                # ponytail: free models (muse-spark) 400 with empty choices when history/tools too long
+                                # Generic fallback: NVIDIA etc. return "Unsupported parameter(s): <name>"
+                                # Catch any future llama.cpp-only keys without hard-coding them.
+                                if not popped:
+                                    import re as _re
+                                    m = _re.search(r"unsupported parameter\(s\)\s*:\s*([a-z0-9_\-, ]+)", lower)
+                                    if m:
+                                        for raw in m.group(1).split(","):
+                                            key = raw.strip().strip("\"'`[]{}: ")
+                                            # keys may contain spaces/hyphens; normalize
+                                            if key in payload:
+                                                print(f"[DEBUG] Provider {current_base_url} rejected {key} (generic), retrying without it")
+                                                payload.pop(key, None)
+                                                popped = True
                                 # retry without tools — history already truncated, but tools may still be too much
                                 if not popped and '"choices":[{"index":0,"message":{"role":"assistant"},"finish_reason":null}]' in error_text.replace(" ", "") and "tools" in payload:
                                     print(f"[DEBUG] Provider {current_base_url} rejected tools/history for {payload.get('model')}, retrying without tools")

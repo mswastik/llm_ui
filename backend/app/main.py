@@ -482,6 +482,31 @@ async def send_message(conversation_id: str, request: Request):
             "files": files,
             "provider_id": data.get("provider_id")
         }
+@app.post("/api/conversations/{conversation_id}/steer")
+async def queue_steer(conversation_id: str, request: Request):
+    """Queue a KV-preserving steer for an active stream.
+
+    Frontend calls this *before* aborting SSE. The active _core_stream_handler
+    sees the flag at the next chunk boundary, breaks gracefully (clean
+    aclose on the llama.cpp stream -> slot KV retained), flushes the partial
+    assistant message, and fast-unregisters. The caller then sends the real
+    steering message via POST /messages as a normal follow-up whose prompt
+    prefix reuses the cached context.
+    """
+    try:
+        data = await request.json() if request.headers.get("content-type","").startswith("application/json") else {}
+    except Exception:
+        data = {}
+    # Mark pending regardless of whether a stream is currently active — the
+    # handler checks at chunk boundary; if no stream is active this is a no-op
+    # and the normal /messages flow handles ordering.
+    await _set_steer_pending(conversation_id)
+    # Also ensure the active-stream poll in /messages will unblock quickly:
+    # we do NOT append the steering message here; frontend will POST it
+    # separately after the grace window so ordering stays DB-correct.
+    return {"queued": True, "conversation_id": conversation_id}
+
+
 
 
 
@@ -866,6 +891,40 @@ async def _stream_with_stall_timeout(generator, initial_timeout=600, stall_timeo
     except asyncio.TimeoutError:
         which = "initial (prompt processing)" if first_chunk else "inter-chunk"
         print(f"[WATCHDOG] Stream stalled for {timeout}s ({which}) — no chunks received")
+
+
+# ── Steering: KV-preserving graceful interrupt ─────────────────────────
+# Frontend queues a steer (POST /api/conversations/{id}/steer) instead of
+# hard-aborting SSE. The active _core_stream_handler sees the flag at the
+# next chunk boundary, breaks gracefully (clean aclose -> llama.cpp slot KV
+# retained), flushes the partial, and unregisters fast. The steer message
+# is then sent as a normal follow-up whose prompt reuses the full prefix.
+_steer_pending: Dict[str, float] = {}
+_steer_lock = asyncio.Lock()
+
+
+async def _set_steer_pending(conversation_id: str) -> None:
+    async with _steer_lock:
+        _steer_pending[conversation_id] = _time.monotonic()
+        print(f"[STEER] queued for {conversation_id[:8]}")
+
+
+async def _consume_steer_pending(conversation_id: str) -> bool:
+    async with _steer_lock:
+        if conversation_id in _steer_pending:
+            _steer_pending.pop(conversation_id, None)
+            return True
+        return False
+
+
+async def _is_steer_pending(conversation_id: str) -> bool:
+    async with _steer_lock:
+        return conversation_id in _steer_pending
+
+
+async def _clear_steer_pending(conversation_id: str) -> None:
+    async with _steer_lock:
+        _steer_pending.pop(conversation_id, None)
 
 
 # ── Active stream registry (steering support) ──────────────────────────────
@@ -1770,10 +1829,27 @@ async def _core_stream_handler(
             
             # Save original prefix for KV-friendly autos (Phase A) — llm_messages will be mutated in the loop
             original_llm_messages = list(llm_messages)
+            # KV-preserving steer: set when frontend queues a steer; we break
+            # gracefully at the next chunk boundary so the llama.cpp slot's KV
+            # is retained (clean aclose) and the partial is flushed.
+            steered = False
             # Main conversation loop - handles multiple tool calls with content in between
             max_tool_iterations = 35  # Prevent infinite loops
             tool_iteration = 0
             while tool_iteration < max_tool_iterations:
+                # Steer can arrive between tool iterations (e.g. during tool run)
+                if await _is_steer_pending(conversation_id):
+                    print(f"[STEER] interrupt before iteration {tool_iteration+1} for {conversation_id[:8]}")
+                    steered = True
+                    try:
+                        await _flush_placeholder(force=True)
+                    except Exception:
+                        pass
+                    try:
+                        yield f"data: {json.dumps({'type': 'steer_ack', 'conversation_id': conversation_id})}\n\n"
+                    except Exception:
+                        pass
+                    break
                 tool_iteration += 1
                 print(f"[DEBUG] Conversation loop iteration {tool_iteration}")
 
@@ -1888,15 +1964,31 @@ async def _core_stream_handler(
                             import traceback
                             traceback.print_exc()
                         await asyncio.sleep(0)
+                        # KV-preserving graceful steer: check at chunk boundary
+                        if await _is_steer_pending(conversation_id):
+                            print(f"[STEER] graceful interrupt at chunk boundary for {conversation_id[:8]} ({len(assistant_message)} chars)")
+                            steered = True
+                            try:
+                                await _flush_placeholder(force=True)
+                            except Exception:
+                                pass
+                            try:
+                                yield f"data: {json.dumps({'type': 'steer_ack', 'conversation_id': conversation_id})}\n\n"
+                            except Exception:
+                                pass
+                            break
                 except asyncio.TimeoutError:
                     # Safety net — _stream_with_stall_timeout already catches this,
                     # but handle it here to prevent unhandled exception propagation.
                     print(f"[WATCHDOG] Unhandled timeout in stream processing for request {request_id}")
                     # Fall through to save partial response and yield done
 
+                # Steered: skip tool execution — save partial and exit quickly
+                if steered:
+                    print(f"[STEER] skipping tool execution for {conversation_id[:8]} due to steer")
+                    break
                 # If we have pending tool calls, execute them and continue the loop
                 if pending_tool_calls:
-                    # The OpenAI-compatible protocol requires a role='tool' message to be
                     # the response to a preceding assistant message carrying tool_calls.
                     # Some backends (llama.cpp proxying to strict upstream providers)
                     # reject the request with HTTP 400 if this pairing is missing.
@@ -1920,8 +2012,12 @@ async def _core_stream_handler(
                     llm_messages.append(assistant_tc_msg)
 
                     for i, pending_tool_call in enumerate(pending_tool_calls):
+                        # Steer can arrive while previous tool was running
+                        if await _is_steer_pending(conversation_id):
+                            print(f"[STEER] interrupt during tool loop for {conversation_id[:8]} before tool {pending_tool_call['name']}")
+                            steered = True
+                            break
                         print(f"Executing tool {i+1}/{len(pending_tool_calls)}: {pending_tool_call['name']}")
-
                         # Send tool call start event
                         yield f"data: {json.dumps({'type': 'tool_call_start', 'tool': pending_tool_call['name'], 'args': pending_tool_call['arguments']})}\n\n"
                         tool_calls_history.append(pending_tool_call)
@@ -2053,6 +2149,9 @@ async def _core_stream_handler(
                         except Exception as _ve:
                             print(f"[VISION] inject failed: {_ve}")
                     print(f"[DEBUG] All {len(pending_tool_calls)} tools executed, continuing conversation with results")
+                    if steered:
+                        print(f"[STEER] tools interrupted by steer — exiting loop for {conversation_id[:8]}")
+                        break
                     # Record skill usage (Phase 4) for the improvement loop.
                     try:
                         from database.skill_crud import record_skill_run
@@ -2163,6 +2262,30 @@ async def _core_stream_handler(
                 saved_msg_id = assistant_saved["id"] if isinstance(assistant_saved, dict) else None
                 saved_version_group = assistant_saved.get("version_group") if isinstance(assistant_saved, dict) else version_group
                 placeholder_id = saved_msg_id
+            # ── Steered fast-path: skip heavy post-actions so SSE closes fast
+            # and next turn's prefill can reuse the full prefix KV.
+            if steered:
+                await _consume_steer_pending(conversation_id)
+                print(f"[STEER] fast done for {conversation_id[:8]} — saved {len(assistant_message)} chars, {len(message_blocks)} blocks, skipping autos")
+                # Persist a minimal steer marker so the cut is visible on reload
+                try:
+                    from sqlalchemy import select as _select_s
+                    from backend.database.models import Message as _MsgS
+                    _rs = await db.execute(_select_s(_MsgS).where(_MsgS.id == saved_msg_id))
+                    _row_s = _rs.scalar_one_or_none()
+                    if _row_s is not None:
+                        _meta_s = dict(_row_s.extra_metadata or {})
+                        _existing_s = list(_meta_s.get("blocks") or [])
+                        _meta_s["blocks"] = _existing_s + [{"type": "auto_action", "action": "steer", "status": "completed", "detail": {"chars": len(assistant_message), "blocks": len(message_blocks)}, "ts": int(_time.time()*1000)}]
+                        _row_s.extra_metadata = _meta_s
+                        await db.commit()
+                except Exception as _e_s:
+                    print(f"[STEER] marker persist failed: {_e_s}")
+                try:
+                    yield f"data: {json.dumps({'type': 'done', 'message_id': saved_msg_id, 'version_group': saved_version_group, 'version': version, 'steered': True})}\n\n"
+                except Exception:
+                    pass
+                return
             # and streamed live so the thread shows "what the model did after answering".
             import time as _aa_time
             activity_blocks: list = []
@@ -2342,10 +2465,14 @@ async def _core_stream_handler(
             # Yield done event (include real ids so frontend can fix placeholder after regenerate)
             yield f"data: {json.dumps({'type': 'done', 'message_id': saved_msg_id, 'version_group': saved_version_group, 'version': version})}\n\n"
     except asyncio.CancelledError:
-        # Request was cancelled by client (Stop button) - this is normal, don't log as error.
-        # The placeholder was already committed at stream start and updated incrementally;
-        # flush the latest in-memory blocks so nothing typed/generated is lost.
+        # Request was cancelled by client (Stop button or fallback abort after
+        # steer grace window) — flush partial and clear any queued steer so
+        # the next turn doesn't see a stale flag.
         print(f"Request {request_id} cancelled by client")
+        try:
+            await _clear_steer_pending(conversation_id)
+        except Exception:
+            pass
         await _persist_partial_turn(
             conversation_id, assistant_message, thinking_content,
             message_blocks, model, version, version_group,
@@ -2361,6 +2488,10 @@ async def _core_stream_handler(
         print(f"Error in event generator: {e}")
         import traceback
         traceback.print_exc()
+        try:
+            await _clear_steer_pending(conversation_id)
+        except Exception:
+            pass
         saved_id = await _persist_partial_turn(
             conversation_id, assistant_message, thinking_content,
             message_blocks, model, version, version_group,
@@ -2933,14 +3064,18 @@ async def upload_chat_file(file: UploadFile = File(...)):
     """Upload a file for use in a chat message (images, documents, etc.)"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
-    
+
     # Read file content
     content = await file.read()
     file_size = len(content)
-    
-    if file_size > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Max size: {MAX_UPLOAD_SIZE} bytes")
-    
+
+    try:
+        max_size = int(settings_manager.get_settings().get("max_upload_size", MAX_UPLOAD_SIZE))
+    except Exception:
+        max_size = MAX_UPLOAD_SIZE
+    if file_size > max_size:
+        raise HTTPException(status_code=400, detail=f"File too large ({file_size} bytes). Max size: {max_size} bytes ({max_size // (1024*1024)} MB)")
+
     # Detect content type from file or use provided
     import mimetypes
     content_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
@@ -2967,60 +3102,88 @@ async def upload_chat_file(file: UploadFile = File(...)):
 @app.post("/api/documents/upload")
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Upload a document to the knowledgebase and process it for RAG"""
-    if not file.filename:
+    raw_name = (file.filename or "").strip()
+    if not raw_name:
         raise HTTPException(status_code=400, detail="No file provided")
-    
-    # Check file size
-    file.file.seek(0, 2)  # Seek to end
-    file_size = file.file.tell()
-    file.file.seek(0)  # Seek back to start
-    
-    if file_size > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Max size: {MAX_UPLOAD_SIZE} bytes")
-    
-    # Create upload directory if it doesn't exist
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Generate unique filename
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-    
-    # Save the file
+
+    # Read content first — single source of truth for size (avoids SpooledTemporaryFile seek quirks)
     content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
-    
-    # Determine file type
+    file_size = len(content)
+
+    # Dynamic limit so changes via Settings → Save take effect without restart
+    try:
+        max_size = int(settings_manager.get_settings().get("max_upload_size", MAX_UPLOAD_SIZE))
+    except Exception:
+        max_size = MAX_UPLOAD_SIZE
+
+    if file_size == 0:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({file_size} bytes). Max size: {max_size} bytes ({max_size // (1024*1024)} MB). Increase it in Settings or set MAX_UPLOAD_SIZE env var."
+        )
+
+    # Robust extension detection: strip, lower, fallback to content-type
+    file_ext = os.path.splitext(raw_name)[1].lower().strip()
+    content_type = (file.content_type or "").lower().strip()
+    # Fallback when browser omits extension (common on mobile) or uses weird casing/spaces
+    if file_ext not in [".txt", ".md", ".pdf", ".docx", ".json", ".yaml", ".yml"]:
+        if "pdf" in content_type:
+            file_ext = ".pdf"
+        elif "officedocument" in content_type or "msword" in content_type or raw_name.lower().endswith(".docx"):
+            file_ext = ".docx"
+        elif "json" in content_type:
+            file_ext = ".json"
+        elif "yaml" in content_type or "yml" in content_type:
+            file_ext = ".yaml"
+        elif content_type.startswith("text/"):
+            file_ext = ".txt"
+
+    # Determine file type BEFORE writing to disk
     file_type = "unknown"
     if file_ext in [".txt", ".md"]:
         file_type = "text"
-    elif file_ext in [".pdf"]:
+    elif file_ext == ".pdf":
         file_type = "pdf"
-    elif file_ext in [".docx"]:
+    elif file_ext == ".docx":
         file_type = "document"
     elif file_ext in [".json", ".yaml", ".yml"]:
         file_type = "data"
 
     if file_type == "unknown":
-        raise HTTPException(status_code=400, detail="Unsupported file type. Supported: txt, md, pdf, docx, json, yaml, yml")
-    
+        print(f"[UPLOAD] rejected {raw_name!r} ext={file_ext!r} content_type={content_type!r} size={file_size}")
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{file_ext or '(none)'}'. Supported: txt, md, pdf, docx, json, yaml, yml")
+
+    print(f"[UPLOAD] {raw_name!r} -> {file_ext} ({file_type}) {file_size} bytes, content_type={content_type!r}")
+
+    # Create upload directory if it doesn't exist
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    # Generate unique filename preserving (now-normalized) extension
+    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+    # Save the file
+    with open(file_path, "wb") as f:
+        f.write(content)
+
     # Create document record
     async with get_db() as db:
         document = await create_document(
             db,
-            filename=file.filename,
+            filename=raw_name,
             filepath=file_path,
             file_type=file_type,
             size_bytes=file_size,
-            metadata={"original_filename": file.filename}
+            metadata={"original_filename": raw_name}
         )
-        
+
         # Mark as processing
         await update_document_status(db, document["id"], "processing", {})
-        
+
         document_id = document["id"]
-    
+
     # Process document for RAG in background
     background_tasks.add_task(
         process_document_background,
@@ -3028,12 +3191,12 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
         file_path,
         file_type
     )
-    
+
     return {
         "status": "processing",
         "document": {
             "id": document_id,
-            "filename": file.filename,
+            "filename": raw_name,
             "file_type": file_type,
             "size_bytes": file_size,
             "status": "processing"

@@ -465,21 +465,22 @@ async def create_document(
         filepath=filepath,
         file_type=file_type,
         size_bytes=size_bytes,
-        metadata=metadata
+        _metadata=metadata,
     )
     db.add(document)
     await db.flush()
-    
+
     return {
         "id": document.id,
         "filename": document.filename,
+        "filepath": document.filepath,
         "file_type": document.file_type,
         "size_bytes": document.size_bytes,
         "status": document.status,
-        "uploaded_at": document.uploaded_at.isoformat(),
+        "metadata": document._metadata or {},
+        "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
+        "processed_at": document.processed_at.isoformat() if document.processed_at else None,
     }
-
-
 async def update_document_status(
     db: AsyncSession,
     document_id: str,
@@ -491,12 +492,15 @@ async def update_document_status(
         select(Document).where(Document.id == document_id)
     )
     document = result.scalar_one_or_none()
-    
+
     if document:
         document.status = status
-        if metadata:
-            document.metadata = metadata
+        if metadata is not None:
+            document._metadata = metadata
         if status == "completed":
+            document.processed_at = datetime.utcnow()
+        elif status == "failed":
+            # keep uploaded_at; processed_at marks attempt time
             document.processed_at = datetime.utcnow()
 
 
@@ -508,15 +512,21 @@ async def get_documents(db: AsyncSession, limit: int = 50) -> List[Dict]:
         .limit(limit)
     )
     documents = result.scalars().all()
-    
+
     return [
         {
             "id": doc.id,
             "filename": doc.filename,
+            "filepath": doc.filepath,
             "file_type": doc.file_type,
             "size_bytes": doc.size_bytes,
+            # compat aliases for older frontend expects file_size / content_type
+            "file_size": doc.size_bytes,
+            "content_type": doc.file_type,
             "status": doc.status,
-            "uploaded_at": doc.uploaded_at.isoformat(),
+            "metadata": doc._metadata or {},
+            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
         }
         for doc in documents
     ]
@@ -684,39 +694,31 @@ async def delete_message(db: AsyncSession, message_id: str, version: Optional[in
         await db.delete(row)
         return True
 
-    result = await db.execute(
-        select(Message).where(Message.id == message_id)
-    )
-    message = result.scalar_one_or_none()
-
-    if not message:
-        return False
-
-    await db.delete(message)
-    return True
-
-
 async def get_document(db: AsyncSession, document_id: str) -> Optional[Dict]:
     """Get a document by ID"""
     result = await db.execute(
         select(Document).where(Document.id == document_id)
     )
     document = result.scalar_one_or_none()
-    
+
     if not document:
         return None
-    
+
     return {
         "id": document.id,
         "filename": document.filename,
         "filepath": document.filepath,
         "file_type": document.file_type,
         "size_bytes": document.size_bytes,
+        "file_size": document.size_bytes,
+        "content_type": document.file_type,
         "status": document.status,
-        "metadata": document.metadata,
-        "uploaded_at": document.uploaded_at.isoformat(),
+        "metadata": document._metadata or {},
+        "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
         "processed_at": document.processed_at.isoformat() if document.processed_at else None,
     }
+
+
 
 
 async def delete_document(db: AsyncSession, document_id: str) -> bool:

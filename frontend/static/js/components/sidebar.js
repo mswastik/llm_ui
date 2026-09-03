@@ -69,6 +69,12 @@ const sidebar = () => ({
     })
   },
 
+  // Capture store reference once. Avoids the `this.$store.ui.setSidebarWidth is not a function`
+  // error when the mousemove handler runs through a stale `this` context (Alpine Proxy edge cases).
+  _getUiStore() {
+    return (this.$store && this.$store.ui) || (typeof Alpine !== 'undefined' && Alpine.store('ui')) || null
+  },
+
   // ─── Conversations ────────────────────────────────────
   async loadConversations() {
     try {
@@ -192,9 +198,12 @@ const sidebar = () => ({
   handleMouseMove(e) {
     if (!this.isResizing) return
     const w = e.clientX
-    if (w >= this.minWidth && w <= this.maxWidth) {
-      this.$store.ui.setSidebarWidth(w)
-    }
+    if (w < this.minWidth || w > this.maxWidth) return
+    const ui = this._getUiStore()
+    if (!ui) return
+    // Write directly to the reactive property; no method call needed.
+    ui.sidebarWidth = w
+    try { localStorage.setItem('sidebarWidth', String(w)) } catch (_) {}
   },
 
   handleMouseUp() {

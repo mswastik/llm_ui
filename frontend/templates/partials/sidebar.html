@@ -65,7 +65,7 @@
     </div>
 
     <!-- Search -->
-    <div class="px-3 pt-3 pb-1" x-show="$store.ui.sidebarWidth > 180">
+    <div class="px-3 pt-3 pb-1" x-cloak x-show="$store.ui.sidebarWidth > 180">
       <div class="relative">
         <i
           class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] text-sm"
@@ -81,7 +81,7 @@
     </div>
 
     <!-- Agent Filter (Multi-Select Dropdown) -->
-    <div class="px-3 pt-2 pb-0" x-show="$store.ui.sidebarWidth > 180" x-data="{ filterOpen: false }">
+    <div class="px-3 pt-2 pb-0" x-cloak x-show="$store.ui.sidebarWidth > 180" x-data="{ filterOpen: false }">
       <div class="relative" @click.outside="filterOpen = false">
         <button
           @click="filterOpen = !filterOpen"

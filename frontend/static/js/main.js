@@ -54,7 +54,7 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // ═══════════════════════════════════════════════════════════
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
-import { sidebar } from './components/sidebar.js?v=63'
+import { sidebar } from './components/sidebar.js?v=64'
 import { chatComponent } from './components/chat.js?v=80'
 import { settings } from './components/settings.js?v=72'
 import { skillsPanel } from './components/skills.js?v=67'

@@ -23,15 +23,29 @@
       </div>
     </div>
 
-    <!-- Expand Trigger (only visible when collapsed) -->
+    <!-- Expand Strip — only visible when collapsed. Sits in the flex column as a normal child
+         so the rest of the sidebar (header/list/footer) is hidden via the wrapper below. -->
     <button
-      @click="$store.ui.toggleSidebar()"
       x-show="$store.ui.sidebarCollapsed"
-      class="absolute right-1 top-1/2 -translate-y-1/2 z-40 p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all"
+      x-cloak
+      @click="$store.ui.toggleSidebar()"
+      class="flex-1 w-full flex flex-col items-center justify-between py-3 cursor-pointer
+             text-[var(--text-tertiary)] hover:text-[var(--text-primary)]
+             hover:bg-[var(--bg-hover)]/40 transition-colors"
       title="Expand sidebar"
+      aria-label="Expand sidebar"
     >
-      <i class="ph ph-arrow-right text-lg"></i>
+      <i class="ph ph-sidebar text-lg opacity-60"></i>
+      <i class="ph ph-caret-right text-base opacity-60"></i>
     </button>
+
+    <!-- Normal sidebar content — hidden when collapsed -->
+    <div
+      x-show="!$store.ui.sidebarCollapsed"
+      x-cloak
+      class="flex-1 flex flex-col min-h-0"
+    >
+
 
     <!-- Header -->
     <div
@@ -251,25 +265,8 @@
       </div>
     </div>
 
-    <!-- Collapsed Icons -->
-    <div
-      class="flex-1 overflow-y-auto px-2 py-3 space-y-1 flex flex-col items-center"
-      x-show="$store.ui.sidebarCollapsed"
-    >
-      <template x-for="conv in conversations.slice(0, 8)" :key="conv.id">
-        <div
-          @click="loadConversation(conv.id); $store.ui.sidebarCollapsed = false"
-          class="p-2.5 rounded-lg cursor-pointer transition-colors"
-          :class="currentConversationId === conv.id ? 'bg-[var(--accent-primary-light)] text-[var(--accent-primary)]' : 'text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
-          :title="conv.title"
-        >
-          <i
-            class="ph ph-chat-circle text-lg"
-            :class="currentConversationId === conv.id ? 'ph-fill' : ''"
-          ></i>
-        </div>
-      </template>
-    </div>
+    <!-- Collapsed state: rest of sidebar content is hidden; expand strip above handles it. -->
+
 
     <!-- Footer -->
     <div
@@ -306,31 +303,5 @@
       </button>
     </div>
 
-    <!-- Footer (Collapsed) -->
-    <div
-      class="border-t border-[var(--border-primary)] flex-shrink-0 p-2 space-y-1 flex flex-col items-center"
-      x-show="$store.ui.sidebarCollapsed"
-    >
-      <button
-        @click="$store.ui.toggleDarkMode()"
-        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        title="Toggle theme"
-      >
-        <i class="ph text-lg" :class="$store.ui.darkMode ? 'ph-sun' : 'ph-moon'"></i>
-      </button>
-      <button
-        @click="$dispatch('open-documents'); $store.ui.openDocuments()"
-        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        title="Knowledge Base"
-      >
-        <i class="ph ph-books text-lg"></i>
-      </button>
-      <button
-        @click="$dispatch('open-settings'); $store.ui.openSettings()"
-        class="p-2.5 rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors"
-        title="Settings"
-      >
-        <i class="ph ph-gear text-lg"></i>
-      </button>
-    </div>
+    </div><!-- /normal sidebar content wrapper -->
   </aside>

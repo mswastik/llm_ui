@@ -24,20 +24,20 @@
 >
   <!-- Header / transport bar -->
   <div
-    class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border-primary)]
+    class="flex items-center gap-3 px-4 py-1 border-b border-[var(--border-primary)]
            bg-[var(--bg-secondary)] flex-shrink-0"
   >
-    <button @click="close()" class="btn btn-icon btn-ghost" title="Back (Esc)">
+    <button @click="close()" class="btn btn-icon btn-xs btn-ghost" title="Back (Esc)">
       <i class="ph ph-arrow-left text-lg"></i>
     </button>
     <div class="flex-1 min-w-0">
       <h2 class="font-semibold text-sm truncate" x-text="book?.title || 'Reader'"></h2>
-      <p class="text-xs text-[var(--text-tertiary)]" x-show="sentences.length">
+      <!--<p class="text-xs text-[var(--text-tertiary)]" x-show="sentences.length">
         <span x-text="`Sentence ${currentIdx + 1} of ${sentences.length}`"></span>
         <span x-show="book?.file_type === 'pdf' && pdfReady">
           · <span x-text="`Page ${currentPdfPage} of ${pdfNumPages || '?'}`"></span>
         </span>
-      </p>
+      </p> -->
     </div>
 
     <!-- PDF nav controls -->
@@ -48,7 +48,7 @@
       <button
         @click="goToPage(1)"
         :disabled="currentPdfPage <= 1"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="First page"
       >
         <i class="ph ph-skip-back text-lg"></i>
@@ -56,7 +56,7 @@
       <button
         @click="goToPage(currentPdfPage - 1)"
         :disabled="currentPdfPage <= 1"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="Previous page (←)"
       >
         <i class="ph ph-caret-left text-lg"></i>
@@ -75,7 +75,7 @@
       <button
         @click="goToPage(currentPdfPage + 1)"
         :disabled="currentPdfPage >= pdfNumPages"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="Next page (→)"
       >
         <i class="ph ph-caret-right text-lg"></i>
@@ -83,7 +83,7 @@
       <button
         @click="goToPage(pdfNumPages)"
         :disabled="currentPdfPage >= pdfNumPages"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="Last page"
       >
         <i class="ph ph-skip-forward text-lg"></i>
@@ -95,7 +95,7 @@
     <button
       x-show="isPlaying && pageMap[currentIdx] && pageMap[currentIdx] !== currentPdfPage"
       @click="_goToSpokenPage()"
-      class="btn btn-icon btn-ghost"
+      class="btn btn-icon btn-xs btn-ghost"
       title="Go to current spoken page"
     >
       <i class="ph ph-crosshair text-lg"></i>
@@ -105,7 +105,7 @@
     <button
       x-show="book?.file_type === 'pdf' && pdfReady"
       @click="findOpen ? closeFind() : openFind()"
-      class="btn btn-icon btn-ghost"
+      class="btn btn-icon btn-xs btn-ghost"
       :class="findOpen ? 'bg-[var(--bg-tertiary)]' : ''"
       title="Find in document (Ctrl+F)"
     >
@@ -116,7 +116,7 @@
     <button
       x-show="book?.file_type === 'pdf' && pdfReady"
       @click="outlineOpen = !outlineOpen"
-      class="btn btn-icon btn-ghost"
+      class="btn btn-icon btn-xs btn-ghost"
       :class="outlineOpen ? 'bg-[var(--bg-tertiary)]' : ''"
       title="Outline / bookmarks"
     >
@@ -157,7 +157,7 @@
       <button
         @click="prevSentence()"
         :disabled="!currentIdx"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="Previous sentence"
       >
         <i class="ph ph-rewind text-lg"></i>
@@ -165,7 +165,7 @@
       <button
         @click="nextSentence()"
         :disabled="currentIdx >= sentences.length - 1"
-        class="btn btn-icon btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost"
         title="Next sentence"
       >
         <i class="ph ph-fast-forward text-lg"></i>
@@ -174,15 +174,16 @@
 
     <button
       @click="toggle()"
-      class="btn btn-primary px-4"
+      class="btn btn-primary btn-xs px-4"
       :title="isPlaying ? 'Pause (Space)' : 'Play (Space)'"
     >
       <i class="ph text-lg" :class="isPlaying ? 'ph-pause' : 'ph-play'"></i>
-      <span class="ml-1.5 text-sm font-medium" x-text="isPlaying ? 'Pause' : 'Play'"></span>
+      <span class="ml-1.5 text-xs" x-text="isPlaying ? 'Pause' : 'Play'"></span>
     </button>
   </div>
 
   <!-- Progress bar -->
+  <!--
   <div
     class="h-1 bg-[var(--bg-tertiary)] flex-shrink-0"
     x-show="sentences.length"
@@ -192,7 +193,7 @@
       :style="`width: ${progressPct()}%`"
     ></div>
   </div>
-
+-->
   <!-- Error banner -->
   <div
     x-show="error"

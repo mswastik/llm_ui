@@ -146,6 +146,173 @@ def _money_to_words(raw, suffix):
     return "zero dollars"
 
 
+def _bare_number_to_words(m):
+    """Rewrite a bare number for TTS. The default 'one thousand nine hundred
+    and sixty four' sounds wrong for years; TTS engines also sometimes read
+    4-digit years that way. The standard English convention is to split the
+    year as 'nineteen sixty four' / 'two thousand four'. A bare 4-digit
+    number in 1000–2099 is treated as a year by default (see
+    _looks_like_year) unless an explicit reference prefix ("page 1207",
+    "line 1812") marks it as a cardinal.
+
+    Already-decorated cases (money, percent, ordinal, glued-to-unit) are
+    handled by their own rules above, so this only sees plain integers.
+    """
+    from num2words import num2words
+    raw = m.group(1)
+    plural = m.group(2).startswith("s")
+    # Decimals ("0.1", "3.14") — read them point-style, "zero point one" /
+    # "three point one four". int() below would crash with
+    # 'invalid literal for int() with base 10' and silently kill the
+    # sentence's TTS.
+    if "." in raw:
+        whole, _, frac = raw.partition(".")
+        whole_w = num2words(int(whole or "0")).replace(",", "") if whole else "zero"
+        frac_w = " ".join(num2words(int(d)).replace(",", "") for d in frac)
+        return f"{whole_w} point {frac_w}"
+    n = int(raw.replace(",", ""))
+    is_year = _looks_like_year(m.string, m.start())
+    if is_year:
+        spoken = _year_to_words(n)
+        if plural:
+            # Plural-year shorthand: 1990s -> "nineteen nineties",
+            # 2000s -> "two thousands", 1900s -> "nineteen hundreds".
+            if n % 100 == 0:
+                # 1900s, 2000s, 1800s — drop the trailing "hundred"/"thousand"
+                # and add s.
+                spoken = spoken.replace(" hundred", " hundreds").replace(" thousand", " thousands")
+                if " hundreds" not in spoken and " thousands" not in spoken:
+                    spoken = spoken + "s"
+            else:
+                # Decade plural: 1990s -> "nineteen nineties", 1980s -> "nineteen
+                # eighties", 2010s -> "twenty tens". Build from the last two
+                # digits of n so we don't have to parse the spoken form. The
+                # prefix is the century without the trailing "hundred" /
+                # "thousand" (we don't say "nineteen hundred nineties").
+                century_val = (n // 100) * 100
+                decade_last2 = n % 100
+                decade = _decade_plural(decade_last2)
+                if 1900 <= century_val <= 1999:
+                    prefix_words = "nineteen"
+                elif 2000 <= century_val <= 2099:
+                    prefix_words = "two thousand" if decade_last2 == 0 else "twenty"
+                elif 1800 <= century_val <= 1899:
+                    prefix_words = "eighteen"
+                elif 1700 <= century_val <= 1799:
+                    prefix_words = "seventeen"
+                elif 1600 <= century_val <= 1699:
+                    prefix_words = "sixteen"
+                elif 1500 <= century_val <= 1599:
+                    prefix_words = "fifteen"
+                elif 1400 <= century_val <= 1499:
+                    prefix_words = "fourteen"
+                elif 1300 <= century_val <= 1399:
+                    prefix_words = "thirteen"
+                elif 1200 <= century_val <= 1299:
+                    prefix_words = "twelve"
+                elif 1100 <= century_val <= 1199:
+                    prefix_words = "eleven"
+                elif 1000 <= century_val <= 1099:
+                    prefix_words = "ten"
+                else:
+                    prefix_words = _year_to_words(century_val)
+                spoken = f"{prefix_words} {decade}"
+        return spoken
+    return num2words(n).replace(",", "")
+
+
+def _looks_like_year(text: str, pos: int) -> bool:
+    """Is the number at text[pos:] a year?
+
+    Default answer for a bare 4-digit number in 1000–2099 is YES — in
+    flowing prose that is overwhelmingly a year ("the 1964 edition"), and
+    even for street numbers ("1812 Maple St") the split reading "eighteen
+    twelve" is what people actually say. The only counter-signal is an
+    explicit reference prefix ("page 1207", "line 1912", "chapter 1815")
+    where the cardinal is correct. Counts with a thousands comma
+    ("1,812 people") and decimals never take the year path.
+    """
+    m = re.match(r"\d[\d,]*", text[pos:])
+    if not m:
+        return False
+    raw = m.group(0)
+    # A thousands comma ("1,812 people") marks a count, not a year; a
+    # decimal is a measurement. Both stay on the cardinal path.
+    if "," in raw or "." in raw:
+        return False
+    try:
+        n = int(raw)
+    except ValueError:
+        return False
+    if n < 1000 or n > 2099:
+        return False
+    prefix = text[max(0, pos - 40):pos].rstrip()
+    last = re.search(r"(\S+)$", prefix)
+    if not last:
+        # Number at the very start of the text/sentence — "1964 was ...".
+        return True
+    prev = last.group(1).lower().rstrip(".")
+    if prev in _NOT_YEAR_PREFIXES:
+        return False
+    return True
+
+
+# Words that put a following 4-digit number in an explicit non-year
+# context (page, line, figure, table, chapter, volume, ... references).
+# With these, "1207" reads as "one thousand two hundred seven" — the
+# cardinal — instead of the split-year "twelve oh seven". Everything
+# else in 1000–2099 is treated as a year.
+_NOT_YEAR_PREFIXES = frozenset({
+    "page", "pages", "p", "pp", "pg", "pgs",
+    "line", "lines", "row", "rows", "column", "columns",
+    "figure", "figures", "fig", "figs",
+    "table", "tables",
+    "chapter", "chapters", "section", "sections", "appendix",
+    "equation", "equations", "eq", "eqn", "eqns",
+    "step", "steps", "rule", "rules", "item", "items",
+    "entry", "entries", "no", "nos", "number", "numbers",
+    "vol", "vols", "volume", "volumes", "issue", "issues",
+    "id", "ids", "serial", "model", "part", "parts", "code",
+})
+
+
+def _year_to_words(n: int) -> str:
+    """Read a year as humans say it: 1964 -> 'nineteen sixty four',
+    1812 -> 'eighteen twelve', 2024 -> 'twenty twenty four'."""
+    from num2words import num2words
+    if n < 1000 or n > 2099:
+        return num2words(n)
+    century, year = divmod(n, 100)
+    # 20xx: 2000-2009 -> "two thousand N"; 2010-2099 -> "twenty N N"
+    if 2000 <= n <= 2009:
+        return "two thousand" if year == 0 else f"two thousand {num2words(year)}"
+    if 2010 <= n <= 2099:
+        return f"twenty {num2words(year)}" if year >= 10 else f"twenty oh {num2words(year)}"
+    # 10xx-19xx: "<century-word> <year>"
+    cent_word = num2words(century)
+    if year == 0:
+        return cent_word + " hundred"
+    if year < 10:
+        return f"{cent_word} oh {num2words(year)}"
+    # 10-99 just reads as a number (twelve, sixty four, ninety two, etc.)
+    return f"{cent_word} {num2words(year)}"
+
+
+# Plural-form mapping for decade-year shorthand: 1990s -> "nineties".
+_DECADE_PLURALS = {
+    10: "tens", 20: "twenties", 30: "thirties", 40: "forties", 50: "fifties",
+    60: "sixties", 70: "seventies", 80: "eighties", 90: "nineties",
+    1: "ones", 2: "twos", 3: "threes", 4: "fours", 5: "fives", 6: "sixes",
+    7: "sevens", 8: "eights", 9: "nines", 0: "noughts",
+}
+
+
+def _decade_plural(last_two: int) -> str:
+    if last_two in _DECADE_PLURALS:
+        return _DECADE_PLURALS[last_two]
+    return f"{last_two}s"
+
+
 # ─── Non-numeric TTS text cleanup ──────────────────────────────
 # Engines (esp. Kokoro/misaki, but Edge too) read literal punctuation and
 # symbols aloud: "~" -> "tilde", URLs spelled out char-by-char, "->" read as
@@ -249,6 +416,16 @@ def normalize_tts_text(text: str, engine: Optional[str] = None,
     # 2. Markdown links [text](url) -> text (URL would otherwise be read aloud).
     text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
 
+    # 2b. Bracketed citation / reference markers — [12], [1, 2], [3-5] —
+    #     from academic PDFs, footnotes and bibliography refs. No TTS
+    #     engine should read "twelve" for a footnote superscript that
+    #     PyPDF2 / PDF.js flattened into the prose. The bracketed group is
+    #     digits + separators only, so "[text]" and arrays like
+    #     "[foo, bar]" are untouched.
+    text = re.sub(r"\[\s*\d+(?:\s*[,;–—-]\s*\d+)*\s*\]", "", text)
+    #     Removing "[12]" can leave "in ." — pull punctuation back.
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+
     # 3. URLs: drop scheme + leading www, and any /path?query, leaving the host.
     text = re.sub(r"https?://", "", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<!\S)www\.", "", text, flags=re.IGNORECASE)
@@ -302,8 +479,11 @@ def normalize_tts_text(text: str, engine: Optional[str] = None,
     text = re.sub(r"\b(\d+)(st|nd|rd|th)\b",
                   lambda m: num2words(int(m.group(1)), to="ordinal"), text)
     # Bare numbers, but not ones glued to : / - . (times, dates, ranges, versions)
-    text = re.sub(r"(?<![\w:./-])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(?![\w:./%-])",
-                  lambda m: num2words(m.group(1).replace(",", "")).replace(",", ""), text)
+    # Match a number optionally followed by a plural 's' (for 'the 1990s') so
+    # we can speak it as 'nineteen nineties'.
+    text = re.sub(
+        r"(?<![\w:./-])(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(s?\b)(?![\w:./%-])",
+        _bare_number_to_words, text)
 
     # 12. Collapse whitespace.
     text = re.sub(r"\s+", " ", text).strip()
@@ -789,6 +969,21 @@ if __name__ == "__main__":
         "42 apples": "forty-two apples",
         "3.14": "three point one four",
         "3.5 stars": "three point five stars",
+        "The rate was 0.1 per year.": "The rate was zero point one per year.",
+        "All 3.5 stars!": "All three point five stars!",
+        # Years: split reading, even without an indicator word.
+        "The 1964 edition was revised.": "The nineteen sixty-four edition was revised.",
+        "1964 was a turning point.": "nineteen sixty-four was a turning point.",
+        "From 1955 to 1960 the map changed.": "From nineteen fifty-five to nineteen sixty the map changed.",
+        "In the 1990s it grew.": "In the nineteen nineties it grew.",
+        # Non-year 4-digit numbers stay cardinal (num2words uses "and").
+        "See page 1207 for details.": "See page one thousand two hundred and seven for details.",
+        "Line 1812 broke.": "Line one thousand eight hundred and twelve broke.",
+        "1,812 people attended.": "one thousand eight hundred and twelve people attended.",
+        # Bracketed citation markers dropped before TTS.
+        "The effect was noted in [12].": "The effect was noted in.",
+        "Doe et al. [1, 2] showed it.": "Doe et al. showed it.",
+        "See [3-5] for details.": "See for details.",
         "12:30 PM": "12:30 PM",  # untouched: time
         "12/25/2024": "12/25/2024",  # untouched: date
         "10-20 items": "10-20 items",  # untouched: range

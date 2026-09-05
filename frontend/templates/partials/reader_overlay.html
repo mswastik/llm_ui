@@ -88,6 +88,49 @@
       >
         <i class="ph ph-skip-forward text-lg"></i>
       </button>
+
+      <!-- PDF zoom: out / % readout (click to reset to 100%) / in / fit-width -->
+      <div class="flex items-center gap-0.5 ml-1 pl-2 border-l border-[var(--border-primary)]">
+        <button
+          @click="zoomOut()"
+          :disabled="zoomPct <= 25"
+          class="btn btn-icon btn-xs btn-ghost"
+          title="Zoom out"
+        >
+          <i class="ph ph-magnifying-glass-minus text-lg"></i>
+        </button>
+        <button
+          @click="zoomReset()"
+          class="text-xs tabular-nums min-w-11 text-center px-1 py-0.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-secondary)]"
+          title="Reset to 100%"
+          x-text="zoomPct + '%'"
+        ></button>
+        <button
+          @click="zoomIn()"
+          :disabled="zoomPct >= 500"
+          class="btn btn-icon btn-xs btn-ghost"
+          title="Zoom in"
+        >
+          <i class="ph ph-magnifying-glass-plus text-lg"></i>
+        </button>
+        <button
+          @click="zoomFit()"
+          class="btn btn-icon btn-xs btn-ghost"
+          title="Fit to width"
+        >
+          <i class="ph ph-scan text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Start TTS from the top of the currently displayed page -->
+      <button
+        @click="playFromPage()"
+        class="btn btn-xs btn-ghost ml-1"
+        title="Start reading from the top of this page"
+      >
+        <i class="ph ph-play-circle text-lg"></i>
+        <span class="text-xs hidden xl:inline">From page</span>
+      </button>
     </div>
 
     <!-- Go back to the sentence currently being spoken (shown only while

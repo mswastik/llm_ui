@@ -26,6 +26,80 @@ from tools.tts_service import TTSService
 # would AttributeError (it's not a method).
 from tools import tts_service as _tts_mod
 
+# Superscript / footnote / citation markers that PyPDF2 flattens into the
+# prose when it extracts text from print-typeset PDFs (PyPDF2 has no
+# font-size info, so a superscript "1" is indistinguishable from a body
+# number). We strip these markers so TTS doesn't read "one" or
+# "asterisk" between sentences. Two locations:
+#
+#   LEADING: a footnote reference in the body text that was rendered
+#   as a superscript BEFORE the word it qualifies. PyPDF2 drops the
+#   superscript baseline, so the marker ends up as a regular character
+#   at the start of the sentence ("*1 W or ds pa ck pow er..."). The
+#   asterisk IS the footnote indicator in some book styles (common in
+#   academic / reference books).
+#
+#   TRAILING: a marker at the end of a sentence ("text.1", "text[3]",
+#   "text *"). More common in narrative books.
+#
+# Patterns are deliberately narrow: bare digits mid-sentence ("I ate 3
+# apples", "page 1") are left alone since they could be the actual
+# content. Only marker-shaped patterns at sentence boundaries are
+# stripped.
+_LEADING_CITATION_RE = re.compile(
+    r"""
+    ^\s* (?:
+          \[\d+(?:[\-,–]\s*\d+)*\]      # [1]  [1, 2]  [1-3]
+        | \*+\d+                          # *1  **2
+        | \*\s+(?=[A-Z])                  # *  followed by capital (footnote in body)
+        | [†‡§¶]                          # unicode footnote / pilcrow
+        | [\u00B9\u00B2\u00B3\u2070-\u2079]+  # unicode superscript digits
+    )
+    \s*
+    """,
+    re.VERBOSE,
+)
+
+_TRAILING_CITATION_RE = re.compile(
+    r"""
+    \s* (?:
+          \[\d+(?:[\-,–]\s*\d+)*\]   # [1]  [1, 2]  [1-3]
+        | \*+                         # *  **  ***
+        | [†‡§¶]                      # dagger / pilcrow / etc.
+        | \^\d+                       # ^1
+        | (?<=[.!?])\d+               # .12  !23  ?7  — superscript reference
+                                      # marker glued AFTER the sentence's
+                                      # terminal punctuation (the standard
+                                      # footnote placement). We deliberately
+                                      # do NOT strip digits BEFORE the period:
+                                      # "There were 12." / "CO2." are prose.
+    )
+    \s* $
+    """,
+    re.VERBOSE,
+)
+
+
+def _strip_citations(sent: str) -> str:
+    # Strip leading marker first (footnote refs in body text), then trailing.
+    sent = _LEADING_CITATION_RE.sub("", sent)
+    sent = _TRAILING_CITATION_RE.sub("", sent)
+    # Stripping a marker can leave "disputed ." — pull punctuation back.
+    sent = re.sub(r"\s+([.!?,;:])", r"\1", sent)
+    return sent.rstrip()
+
+
+# A sentence that is ONLY digits / citation punctuation ("12", "14.",
+# "[3]") is a flattened superscript reference or a page number — PyPDF2
+# puts superscripts on their own line, and the sentence splitter then
+# yields the bare number as its own sentence. Never real prose, so it
+# must not reach the TTS engine.
+_CITATION_ONLY_RE = re.compile(r"[\d\s,.;:()\[\]{}*†‡§¶%#]+")
+
+
+def _is_citation_only(sent: str) -> bool:
+    return _CITATION_ONLY_RE.fullmatch((sent or "").strip()) is not None
+
 
 def _extract_epub(path: str) -> List[str]:
     """Walk an EPUB's spine in order, return one string per 'page' (chapter).
@@ -118,6 +192,14 @@ def extract(path: str, file_type: str) -> Dict[str, Any]:
             # they'd sound terrible when TTSed.
             if _is_broken_chunk(sent):
                 continue
+            # Strip trailing footnote / citation markers (e.g. "text.1",
+            # "text[3]", "text *") so TTS doesn't read them out loud.
+            sent = _strip_citations(sent)
+            # Drop standalone marker / page-number sentences ("12",
+            # "14.") — PyPDF2 flattens superscript refs onto their own
+            # line, and the splitter yields the bare number alone.
+            if not sent or _is_citation_only(sent):
+                continue
             # Find this sentence's start char in the page (best-effort, may
             # be approximate after TTS normalization drops whitespace)
             idx = page_text.find(sent[:40], char_offset)
@@ -185,4 +267,47 @@ if __name__ == "__main__":
     assert _is_broken_chunk("Maybe yes maybe no") is False
     assert _is_broken_chunk("The quick brown fox jumps over the lazy dog") is False
 
-    print(f"OK: splitter={len(sents)} sentences, page_map={page_map}, title derivation correct, broken-chunk filter correct")
+    # Citation-marker stripping. PyPDF2 flattens superscript footnote
+    # markers into the prose text, so we strip them at the boundaries
+    # of each sentence before TTS reads them out.
+    assert _strip_citations("The cat sat on the mat.") == "The cat sat on the mat."
+    assert _strip_citations("The cat sat on the mat.[3]") == "The cat sat on the mat."
+    assert _strip_citations("The cat sat on the mat.1") == "The cat sat on the mat."
+    assert _strip_citations("He whispered hello!23") == "He whispered hello!"
+    assert _strip_citations("End of paragraph *") == "End of paragraph"
+    assert _strip_citations("Footnote marker here^1") == "Footnote marker here"
+    assert _strip_citations("He saw 3 cats.") == "He saw 3 cats."  # bare number untouched
+    assert _strip_citations("Already at end[1, 2]") == "Already at end"
+    assert _strip_citations("Quoth the raven †") == "Quoth the raven"
+    # Leading footnote markers (common in academic books: "*1 The next
+    # quote..." becomes "The next quote..." after stripping the *1).
+    assert _strip_citations("*1 W or ds pa ck pow er .") == "W or ds pa ck pow er."
+    assert _strip_citations("[1] W or ds pa ck pow er .") == "W or ds pa ck pow er."
+    assert _strip_citations("¹ T he ne xt quote .") == "T he ne xt quote."
+    # Bare "* " at the start of a sentence is a footnote ref in this
+    # book's style — TTS reading "asterisk" between sentences is
+    # worse than the risk of stripping a real emphasis asterisk.
+    assert _strip_citations("* T he a ut onom ic ne r vous s ys tem .") == "T he a ut onom ic ne r vous s ys tem."
+    # Don't strip "I ate 3 apples" — bare mid-sentence digits stay.
+    # (Spaces before terminal punctuation are collapsed as a side
+    # effect of marker stripping — harmless for TTS.)
+    assert _strip_citations("I ate 3 apples .") == "I ate 3 apples."
+    assert _strip_citations("see page 1 .") == "see page 1."
+    # Bare superscripts flattened to digits, no brackets: citations sit
+    # AFTER the sentence's terminal punctuation ("text.12"), so only
+    # that shape is stripped. Digits BEFORE the period or at the start of
+    # a sentence are genuine prose ("There were 12.", "12 Reasons...")
+    # and must survive.
+    assert _strip_citations("The claim is disputed.12") == "The claim is disputed."
+    # ...keep genuine prose numbers untouched (years, counts, versions).
+    assert _strip_citations("The rate rose in 1964 .") == "The rate rose in 1964."
+    assert _strip_citations("There were 12 .") == "There were 12."
+    assert _strip_citations("The claim is disputed 12.") == "The claim is disputed 12."
+    assert _strip_citations("The claim is disputed12.") == "The claim is disputed12."
+    assert _strip_citations("12 The next quote follows.") == "12 The next quote follows."
+    # Standalone marker sentences identified as citation-only.
+    assert _is_citation_only("12") is True
+    assert _is_citation_only("14.") is True
+    assert _is_citation_only("12 years later") is False
+
+    print(f"OK: splitter={len(sents)} sentences, page_map={page_map}, title derivation correct, broken-chunk filter correct, citation strip correct")

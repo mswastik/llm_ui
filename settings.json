@@ -26,12 +26,21 @@
   "tts_engine": "kokoro",
   "tts_voice": "af_heart",
   "tts_rate": "+0%",
-  "tts_volume": 1,
+  "tts_volume": 0.95,
   "kokoro_lang": "a",
   "kokoro_device": "cpu",
   "kokoro_volume": 1,
   "kokoro_speed": 1.15,
   "tts_auto_read": false,
+  "tts_normalize_enabled": true,
+  "tts_custom_replacements": [
+    {
+      "pattern": "e.g.",
+      "flags": "",
+      "replacement": "for example",
+      "_error": ""
+    }
+  ],
   "terminal_allowed_dirs": [
     ".",
     "./uploads",

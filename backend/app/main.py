@@ -4243,6 +4243,7 @@ from database.book_crud import (
     list_books as db_list_books,
     get_book as db_get_book,
     update_book_progress as db_update_book_progress,
+    update_book_sentence_progress as db_update_book_sentence_progress,
     soft_delete_book as db_soft_delete_book,
     set_book_sentences as db_set_book_sentences,
 )
@@ -4351,16 +4352,68 @@ async def update_book_progress_endpoint(book_id: str, body: Dict[str, Any]):
     """Lightweight progress update (e.g. after a manual page flip in the
     reader). Body: {current_page?: int, current_sentence_idx?: int}.
     The stream endpoint's after-sentence updates use db_update_book_progress
-    directly; this one is for the UI's manual nav."""
-    page = int(body.get("current_page") or 0) or None
-    idx = body.get("current_sentence_idx")
-    if idx is not None:
-        try:
-            idx = int(idx)
-        except (TypeError, ValueError):
-            idx = None
+    directly; this one is for the UI's manual nav.
+
+    Both fields are optional and INDEPENDENT — sending just current_page
+    must NOT clobber current_sentence_idx (the reader overlay's
+    _persistPage fires on every page change including the first load,
+    which used to reset the sentence cursor to 0 and made the library
+    card flash "New" even mid-read, and worse, restart the TTS stream
+    from sentence 0 every time the user opened the book). Symmetric
+    for current_sentence_idx.
+    """
     async with get_db() as db:
-        await db_update_book_progress(db, book_id, idx or 0, page or 1)
+        book = await db_get_book(db, book_id, include_text=False)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        page = book.get("current_page") or 1
+        idx = book.get("current_sentence_idx") or 0
+
+        has_page = body.get("current_page") is not None
+        has_idx = body.get("current_sentence_idx") is not None
+
+        if has_page:
+            try:
+                page = max(1, int(body["current_page"]))
+            except (TypeError, ValueError):
+                pass
+        if has_idx:
+            try:
+                idx = max(0, int(body["current_sentence_idx"]))
+            except (TypeError, ValueError):
+                pass
+        elif has_page:
+            # current_page moved but the caller didn't give us a new
+            # sentence index — derive it from the page_map so the
+            # library card stays in sync with the page the reader is
+            # actually showing. Without this, opening the reader on a
+            # TOC jump would set current_page=200 but leave the
+            # sentence cursor at the previous page's first sentence,
+            # so the next TTS play would jump backwards to that page.
+            # We need page_map here but the get_book call above used
+            # include_text=False to keep this endpoint cheap; fetch
+            # just the page_map via a targeted read.
+            from sqlalchemy import select
+            from database.models import Book
+            r = await db.execute(select(Book.page_map).where(Book.id == book_id))
+            pmap = r.scalar_one_or_none() or []
+            try:
+                pmap_ints = [int(p) for p in pmap]
+            except (TypeError, ValueError):
+                pmap_ints = []
+            if pmap_ints:
+                target = page
+                derived = 0
+                for i, p in enumerate(pmap_ints):
+                    if p >= target:
+                        derived = i
+                        break
+                else:
+                    derived = len(pmap_ints) - 1
+                idx = derived
+
+        await db_update_book_progress(db, book_id, idx, page)
     return {"ok": True}
 
 
@@ -4521,11 +4574,16 @@ async def stream_book(book_id: str, request: Request, from_idx: int = 0):
                 except Exception as e:
                     print(f"[books] TTS failed at idx={i}: {e}")
                     continue
-                # Persist progress after each sentence finishes. A crash here
-                # would mean a tiny bit of progress is lost, which is fine.
+                # Persist the sentence cursor after each sentence finishes so
+                # a disconnect mid-read resumes from there. Only the SENTENCE
+                # cursor is updated here — current_page (the page the user is
+                # actually looking at) is owned by the reader overlay's
+                # progress endpoint, and this stream must never clobber it
+                # (an old/slow stream finishing late would otherwise walk
+                # the resume page backwards, sentence by sentence).
                 try:
                     async with get_db() as db:
-                        await db_update_book_progress(db, book_id, i + 1, page)
+                        await db_update_book_sentence_progress(db, book_id, i + 1)
                 except Exception as e:
                     print(f"[books] progress persist failed at idx={i}: {e}")
             yield json.dumps({"done": True}) + "\n"

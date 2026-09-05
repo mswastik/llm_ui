@@ -154,11 +154,166 @@ function _splitSentencesClient(text) {
   return out
 }
 
+// Client-side mirror of backend book_service._strip_citations: strips
+// footnote / citation reference markers that PyPDF2 or PDF.js flatten
+// into the prose so TTS never reads "twelve" / "asterisk" for a
+// reference. Keep the patterns in sync with the Python version: bracket
+// refs, asterisk/dagger symbols, unicode superscripts, and digit markers
+// glued AFTER the sentence's terminal punctuation ("text.12"). Digits
+// BEFORE the period or at the start of a sentence are genuine prose
+// ("There were 12.", "12 Reasons...") and must NOT be stripped.
+function _stripCitationsClient(s) {
+  let t = (s || '').trim()
+  // Leading marker (footnote ref at the start of a sentence).
+  t = t.replace(
+    /^\s*(?:\[\d+(?:[-,–]\s*\d+)*\]|\*+\d+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
+    ''
+  )
+  // Trailing marker (end of sentence).
+  t = t.replace(
+    /\s*(?:\[\d+(?:[-,–]\s*\d+)*\]|\*+|[†‡§¶]|\^\d+|(?<=[.!?])\d+)\s*$/,
+    ''
+  )
+  // Stripping can leave "disputed ." — pull punctuation back.
+  t = t.replace(/\s+([.!?,;:])/g, '$1')
+  return t.trim()
+}
+
+// A sentence that is only digits / citation punctuation ("12", "14.") is
+// a flattened superscript reference or page number — never prose to read.
+function _isCitationOnlyClient(s) {
+  return /^[\d\s,.;:()\[\]{}*†‡§¶%#]+$/.test((s || '').trim())
+}
+
 // Extract every page's text via PDF.js (clean per-page text) and re-ship
 // the resulting sentences + page_map to the server. The server's PyPDF2
 // fallback produces badly-mangled text for some print-typeset PDFs;
 // this replaces those rows with the same sentences the user sees in the
 // reader. Returns the new total sentence count, or null on failure.
+// Heuristic: classify a text item as superscript (footnote / citation
+// marker) so we can drop it from the TTS input. We can't tell with
+// absolute certainty, but superscript text in print-typeset books is
+// almost always:
+//   * very short (a number, a single letter, a star/asterisk) — under 5
+//     visible chars
+//   * rendered in a font height clearly smaller than the surrounding
+//     body text on the same line
+//
+// So: build a per-page "body height" (the mode of the non-tiny text
+// items' font sizes) and treat anything under ~70% of that AND short
+// enough to be a reference marker as a superscript to drop. This avoids
+// the false positive where the body of a book happens to contain a
+// short number ("1.", "2.") — we only suppress when the FONT is also
+// small, which only footnote markers and TOC page numbers share.
+const _SUPERSCRIPT_MAX_CHARS = 4
+const _SUPERSCRIPT_HEIGHT_RATIO = 0.7
+// A text run counts as a "paragraph heading" (chapter title, section
+// header) when its font height is clearly above the page's body line
+// height. 1.15× is conservative enough to skip body-text emphasis
+// (slightly larger bold spans) while still catching the typical
+// 1.3–2.0× jump print-typeset PDFs use for headings.
+const _HEADING_HEIGHT_RATIO = 1.15
+// Headings are short and rarely carry terminal punctuation — anything
+// ending in `.`/`?`/`!`/`:`/`;` is almost certainly body text. We cap
+// the length at 120 chars to avoid catching the rare oversized lead
+// paragraph on chapter-opening pages.
+const _HEADING_MAX_CHARS = 120
+// In print-typeset PDFs, body text is laid out on lines spaced at
+// ~1 line height apart. When a real paragraph break exists in the
+// source — heading, section break, blank line between paragraphs —
+// the next line is dropped by MORE than the normal line spacing.
+// We detect that as: |y(prev) - y(curr)| > 1.5× the typical line
+// height. 1.0× is normal wrap; 1.5×+ is a paragraph break. This is
+// the secondary signal (the primary being the heading's larger
+// font) — it handles regular paragraph breaks with no heading
+// involved.
+const _PARAGRAPH_Y_GAP_MULT = 1.5
+
+function _bodyLineHeight(items) {
+  // Median line height for this page. We use the font height of the
+  // text runs as a proxy (line height ≈ font height in print-typeset
+  // PDFs at single spacing).
+  const heights = []
+  for (const it of items) {
+    const s = (it.str || '').trim()
+    if (s.length <= _SUPERSCRIPT_MAX_CHARS) continue
+    const h = it.height || 0
+    if (h > 0) heights.push(Math.round(h * 10) / 10)
+  }
+  if (!heights.length) return 12
+  heights.sort((a, b) => a - b)
+  return heights[Math.floor(heights.length / 2)]
+}
+
+// Body font height: the smallest common font on the page. Body
+// text is usually the SMALLEST regular text — so when there's a
+// tie in the font-height histogram (a page with one heading + a
+// few body lines), we pick the smaller of the tied heights.
+// Headings are at 1.3-2× body, so the body mode is the smallest
+// common height.
+function _bodyFontHeight(items) {
+  const counts = new Map()
+  for (const it of items) {
+    const s = (it.str || '').trim()
+    if (s.length <= _SUPERSCRIPT_MAX_CHARS) continue
+    const h = Math.round((it.height || 0) * 10) / 10
+    if (h <= 0) continue
+    counts.set(h, (counts.get(h) || 0) + 1)
+  }
+  let best = 0, bestN = -1
+  for (const [h, n] of counts) {
+    if (n > bestN || (n === bestN && h < best)) {
+      best = h
+      bestN = n
+    }
+  }
+  return best || 10
+}
+
+// Does a page contain superscript-style text runs — short content (≤4
+// chars) rendered in a font height clearly below the page's body line
+// height? In print-typeset PDFs that combination is almost exclusively a
+// footnote / citation reference marker (footnote numbers, asterisk refs,
+// TOC page leaders). This is the reliable detector: PDF.js gives us the
+// per-run font metrics that PyPDF2 throws away.
+async function _pageHasSuperscripts(page) {
+  try {
+    const tc = await page.getTextContent()
+    const items = tc.items || []
+    if (!items.length) return false
+    const lineH = _bodyLineHeight(items)
+    for (const it of items) {
+      const s = (it.str || '').trim()
+      const h = it.height || 0
+      if (s.length > 0 && s.length <= _SUPERSCRIPT_MAX_CHARS
+          && h > 0 && h < lineH * _SUPERSCRIPT_HEIGHT_RATIO) {
+        return true
+      }
+    }
+  } catch { /* unrenderable page — skip */ }
+  return false
+}
+
+// Sample a handful of pages (start of the book + the page the user is
+// resuming on) for superscript markers. Books with citations almost always
+// have them on the early pages; the resume page covers books whose refs
+// only appear later. When found, the reader forces the clean re-extract so
+// the markers never reach the TTS engine.
+async function _docHasSuperscripts(rawDoc, resumePage) {
+  const numPages = rawDoc.numPages || 0
+  const seen = new Set()
+  const n = Math.min(numPages, 12)
+  for (let p = 1; p <= n; p++) seen.add(p)
+  if (resumePage > 1 && resumePage <= numPages) seen.add(resumePage)
+  for (const p of seen) {
+    try {
+      const page = await rawDoc.getPage(p)
+      if (await _pageHasSuperscripts(page)) return true
+    } catch { /* keep scanning */ }
+  }
+  return false
+}
+
 async function _reextractAndShip(rawDoc, bookId) {
   try {
     const allSents = []
@@ -174,17 +329,103 @@ async function _reextractAndShip(rawDoc, bookId) {
     for (let p = 1; p <= maxPages; p++) {
       const page = await rawDoc.getPage(p)
       const tc = await page.getTextContent()
-      // PDF.js emits one item per text run. hasEOL is the only reliable
-      // newline signal — concat runs with single space, push at hasEOL.
+      const items = tc.items || []
+      const lineH = _bodyLineHeight(items)
+      const bodyH = _bodyFontHeight(items)
+      // Drop superscript runs (footnote / citation markers): they're
+      // short AND have a font height well below the body line height
+      // for this page. Concatenating a space in place keeps the
+      // original text spacing so the highlight still lines up.
+      //
+      // Paragraph breaks come from three signals:
+      //   1. y-gap: |Δy| between consecutive text items > 1.5× the
+      //      body line height. Catches real paragraph breaks in
+      //      the PDF layout (blank line between paragraphs, a
+      //      heading with body well below it).
+      //   2. inline heading: a heading is followed by body on the
+      //      SAME line (no hasEOL between them) — common in chapter
+      //      openings where the title runs into the first
+      //      paragraph. We force a paragraph break so the heading
+      //      stands alone as a sentence.
+      //   3. heading with no inline follow-up: when a heading line
+      //      ends (hasEOL), we force a paragraph break after it
+      //      regardless of the y-gap, so the heading is always its
+      //      own sentence even when the body text is on the very
+      //      next line (small y-gap, no visible blank line in the
+      //      PDF). A heading is a text run with font height
+      //      > 1.15× the body height (print-typeset PDFs use a
+      //      1.3-2× jump for headings), short (≤120 chars), and no
+      //      terminal punctuation (so body sentences ending in `.`
+      //      aren't misclassified).
+      const yOf = (it) => Array.isArray(it.transform) ? it.transform[5] : 0
       const lines = []
       let buf = ''
-      for (const it of tc.items) {
-        buf += (it.str || '')
+      let prevY = null
+      let lastWasHeading = false
+      for (const it of items) {
+        const s = it.str || ''
+        const trimmed = s.trim()
+        const h = it.height || 0
+        const isSuper = trimmed.length > 0
+          && trimmed.length <= _SUPERSCRIPT_MAX_CHARS
+          && h > 0
+          && h < lineH * _SUPERSCRIPT_HEIGHT_RATIO
+        const isHeading = !isSuper
+          && trimmed.length > 0
+          && trimmed.length <= _HEADING_MAX_CHARS
+          && h > 0
+          && h > bodyH * _HEADING_HEIGHT_RATIO
+          && !/[.?!\-:;]$/.test(trimmed)
+        if (isSuper) {
+          // Replace the marker with a single space so word boundaries
+          // stay sensible ("text1next" would otherwise fuse).
+          if (buf && !buf.endsWith(' ')) buf += ' '
+        } else {
+          const currY = yOf(it)
+          if (prevY !== null && buf) {
+            const yDelta = Math.abs(currY - prevY)
+            if (yDelta > _PARAGRAPH_Y_GAP_MULT * lineH) {
+              // The previous line is at least ~1.5× line height away
+              // from the current one — that's a real paragraph
+              // break, not just a line wrap. Promote the existing
+              // line break to a paragraph break (\n\n when joined).
+              lines.push(buf)
+              lines.push('')
+              buf = ''
+            }
+          }
+          // Inline heading: a heading is on the same visual line as
+          // the following body text (no hasEOL between them) — common
+          // in chapter openings where the title runs into the first
+          // paragraph. Force a paragraph break so the heading stands
+          // alone as a sentence.
+          if (lastWasHeading && !isHeading && buf.trim()) {
+            lines.push(buf.trim())
+            lines.push('')
+            buf = ''
+          }
+          buf += s
+        }
         if (it.hasEOL) {
           lines.push(buf)
           buf = ''
+          prevY = yOf(it)
+          lastWasHeading = isHeading
+          // If THIS line was a heading, force a paragraph break
+          // (blank line) after it so the splitter can split the
+          // heading from any body text below — even if the body
+          // text is on the very next line (small y-gap, no visible
+          // blank line in the PDF). The heading is always its own
+          // sentence; TTS reads "Chapter Three" then a brief pause,
+          // then the body paragraph.
+          if (isHeading) {
+            lines.push('')
+          }
         } else {
           buf += ' '
+          // Don't update prevY on a continuation — the y of the
+          // continued line is the same as the first item's y.
+          lastWasHeading = isHeading
         }
       }
       if (buf) lines.push(buf)
@@ -193,8 +434,12 @@ async function _reextractAndShip(rawDoc, bookId) {
       const sents = _splitSentencesClient(pageText)
       let charStart = 0
       for (const s of sents) {
-        if (s.length < 2) { charStart += s.length + 1; continue }
-        allSents.push({ text: s, page: p, char_start: charStart })
+        let text = _stripCitationsClient(s)
+        if (text.length < 2 || _isCitationOnlyClient(text)) {
+          charStart += s.length + 1
+          continue
+        }
+        allSents.push({ text, page: p, char_start: charStart })
         allPages.push(p)
         charStart += s.length + 1
       }
@@ -294,6 +539,9 @@ export function reader() {
     pendingPlay: false,
     isPlaying: false,
     _abort: null,
+    // True while playback is paused mid-sentence — play() must then replay
+    // the full current sentence instead of resuming mid-word.
+    _paused: false,
 
     // PDF state — only safe primitives are reactive; PDF.js objects
     // live in the per-instance Map (see _raw).
@@ -304,6 +552,10 @@ export function reader() {
     outlineOpen: false,
     outlineItems: [],
     outlineEmpty: true,
+
+    // PDF zoom (percentage shown in the toolbar; mirrors the viewer's
+    // currentScale). 100 = 100%.
+    zoomPct: 100,
 
     // PDF search (find) state
     findOpen: false,
@@ -423,6 +675,7 @@ export function reader() {
       this.outlineOpen = false
       this.outlineItems = []
       this.outlineEmpty = true
+      this.zoomPct = 100
       this.open = false
       this.book = null
       this.bookId = null
@@ -446,16 +699,30 @@ export function reader() {
       // Apply the volume boost now (this call runs inside the user's click
       // gesture, which is the only time AudioContext.resume() is allowed).
       this._ensurePlaybackGraph()
+      const wasPaused = this._paused
+      this._paused = false
       if (this.segments.length === 0) {
         // Start from the reading position: saved sentence progress when it
         // is at/after the page on screen, otherwise from the top of the
         // page the user is actually looking at (so opening a book at page
         // 100 doesn't restart the TTS at page 1).
         await this._startStream(this._pickStartIdx(this.currentIdx))
-      } else {
-        this.audio.play().catch(() => { /* user gesture will fix */ })
-        this.isPlaying = true
+        return
       }
+      if (wasPaused && this.pendingPlay) {
+        // Pause happened in the gap between two sentences — the next
+        // segment starts on its own when it arrives (same as normal
+        // flow). Don't replay the sentence that already finished.
+        this.isPlaying = true
+        return
+      }
+      if (wasPaused) {
+        // pause() rewound the audio to the start of the segment; replay
+        // the FULL current sentence rather than resuming mid-word.
+        try { this.audio.currentTime = 0 } catch { /* noop */ }
+      }
+      this.audio.play().catch(() => { /* user gesture will fix */ })
+      this.isPlaying = true
     },
 
     // Pick the sentence index TTS should start from. `savedIdx` is the
@@ -501,8 +768,45 @@ export function reader() {
     },
 
     pause() {
-      if (this.audio && !this.audio.paused) this.audio.pause()
+      // Remember that we were cut mid-sentence, and rewind the audio to
+      // the start of the segment so the next play() replays the FULL
+      // sentence instead of resuming mid-word. (If we paused in the gap
+      // between sentences — audio already ended — there's nothing to
+      // rewind and pendingPlay stays set.)
+      this._paused = true
+      if (this.audio && !this.audio.paused) {
+        this.audio.pause()
+        try { this.audio.currentTime = 0 } catch { /* noop */ }
+      }
       this.isPlaying = false
+    },
+
+    // Start TTS from the first sentence of the currently displayed page.
+    // Unlike the plain play button this ALWAYS starts at the top of the
+    // page the user is looking at, tearing down whatever was in flight.
+    playFromPage() {
+      if (!this.sentences.length) return
+      let idx = -1
+      const pageMap = this.pageMap || []
+      if (this.book?.file_type === 'pdf' && pageMap.length && this.pdfNumPages) {
+        const page = Math.max(1, this.currentPdfPage || 1)
+        idx = pageMap.indexOf(page)
+        if (idx < 0) {
+          // Page has no extracted sentences (image/blank) → first
+          // content page after it.
+          for (let p = page + 1; p <= this.pdfNumPages; p++) {
+            const i = pageMap.indexOf(p)
+            if (i >= 0) { idx = i; break }
+          }
+        }
+      }
+      if (idx < 0) idx = this._pickStartIdx(this.currentIdx)
+      this.stop()
+      this._paused = false
+      this.currentIdx = idx
+      this._ensureAudio()
+      this._ensurePlaybackGraph()
+      this._startStream(idx)
     },
 
     // Jump to the previous or next sentence and resume TTS from there.
@@ -708,6 +1012,7 @@ export function reader() {
       this.segCursor = 0
       this.streamDone = false
       this.pendingPlay = false
+      this._paused = false
       this.isPlaying = true
       try {
         const res = await fetch(
@@ -844,11 +1149,14 @@ export function reader() {
         linkService,
         eventBus,
         findController,
-        // Text + image rendering only. No annotation layer needed for a
-        // read-aloud reader (link annotations are not clickable, but the
-        // internal outline navigation below covers chapter jumps).
+        // Text layer for highlighting + selection.
         textLayerMode: 1 /* TextLayerMode.ENABLE */,
-        annotationMode: 0 /* AnnotationMode.DISABLE */,
+        // Annotation layer ON so link annotations (TOC entries,
+        // footnote / bibliography cross-refs, URL links) are
+        // clickable in the rendered PDF — same UX as a normal PDF
+        // viewer. PDF.js draws them as invisible-but-clickable
+        // link rectangles over the text.
+        annotationMode: 1 /* AnnotationMode.ENABLE */,
       })
       // Store BEFORE setDocument — setDocument fires pagechanging
       // synchronously for the initial page, and we want our handlers
@@ -876,6 +1184,16 @@ export function reader() {
       eventBus.on('pagechanging', (e) => {
         this.currentPdfPage = e.pageNumber
         this._persistPage(e.pageNumber)
+      })
+
+      // Mirror zoom changes onto reactive state for the toolbar % readout.
+      // Fires whenever the scale changes — our zoom buttons, or any future
+      // wheel-zoom. (initial fit-to-width is mirrored right after setup.)
+      eventBus.on('scalechanging', (e) => {
+        const s = e && e.scale
+        if (typeof s === 'number' && s > 0) {
+          this.zoomPct = Math.round(s * 100)
+        }
       })
 
       // Mirror find state onto reactive data for the find bar.
@@ -939,6 +1257,9 @@ export function reader() {
 
       // Fit pages to the container width (the reference viewer default).
       pdfViewer.currentScaleValue = 'auto'
+      // Mirror the actual rendered fit-to-width scale into the toolbar
+      // readout (scalechanging may not fire for the initial 'auto' set).
+      this.zoomPct = Math.round((pdfViewer.currentScale || 1) * 100)
 
       this.pdfReady = true
       if (resumePage !== pdfViewer.currentPageNumber) {
@@ -951,7 +1272,33 @@ export function reader() {
       const cachedSents = this.sentences.length
       const looksBad =
         cachedSents < Math.max(50, pages / 2) || cachedSents > pages * 10
-      if (looksBad) {
+      // Do the CACHED sentences still carry citation-marker-like text
+      // (standalone digits, or text that citation-stripping would change)?
+      // A book uploaded before the strip patterns existed has those
+      // markers baked into its cache — re-extracting is the only way to
+      // get rid of them for TTS. Once the client re-extracts and the
+      // clean list is POSTed back, this turns false and later opens skip
+      // the expensive re-extract.
+      const hasMarkers = (this.sentences || []).some((s) => {
+        const t = (s && s.text) || ''
+        return !!t && (_isCitationOnlyClient(t) || _stripCitationsClient(t) !== t.trim())
+      })
+      // ...or when the PDF contains superscript citation markers. The font
+      // scan is cheap (12 pages + the resume page) and catches reference
+      // books whose PyPDF2 extraction looks healthy but still carries
+      // footnote numbers that TTS would read out loud. Gated on hasMarkers
+      // so a clean cache (already re-extracted) doesn't re-run it.
+      // The superscript scan samples up to a dozen pages via getTextContent
+      // — only run it when there's an actual reason to re-extract (mangled
+      // count, or the cache still carries marker-like text). A clean cache
+      // (already re-extracted once) must not re-scan on every open.
+      let hasSuperscripts = false
+      if (looksBad || hasMarkers) {
+        try {
+          hasSuperscripts = await _docHasSuperscripts(rawDoc, resumePage)
+        } catch { /* fall through to the looksBad gate */ }
+      }
+      if (looksBad || hasMarkers || hasSuperscripts) {
         const total = await _reextractAndShip(rawDoc, this.bookId)
         if (total) {
           try {
@@ -1044,6 +1391,45 @@ export function reader() {
       if (raw.viewer.currentPageNumber !== clamped) {
         raw.viewer.currentPageNumber = clamped
       }
+    },
+
+    // ─── PDF zoom ──────────────────────────────────────────────────
+    // PDFViewer's currentScale is a plain multiplier, so zooming is just
+    // assigning a number; the viewer re-renders + re-scales the text
+    // layers (which re-fires textlayerrendered, re-applying the active
+    // sentence highlight). Safe no-ops until the viewer is ready.
+    _setZoom(scale) {
+      const raw = _raw(this)
+      if (!raw.viewer || !raw.viewer.pdfDocument) return
+      raw.viewer.currentScale = scale
+      this.zoomPct = Math.round(scale * 100)
+    },
+
+    zoomIn() {
+      const raw = _raw(this)
+      const base = raw.viewer ? raw.viewer.currentScale || 1 : 1
+      this._setZoom(Math.min(5, +(base + 0.25).toFixed(2)))
+    },
+
+    zoomOut() {
+      const raw = _raw(this)
+      const base = raw.viewer ? raw.viewer.currentScale || 1 : 1
+      this._setZoom(Math.max(0.25, +(base - 0.25).toFixed(2)))
+    },
+
+    // Reset to a literal 100% (1:1 pixels).
+    zoomReset() {
+      this._setZoom(1)
+    },
+
+    // Fit the page to the container width (the reader's default view).
+    // Can't be represented as a plain number, hence the value string;
+    // assigning 'auto' re-fits even after the user zoomed in.
+    zoomFit() {
+      const raw = _raw(this)
+      if (!raw.viewer || !raw.viewer.pdfDocument) return
+      raw.viewer.currentScaleValue = 'auto'
+      this.zoomPct = Math.round((raw.viewer.currentScale || 1) * 100)
     },
 
     // Persist the current PDF page to the server, throttled. Fire-and-

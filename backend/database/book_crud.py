@@ -97,6 +97,27 @@ async def update_book_progress(
     return True
 
 
+async def update_book_sentence_progress(
+    db: AsyncSession, book_id: str, sentence_idx: int
+) -> bool:
+    """Persist ONLY the read-along sentence cursor (used by the stream
+    endpoint's per-sentence updates). Deliberately does NOT touch
+    current_page: the page the user is actually viewing is owned by the
+    reader overlay's progress endpoint. A stream finishing late — or a
+    stale stream saved from a past session — must not yank the resume
+    page backwards (e.g. open the book at page 100, but a leftover
+    stream walks current_page back to page 1 one sentence at a time).
+    """
+    from datetime import datetime, timezone
+    result = await db.execute(select(Book).where(Book.id == book_id))
+    book = result.scalar_one_or_none()
+    if not book:
+        return False
+    book.current_sentence_idx = sentence_idx
+    book.last_read_at = datetime.now(timezone.utc)
+    return True
+
+
 async def soft_delete_book(db: AsyncSession, book_id: str) -> bool:
     """Soft delete — keeps the row + file for safety, hides from list."""
     result = await db.execute(select(Book).where(Book.id == book_id))

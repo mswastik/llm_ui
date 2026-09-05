@@ -4244,6 +4244,7 @@ from database.book_crud import (
     get_book as db_get_book,
     update_book_progress as db_update_book_progress,
     soft_delete_book as db_soft_delete_book,
+    set_book_sentences as db_set_book_sentences,
 )
 from tools.book_service import extract as book_extract, derive_title as book_derive_title
 
@@ -4361,6 +4362,67 @@ async def update_book_progress_endpoint(book_id: str, body: Dict[str, Any]):
     async with get_db() as db:
         await db_update_book_progress(db, book_id, idx or 0, page or 1)
     return {"ok": True}
+
+
+@app.post("/api/books/{book_id}/sentences")
+async def set_book_sentences_endpoint(book_id: str, body: Dict[str, Any]):
+    """Replace the cached sentences + page_map on a book. Used by the
+    client's PDF.js-based re-extract (server's PyPDF2 fallback is poor
+    for some print-typeset PDFs). Body: {sentences: [{text, page,
+    char_start}], page_map: [int]}. Both lists must be the same length
+    and non-empty.
+    """
+    sents = body.get("sentences") or []
+    pmap = body.get("page_map") or []
+    if not sents or not pmap or len(sents) != len(pmap):
+        raise HTTPException(status_code=400, detail="sentences and page_map must be same non-empty length")
+    async with get_db() as db:
+        ok = await db_set_book_sentences(db, book_id, sents, pmap)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Book not found")
+        # Old sentence indices are invalid against the new list. Repoint
+        # to the first sentence on the user's saved current_page (or
+        # 0 if we have no idea). current_page is preserved as-is.
+        book = await db_get_book(db, book_id, include_text=False)
+        if book and book.get("current_page"):
+            target = int(book["current_page"])
+            for i, p in enumerate(pmap):
+                if p >= target:
+                    await db_update_book_progress(db, book_id, i, target)
+                    break
+            else:
+                await db_update_book_progress(db, book_id, 0, target)
+        else:
+            await db_update_book_progress(db, book_id, 0, 1)
+    return {"ok": True, "total_sentences": len(sents)}
+
+
+@app.post("/api/books/{book_id}/reextract")
+async def reextract_book_endpoint(book_id: str):
+    """Re-run the sentence extraction on the book's file. Useful when
+    the extraction logic has improved (e.g. new soft-wrap fix) and the
+    user wants to refresh the cached sentences without re-uploading.
+    Replaces the cached sentences + page_map; resets progress to 0.
+    """
+    from tools.book_service import extract as book_extract
+    async with get_db() as db:
+        book = await db_get_book(db, book_id, include_text=False)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if not os.path.exists(book["filepath"]):
+        raise HTTPException(status_code=410, detail="File no longer exists on disk")
+    try:
+        sentences, page_map = book_extract(book["filepath"], book["file_type"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
+    if not sentences:
+        raise HTTPException(status_code=422, detail="No sentences extracted")
+    async with get_db() as db:
+        await db_set_book_sentences(db, book_id, sentences, page_map)
+        # Reset progress so the next open starts at the top of the
+        # new sentence list. (Old sentence indices are no longer valid.)
+        await db_update_book_progress(db, book_id, 0, 1)
+    return {"ok": True, "total_sentences": len(sentences)}
 
 
 @app.delete("/api/books/{book_id}")

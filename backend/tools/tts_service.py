@@ -266,7 +266,12 @@ def _is_abbrev_fragment(p: str) -> bool:
 
 
 def _split_sentences(text: str) -> List[str]:
-    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", text.strip()) if p.strip()]
+    # Split on terminal punctuation or paragraph breaks (blank lines).
+    # Note: we intentionally do NOT split on single \n — the upstream
+    # _extract_pdf collapses soft-wraps to spaces before we get here, so
+    # single newlines that survive are real paragraph breaks and are
+    # already handled by the \n{2,} alternative.
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n{2,}", text.strip()) if p.strip()]
     out, buf = [], ""
     for p in parts:
         if _is_abbrev_fragment(p):

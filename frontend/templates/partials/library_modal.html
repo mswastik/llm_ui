@@ -89,6 +89,14 @@
                 </div>
               </div>
               <button
+                @click.stop="reextractBook(book)"
+                class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--bg-hover)]
+                       text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] transition-all"
+                title="Re-extract sentences (resets progress)"
+              >
+                <i class="ph ph-arrows-clockwise text-sm"></i>
+              </button>
+              <button
                 @click.stop="deleteBook(book)"
                 class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--error-bg)]
                        text-[var(--text-tertiary)] hover:text-[var(--error)] transition-all"

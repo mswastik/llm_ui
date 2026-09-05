@@ -58,6 +58,17 @@ export const library = () => ({
     }
   },
 
+  async reextractBook(book) {
+    if (!confirm(`Re-extract "${book.title}"? Resets reading progress.`)) return
+    try {
+      const r = await api.post(`/api/books/${book.id}/reextract`)
+      this.$store.ui.showToast(`Re-extracted: ${r.total_sentences} sentences`, 'success')
+      await this.loadBooks()
+    } catch (e) {
+      this.$store.ui.showToast('Re-extract failed: ' + e.message, 'error')
+    }
+  },
+
   openBook(book) {
     // Hand off to the reader overlay. The reader owns its own state and
     // calls /api/books/{id}/stream — it does not need any data from here.

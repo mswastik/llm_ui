@@ -111,3 +111,19 @@ async def soft_delete_book(db: AsyncSession, book_id: str) -> bool:
         except OSError as e:
             print(f"[books] could not remove {book.filepath}: {e}")
     return True
+
+
+async def set_book_sentences(
+    db: AsyncSession, book_id: str, sentences: List[Dict[str, Any]], page_map: List[int]
+) -> bool:
+    """Replace the cached extraction on a book. Used by the re-extract
+    endpoint after the extraction pipeline has improved (e.g. soft-wrap
+    fix) so the cached sentences can be refreshed without re-uploading."""
+    result = await db.execute(select(Book).where(Book.id == book_id))
+    book = result.scalar_one_or_none()
+    if not book:
+        return False
+    book.sentences = sentences
+    book.page_map = page_map
+    book.total_sentences = len(sentences)
+    return True

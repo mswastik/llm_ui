@@ -94,6 +94,15 @@ class DocumentProcessor:
                     lambda m: m.group(0).replace(' ', ''),
                     cleaned,
                 )
+                # PyPDF2 emits a newline between every visual line of
+                # the page, even when those lines are a soft-wrap of
+                # the same sentence. TTS that splits on \n reads the
+                # book as if every line were a new sentence, with a
+                # pause after each. Collapse single newlines into
+                # spaces — real paragraph breaks survive because
+                # PyPDF2 emits an empty text item (a blank line) as
+                # two consecutive newlines.
+                cleaned = re.sub(r'(?<!\n)\n(?!\n)', ' ', cleaned)
                 page_texts.append(cleaned)
         return page_texts, "\n\n".join(page_texts)
 

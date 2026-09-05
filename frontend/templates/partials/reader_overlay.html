@@ -1,12 +1,13 @@
 <!-- ═══════════ READER OVERLAY (fullscreen, fixed) ═══════════ -->
 <!--
-  Fullscreen reader. The book (PDF or EPUB) is shown in the browser's
-  native viewer via an <iframe> — that gives the user a real reader with
-  page navigation, zoom, search, outline/thumbnails, and text selection
-  for free. TTS runs independently: the server streams one NDJSON event
-  per sentence, we play each <audio> URL in order, and the "now reading"
-  banner above the iframe shows the sentence the TTS is currently
-  speaking. The user follows along by eye in the iframe.
+  Fullscreen reader. PDF is rendered with PDF.js using a per-page
+  canvas + text layer (Mozilla's standard pattern). The text layer
+  is a series of absolutely-positioned <span>s — one per PDF text
+  item — which gives us a precise handle for highlighting the
+  current TTS sentence via a CSS class.
+
+  EPUB has no native viewer here; the right pane is a sentence list
+  the user can click to jump.
 -->
 <div
   x-data="reader"
@@ -28,6 +29,9 @@
       <h2 class="font-semibold text-sm truncate" x-text="book?.title || 'Reader'"></h2>
       <p class="text-xs text-[var(--text-tertiary)]" x-show="sentences.length">
         <span x-text="`Sentence ${currentIdx + 1} of ${sentences.length}`"></span>
+        <span x-show="book?.file_type === 'pdf' && pdfReady">
+          · <span x-text="`Page ${currentPdfPage} of ${pdfNumPages || '?'}`"></span>
+        </span>
       </p>
     </div>
     <button
@@ -61,32 +65,41 @@
     <button @click="error = ''" class="ml-auto"><i class="ph ph-x"></i></button>
   </div>
 
-  <!-- "Now reading" banner: the sentence the TTS is currently speaking.
-       Shown only while playing (or paused mid-sentence) so the rest of
-       the time the user gets the full iframe for reading. -->
-  <div
-    x-show="currentSentenceText()"
-    class="px-5 py-2.5 bg-[var(--accent-primary-light)] border-b border-[var(--accent-primary)]/30
-           text-[var(--text-primary)] text-sm leading-snug flex-shrink-0"
-  >
-    <div class="flex items-center gap-2 text-xs text-[var(--text-tertiary)] mb-1">
-      <i class="ph ph-speaker-high"></i>
-      <span x-text="isPlaying ? 'Now reading' : 'Paused'"></span>
-      <span x-show="currentSentencePage">
-        · Page <span x-text="currentSentencePage"></span>
-      </span>
+  <!-- Main content: PDF.js viewer (PDF) or sentence list (EPUB) -->
+  <div class="flex-1 min-h-0 overflow-auto bg-[var(--bg-tertiary)]">
+    <div
+      x-show="book?.file_type === 'pdf' && pdfReady"
+      x-ref="pdfViewer"
+      class="py-4"
+    ></div>
+    <div
+      x-show="book?.file_type !== 'pdf'"
+      class="max-w-3xl mx-auto py-4 px-6"
+    >
+      <div
+        x-show="isLoading"
+        class="flex items-center justify-center h-32 text-[var(--text-tertiary)]"
+      >
+        <i class="ph ph-spinner-gap animate-spin text-2xl"></i>
+        <span class="ml-2">Loading book…</span>
+      </div>
+      <p
+        x-show="!isLoading && !sentences.length"
+        class="text-center text-[var(--text-tertiary)] py-8 px-4"
+      >
+        No content extracted from this book.
+      </p>
+      <template x-for="(s, i) in sentences" :key="i">
+        <p
+          class="leading-snug mb-1 px-3 py-1.5 rounded-lg text-sm"
+          :class="{
+            'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] font-medium ring-1 ring-[var(--accent-primary)]/40':
+              isCurrent(i),
+            'text-[var(--text-tertiary)]': isPast(i),
+          }"
+          x-text="sentenceText(i)"
+        ></p>
+      </template>
     </div>
-    <p class="font-medium" x-text="currentSentenceText()"></p>
-  </div>
-
-  <!-- Main content: native PDF/EPUB viewer in an iframe -->
-  <div class="flex-1 min-h-0 bg-[var(--bg-tertiary)]">
-    <iframe
-      x-show="book"
-      :src="fileSrc()"
-      class="w-full h-full border-0"
-      :title="book?.title || 'Book'"
-      allow="fullscreen"
-    ></iframe>
   </div>
 </div>

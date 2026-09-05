@@ -1130,3 +1130,48 @@ h4 { font-size: 1rem; font-weight: 600; }
   background: color-mix(in srgb, var(--accent-primary) 25%, transparent);
   color: var(--text-primary);
 }
+
+/* ---------- PDF.js text layer (reader) ---------- */
+/*
+  PDF.js' text layer uses absolute positioning for the per-item spans
+  so the text aligns pixel-perfect with the underlying canvas. The
+  spans start transparent (invisible) and only become visible when
+  selected or highlighted — this keeps the rendered canvas looking
+  unchanged while still being selectable + scriptable.
+*/
+.textLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  user-select: text;
+  pointer-events: auto;
+}
+.textLayer > span,
+.textLayer > br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.textLayer > span::selection,
+.textLayer > span *::selection {
+  background: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+}
+/* The current TTS sentence. rgba(255 235 59 / 0.45) is a textbook
+   "highlighter" yellow at 45% alpha. Using background-color (not
+   background) so PDF.js's positioning math still applies. */
+.textLayer > .pdf-highlight {
+  background-color: rgba(255, 235, 59, 0.45) !important;
+  color: transparent !important;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+.textLayer > .pdf-highlight::selection {
+  background: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+}

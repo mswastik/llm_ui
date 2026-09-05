@@ -281,6 +281,13 @@
         <span>Knowledge Base</span>
       </button>
       <button
+        @click="$dispatch('open-library'); $store.ui.openLibrary()"
+        class="sidebar-item"
+      >
+        <i class="ph ph-book-open text-base"></i>
+        <span>Library</span>
+      </button>
+      <button
         @click="$dispatch('open-notes'); $store.ui.openNotes()"
         class="sidebar-item"
       >

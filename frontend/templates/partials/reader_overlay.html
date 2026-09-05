@@ -1,0 +1,92 @@
+<!-- ═══════════ READER OVERLAY (fullscreen, fixed) ═══════════ -->
+<!--
+  Fullscreen reader. The book (PDF or EPUB) is shown in the browser's
+  native viewer via an <iframe> — that gives the user a real reader with
+  page navigation, zoom, search, outline/thumbnails, and text selection
+  for free. TTS runs independently: the server streams one NDJSON event
+  per sentence, we play each <audio> URL in order, and the "now reading"
+  banner above the iframe shows the sentence the TTS is currently
+  speaking. The user follows along by eye in the iframe.
+-->
+<div
+  x-data="reader"
+  x-show="open"
+  x-cloak
+  @keydown.escape.window="if (open) close()"
+  @keydown.space.window.prevent="if (open && !['INPUT','TEXTAREA'].includes($event.target.tagName)) toggle()"
+  class="fixed inset-0 z-[200] bg-[var(--bg-primary)] flex flex-col"
+>
+  <!-- Header / transport bar -->
+  <div
+    class="flex items-center gap-3 px-4 py-2.5 border-b border-[var(--border-primary)]
+           bg-[var(--bg-secondary)] flex-shrink-0"
+  >
+    <button @click="close()" class="btn btn-icon btn-ghost" title="Back (Esc)">
+      <i class="ph ph-arrow-left text-lg"></i>
+    </button>
+    <div class="flex-1 min-w-0">
+      <h2 class="font-semibold text-sm truncate" x-text="book?.title || 'Reader'"></h2>
+      <p class="text-xs text-[var(--text-tertiary)]" x-show="sentences.length">
+        <span x-text="`Sentence ${currentIdx + 1} of ${sentences.length}`"></span>
+      </p>
+    </div>
+    <button
+      @click="toggle()"
+      class="btn btn-primary px-4"
+      :title="isPlaying ? 'Pause (Space)' : 'Play (Space)'"
+    >
+      <i class="ph text-lg" :class="isPlaying ? 'ph-pause' : 'ph-play'"></i>
+      <span class="ml-1.5 text-sm font-medium" x-text="isPlaying ? 'Pause' : 'Play'"></span>
+    </button>
+  </div>
+
+  <!-- Progress bar -->
+  <div
+    class="h-1 bg-[var(--bg-tertiary)] flex-shrink-0"
+    x-show="sentences.length"
+  >
+    <div
+      class="h-full bg-[var(--accent-primary)] transition-all"
+      :style="`width: ${progressPct()}%`"
+    ></div>
+  </div>
+
+  <!-- Error banner -->
+  <div
+    x-show="error"
+    class="px-4 py-2 bg-[var(--error-bg)] text-[var(--error)] text-sm flex items-center gap-2 flex-shrink-0"
+  >
+    <i class="ph ph-warning"></i>
+    <span x-text="error"></span>
+    <button @click="error = ''" class="ml-auto"><i class="ph ph-x"></i></button>
+  </div>
+
+  <!-- "Now reading" banner: the sentence the TTS is currently speaking.
+       Shown only while playing (or paused mid-sentence) so the rest of
+       the time the user gets the full iframe for reading. -->
+  <div
+    x-show="currentSentenceText()"
+    class="px-5 py-2.5 bg-[var(--accent-primary-light)] border-b border-[var(--accent-primary)]/30
+           text-[var(--text-primary)] text-sm leading-snug flex-shrink-0"
+  >
+    <div class="flex items-center gap-2 text-xs text-[var(--text-tertiary)] mb-1">
+      <i class="ph ph-speaker-high"></i>
+      <span x-text="isPlaying ? 'Now reading' : 'Paused'"></span>
+      <span x-show="currentSentencePage">
+        · Page <span x-text="currentSentencePage"></span>
+      </span>
+    </div>
+    <p class="font-medium" x-text="currentSentenceText()"></p>
+  </div>
+
+  <!-- Main content: native PDF/EPUB viewer in an iframe -->
+  <div class="flex-1 min-h-0 bg-[var(--bg-tertiary)]">
+    <iframe
+      x-show="book"
+      :src="fileSrc()"
+      class="w-full h-full border-0"
+      :title="book?.title || 'Book'"
+      allow="fullscreen"
+    ></iframe>
+  </div>
+</div>

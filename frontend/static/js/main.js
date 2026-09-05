@@ -61,6 +61,8 @@ import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
 import { agentsPanel } from './components/agents_panel.js?v=70'
 import { capabilityPicker } from './components/tag_picker.js?v=1'
+import { library } from './components/library.js?v=11'
+import { reader } from './components/reader.js?v=11'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {
@@ -97,7 +99,10 @@ Alpine.data('modalJobs', jobsModal)
 Alpine.data('agentsPanel', agentsPanel)
 Alpine.data('skillsPanel', skillsPanel)
 Alpine.data('capabilityPicker', capabilityPicker)
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel, capabilityPicker')
+Alpine.data('modalLibrary', createModal('library', 'openLibrary', 'closeLibrary'))
+Alpine.data('library', library)
+Alpine.data('reader', reader)
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel, capabilityPicker, modalLibrary, library, reader')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

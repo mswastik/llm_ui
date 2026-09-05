@@ -165,6 +165,7 @@ async def _reconcile_pending_tool_messages():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    await init_db()  # create_all for new tables + ALTER TABLE migrations
     await _bootstrap_default_provider()
     await _backfill_context_windows()
     await _retire_default_agent()
@@ -4228,6 +4229,256 @@ async def delete_note_endpoint(note_id: str):
         if not success:
             raise HTTPException(status_code=404, detail="Note not found")
         return {"status": "success", "message": "Note deleted"}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Books — read-aloud reader (PDF / EPUB with TTS + sentence highlight)
+# ════════════════════════════════════════════════════════════════════════════
+# Five endpoints, all thin: business logic lives in tools/book_service.py and
+# database/book_crud.py. The stream endpoint is the only complex one — it
+# walks sentences, runs each through tts_service.stream_speech, and persists
+# progress so a disconnect mid-read doesn't lose the place.
+from database.book_crud import (
+    create_book as db_create_book,
+    list_books as db_list_books,
+    get_book as db_get_book,
+    update_book_progress as db_update_book_progress,
+    soft_delete_book as db_soft_delete_book,
+)
+from tools.book_service import extract as book_extract, derive_title as book_derive_title
+
+
+@app.post("/api/books/upload")
+async def upload_book(file: UploadFile = File(...)):
+    """Upload a PDF or EPUB, extract sentences, store as a Book.
+
+    Extraction runs synchronously in the request: a 300-page book is ~1-2s
+    on a warm PyPDF2 import, and the user is waiting on a "loading" toast
+    anyway. Background-task it later if real-world latencies are bad.
+    """
+    raw_name = (file.filename or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    ext = os.path.splitext(raw_name)[1].lower()
+    if ext == ".pdf":
+        file_type = "pdf"
+    elif ext == ".epub":
+        file_type = "epub"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Use .pdf or .epub",
+        )
+
+    try:
+        max_size = int(settings_manager.get_settings().get("max_upload_size", MAX_UPLOAD_SIZE))
+    except Exception:
+        max_size = MAX_UPLOAD_SIZE
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(content)} bytes). Max: {max_size} bytes",
+        )
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    stored = f"{uuid.uuid4()}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, stored)
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Extract — failures here must roll back the file write so we don't leak
+    # unreadable uploads into the uploads dir.
+    try:
+        extracted = book_extract(file_path, file_type)
+    except Exception as e:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail=f"Extraction failed: {e}")
+
+    title = book_derive_title(raw_name)
+    try:
+        async with get_db() as db:
+            book = await db_create_book(
+                db,
+                title=title,
+                filepath=file_path,
+                file_type=file_type,
+                sentences=extracted["sentences"],
+                page_map=extracted["page_map"],
+                size_bytes=len(content),
+            )
+    except Exception:
+        # DB write failed (e.g. table missing pre-migration) — don't leave
+        # a 13MB PDF lying in uploads/ to be cleaned up by hand.
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        raise
+
+    return {"status": "ok", "book": book, "total_sentences": len(extracted["sentences"])}
+
+
+@app.get("/api/books")
+async def list_books_endpoint():
+    """All active books, light payload (no sentences JSON)."""
+    async with get_db() as db:
+        books = await db_list_books(db)
+    return {"books": books}
+
+
+@app.get("/api/books/{book_id}")
+async def get_book_endpoint(book_id: str, include_text: bool = True):
+    """Single book. include_text=False skips the sentences payload — used by
+    the sidebar / library list to avoid shipping ~500KB of JSON."""
+    async with get_db() as db:
+        book = await db_get_book(db, book_id, include_text=include_text)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book
+
+
+@app.post("/api/books/{book_id}/progress")
+async def update_book_progress_endpoint(book_id: str, body: Dict[str, Any]):
+    """Lightweight progress update (e.g. after a manual page flip in the
+    reader). Body: {current_page?: int, current_sentence_idx?: int}.
+    The stream endpoint's after-sentence updates use db_update_book_progress
+    directly; this one is for the UI's manual nav."""
+    page = int(body.get("current_page") or 0) or None
+    idx = body.get("current_sentence_idx")
+    if idx is not None:
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            idx = None
+    async with get_db() as db:
+        await db_update_book_progress(db, book_id, idx or 0, page or 1)
+    return {"ok": True}
+
+
+@app.delete("/api/books/{book_id}")
+async def delete_book_endpoint(book_id: str):
+    """Soft-delete a book and remove its file."""
+    async with get_db() as db:
+        ok = await db_soft_delete_book(db, book_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return {"status": "ok"}
+
+
+@app.get("/api/books/{book_id}/file")
+async def get_book_file(book_id: str):
+    """Serve the original PDF/EPUB for the in-browser viewer (PDF iframe).
+    EPUB is served as application/epub+zip; PDFs use the browser's built-in
+    viewer for the page-display side of the read-aloud experience."""
+    import mimetypes
+    async with get_db() as db:
+        book = await db_get_book(db, book_id, include_text=False)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    path = book["filepath"]
+    if not os.path.exists(path):
+        raise HTTPException(status_code=410, detail="File no longer exists on disk")
+    mime, _ = mimetypes.guess_type(path)
+    return FileResponse(path, media_type=mime or "application/octet-stream")
+
+
+@app.get("/api/books/{book_id}/stream")
+async def stream_book(book_id: str, request: Request, from_idx: int = 0):
+    """Stream one NDJSON event per sentence: {idx, page, sentence, seg, url}.
+
+    Client flow:
+      1. Open the stream; the first event tells it the current sentence.
+      2. Play the segment URL (reuses the TTS cache — re-reads are instant).
+      3. On segment end, the next event arrives and the highlight advances.
+      4. Progress is persisted server-side per sentence, so a disconnect
+         mid-read resumes from `current_sentence_idx` on reopen.
+    """
+    async with get_db() as db:
+        book = await db_get_book(db, book_id, include_text=True)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    sentences = book.get("sentences") or []
+    page_map = book.get("page_map") or []
+    if not sentences:
+        raise HTTPException(status_code=400, detail="Book has no extractable sentences")
+
+    from_idx = max(0, min(from_idx, len(sentences) - 1))
+
+    # Reuse the tool_executor's TTSService — same instance the chat uses,
+    # so the TTS cache is shared (re-reads of the same sentence are instant).
+    tts_svc = tool_executor.tts_service
+
+    stop_flag = threading.Event()
+    watcher = asyncio.create_task(_watch_disconnect(request, stop_flag))
+
+    async def event_stream():
+        try:
+            for i in range(from_idx, len(sentences)):
+                if await request.is_disconnected():
+                    break
+                sent = sentences[i].get("text", "") if isinstance(sentences[i], dict) else sentences[i]
+                page = page_map[i] if i < len(page_map) else (i + 1)
+                # Skip noise: empty sentences, or very short ones (often
+                # caused by PDFs with spaced-out text like "A L S O" which
+                # the splitter can't merge). Without this, a 40k-sentence
+                # stream is mostly TTS calls on junk. Threshold 2: keeps
+                # "OK" / "I" type valid fragments, drops 1-char artifacts.
+                stripped = sent.strip()
+                if not stripped or len(stripped) < 2:
+                    continue
+                # One bad sentence (TTS engine error, OOM, etc.) must not
+                # kill the whole 40k-sentence stream — wrap each in its own
+                # try/except, yield an error event, and continue.
+                try:
+                    had_audio = False
+                    async for filename, url in tts_svc.stream_speech(
+                        text=sent, should_stop=stop_flag.is_set
+                    ):
+                        had_audio = True
+                        yield json.dumps({
+                            "idx": i,
+                            "page": page,
+                            "sentence": sent,
+                            "seg": filename,
+                            "url": url,
+                        }) + "\n"
+                    if not had_audio:
+                        # TTS service returned nothing (engine disabled, etc.)
+                        # — don't advance the highlight; the next valid
+                        # sentence will catch the user up.
+                        continue
+                except Exception as e:
+                    print(f"[books] TTS failed at idx={i}: {e}")
+                    continue
+                # Persist progress after each sentence finishes. A crash here
+                # would mean a tiny bit of progress is lost, which is fine.
+                try:
+                    async with get_db() as db:
+                        await db_update_book_progress(db, book_id, i + 1, page)
+                except Exception as e:
+                    print(f"[books] progress persist failed at idx={i}: {e}")
+            yield json.dumps({"done": True}) + "\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield json.dumps({"error": str(e)}) + "\n"
+        finally:
+            watcher.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 if __name__ == "__main__":

@@ -195,6 +195,38 @@ class LLMProvider(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Book(Base):
+    """A user-uploaded book (PDF/EPUB) for the read-aloud reader.
+
+    `sentences` and `page_map` are the JSON sidecar that maps each sentence
+    index to its source page (PDF only — empty for EPUB). Both are populated
+    once at upload time by tools.book_service.extract(); subsequent reads
+    stream from the cache, never re-extract. `current_sentence_idx` is the
+    resume point, updated every sentence by the stream endpoint.
+    """
+    __tablename__ = "books"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    title = Column(String, nullable=False)
+    author = Column(String, nullable=True)
+    filepath = Column(String, nullable=False)
+    file_type = Column(String, nullable=False)  # "pdf" | "epub"
+    size_bytes = Column(Integer, default=0)
+
+    # Extraction cache — see tools/book_service.py
+    sentences = Column(JSON, default=list)   # [{text, page, char_start}, ...]
+    page_map = Column(JSON, default=list)    # [page_for_each_sentence_index]
+    total_sentences = Column(Integer, default=0)
+
+    # Resume point — updated per sentence by the stream endpoint
+    current_sentence_idx = Column(Integer, default=0)
+    current_page = Column(Integer, default=1)
+    last_read_at = Column(DateTime, nullable=True)
+
+    is_active = Column(Integer, default=1)  # soft delete
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Agent(Base):
     __tablename__ = "agents"
 

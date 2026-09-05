@@ -79,7 +79,22 @@ class DocumentProcessor:
         with open(filepath, 'rb') as f:
             reader = PyPDF2.PdfReader(f)
             for page in reader.pages:
-                page_texts.append(page.extract_text() or "")
+                raw = page.extract_text() or ""
+                # PyPDF2 sometimes returns text with 2+ spaces between letters
+                # (e.g. "A L S O  B Y" for "ALSO BY" in print-typeset books).
+                # Collapse them — single spaces are real word boundaries.
+                # This applies to BOTH RAG and the read-aloud reader.
+                cleaned = re.sub(r' {2,}', ' ', raw)
+                # PyPDF2 also spaces out individual letters for some print-
+                # typeset PDFs (e.g. 'A L S O  B Y'). Glued runs of
+                # single-letter tokens back together. Edge case: 'I A' becomes
+                # 'IA' (we accept the miss — it's vanishingly rare in prose).
+                cleaned = re.sub(
+                    r'(?:\b[a-zA-Z]\b\s+)+\b[a-zA-Z]\b',
+                    lambda m: m.group(0).replace(' ', ''),
+                    cleaned,
+                )
+                page_texts.append(cleaned)
         return page_texts, "\n\n".join(page_texts)
 
     @staticmethod

@@ -1,0 +1,105 @@
+<!-- ═══════════ LIBRARY MODAL ═══════════ -->
+<div
+  x-data="modalLibrary"
+  x-show="open"
+  x-cloak
+  @open-library.window="openModal()"
+  @keydown.escape.window="closeModal()"
+  class="modal-backdrop modal-backdrop-library"
+  @click.self="closeModal()"
+>
+  <div
+    class="modal-content"
+    style="max-width: 720px; width: 100%"
+    x-data="library"
+    x-init="init()"
+  >
+    <div
+      class="px-6 py-4 border-b border-[var(--border-primary)] flex items-center justify-between"
+    >
+      <h2 class="text-lg font-semibold flex items-center gap-2">
+        <i class="ph ph-book-open text-[var(--accent-primary)]"></i>
+        Library
+      </h2>
+      <button @click="closeModal()" class="btn btn-icon btn-ghost">
+        <i class="ph ph-x text-lg"></i>
+      </button>
+    </div>
+
+    <div class="p-6 overflow-y-auto" style="max-height: calc(90vh - 140px)">
+      <!-- Upload area -->
+      <label
+        class="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-xl cursor-pointer mb-5
+               border-[var(--border-input)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-primary-light)]/20 transition-colors"
+        :class="uploading ? 'opacity-50 pointer-events-none' : ''"
+      >
+        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+          <i class="ph ph-upload-simple text-2xl text-[var(--text-tertiary)] mb-2"></i>
+          <p class="text-sm text-[var(--text-secondary)]">
+            <span x-show="!uploading">Click to upload a book</span>
+            <span x-show="uploading">Uploading & extracting…</span>
+          </p>
+          <p class="text-xs text-[var(--text-tertiary)] mt-1">PDF or EPUB · read aloud with TTS</p>
+        </div>
+        <input
+          type="file"
+          accept=".pdf,.epub"
+          class="hidden"
+          @change="(async () => {
+            const input = $event.target;
+            const file = input.files && input.files[0];
+            if (!file) return;
+            await uploadFile(file);
+            input.value = '';
+          })()"
+        />
+      </label>
+
+      <!-- Book list -->
+      <template x-if="$store.ui.books.length === 0 && !uploading">
+        <div class="text-center py-10 text-[var(--text-tertiary)]">
+          <i class="ph ph-books text-4xl mb-2 block"></i>
+          <p class="text-sm">No books yet. Upload a PDF or EPUB to get started.</p>
+        </div>
+      </template>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <template x-for="book in $store.ui.books" :key="book.id">
+          <div
+            class="group border border-[var(--border-primary)] rounded-xl p-3 hover:border-[var(--accent-primary)]
+                   hover:shadow-sm transition-all bg-[var(--bg-secondary)] cursor-pointer"
+            @click="openBook(book)"
+          >
+            <div class="flex items-start gap-3">
+              <div
+                class="w-10 h-12 flex-shrink-0 rounded-md flex items-center justify-center text-lg
+                       bg-[var(--accent-primary-light)] text-[var(--accent-primary)]"
+              >
+                <i :class="book.file_type === 'epub' ? 'ph ph-book' : 'ph ph-file-pdf'"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <h3 class="font-medium text-sm truncate" x-text="book.title"></h3>
+                <p class="text-xs text-[var(--text-tertiary)] mt-0.5" x-text="progressLabel(book)"></p>
+                <!-- Progress bar -->
+                <div class="mt-2 h-1 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                  <div
+                    class="h-full bg-[var(--accent-primary)] transition-all"
+                    :style="`width: ${progressPct(book)}%`"
+                  ></div>
+                </div>
+              </div>
+              <button
+                @click.stop="deleteBook(book)"
+                class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--error-bg)]
+                       text-[var(--text-tertiary)] hover:text-[var(--error)] transition-all"
+                title="Remove book"
+              >
+                <i class="ph ph-trash text-sm"></i>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>

@@ -11,7 +11,7 @@ import hashlib
 import os
 import re
 import uuid
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, AsyncGenerator
 from pathlib import Path
 from dataclasses import dataclass
 from settings import UPLOAD_DIR
@@ -92,6 +92,15 @@ class TTSConfig:
     kokoro_device: str = "cpu"  # Kokoro device: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
     kokoro_volume: float = 1.0  # Kokoro volume (0.0 to 1.0)
     kokoro_speed: float = 1.0  # Kokoro speed multiplier (0.5 to 2.0)
+    normalize_enabled: bool = True  # Run the structural/numeric cleanup before synthesis
+    # User-defined rules applied last in normalize_tts_text. Each entry is a
+    # dict {"pattern": str, "flags": str, "replacement": str}; compile errors
+    # are skipped at apply time so one bad rule does not break TTS.
+    custom_replacements: list = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.custom_replacements is None:
+            self.custom_replacements = []
 
     @classmethod
     def from_settings(cls, settings_dict: dict):
@@ -105,7 +114,9 @@ class TTSConfig:
             kokoro_lang=settings_dict.get('kokoro_lang', 'a'),
             kokoro_device=settings_dict.get('kokoro_device', 'cpu'),
             kokoro_volume=float(settings_dict.get('kokoro_volume', 1.0)),
-            kokoro_speed=float(settings_dict.get('kokoro_speed', 1.0))
+            kokoro_speed=float(settings_dict.get('kokoro_speed', 1.0)),
+            normalize_enabled=bool(settings_dict.get('tts_normalize_enabled', True)),
+            custom_replacements=settings_dict.get('tts_custom_replacements') or [],
         )
 
 
@@ -181,7 +192,39 @@ _EMOJI_RE = re.compile(
 )
 
 
-def normalize_tts_text(text: str, engine: Optional[str] = None) -> str:
+def apply_custom_replacements(text: str, rules) -> str:
+    """Apply user-defined regex rules. Compile errors are skipped per rule so a
+    single bad pattern does not break TTS for the whole message.
+
+    ponytail: re.error caught per-rule; rule surface stays simple. If the user
+    later wants a single 'validate all' UI action, compile and cache once on
+    save instead of per-call.
+    """
+    if not rules:
+        return text
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        pat = rule.get("pattern")
+        rep = rule.get("replacement", "")
+        if not pat:
+            continue
+        flags = 0
+        for ch in (rule.get("flags") or "").lower():
+            if ch == "i": flags |= re.IGNORECASE
+            elif ch == "m": flags |= re.MULTILINE
+            elif ch == "s": flags |= re.DOTALL
+            elif ch == "x": flags |= re.VERBOSE
+        try:
+            text = re.sub(pat, rep, text, flags=flags)
+        except re.error as e:
+            print(f"[TTS] skipping bad custom rule {pat!r}: {e}")
+    return text
+
+
+def normalize_tts_text(text: str, engine: Optional[str] = None,
+                       normalize_enabled: bool = True,
+                       custom_replacements: Optional[list] = None) -> str:
     """Rewrite text so any TTS engine reads it the way a human would.
 
     Two layers:
@@ -193,6 +236,11 @@ def normalize_tts_text(text: str, engine: Optional[str] = None) -> str:
     """
     if not text:
         return text
+
+    # Kill-switch: skip the structural/numeric cleanup entirely.
+    # Custom rules still run below so users can opt in to only their rewrites.
+    if not normalize_enabled:
+        return apply_custom_replacements(text, custom_replacements)
 
     # 1. Decode HTML entities first so &amp; -> & before the &->"and" rule.
     import html as _html
@@ -258,7 +306,11 @@ def normalize_tts_text(text: str, engine: Optional[str] = None) -> str:
                   lambda m: num2words(m.group(1).replace(",", "")).replace(",", ""), text)
 
     # 12. Collapse whitespace.
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # 13. User-defined rules run last so they can rewrite any of the above
+    #     output (e.g. swap a specific word to a pronunciation hint).
+    return apply_custom_replacements(text, custom_replacements)
 
 
 def _is_abbrev_fragment(p: str) -> bool:
@@ -369,7 +421,12 @@ class TTSService:
         # Rewrite $ amounts, %, ordinals and bare numbers so the engine
         # (especially Kokoro) reads them correctly. Cache key uses the
         # normalized text since that is what gets synthesized.
-        text = normalize_tts_text(text, engine=self.config.engine)
+        text = normalize_tts_text(
+            text,
+            engine=self.config.engine,
+            normalize_enabled=self.config.normalize_enabled,
+            custom_replacements=self.config.custom_replacements,
+        )
 
         voice = voice or self.config.voice
         rate = rate or self.config.rate
@@ -552,7 +609,12 @@ class TTSService:
         re-reads of the same message stream instantly from cache. Generation
         bails between sentences once should_stop() is true (client paused).
         """
-        text = normalize_tts_text(text, engine=self.config.engine)
+        text = normalize_tts_text(
+            text,
+            engine=self.config.engine,
+            normalize_enabled=self.config.normalize_enabled,
+            custom_replacements=self.config.custom_replacements,
+        )
         voice = voice or self.config.voice
         rate = rate or self.config.rate
         engine = self.config.engine
@@ -746,4 +808,20 @@ if __name__ == "__main__":
     assert normalize_tts_text("call the API", engine="kokoro") == "call the A P I"
     assert normalize_tts_text("call the API", engine="edge-tts") == "call the API"
     assert normalize_tts_text("call the API") == "call the API"
+
+    # User-defined rules: word/phrase swap, regex with backref, kill-switch,
+    # and a malformed pattern that must be skipped (not raise).
+    rules = [
+        {"pattern": r"\bDr\.\s*", "replacement": "Doctor "},
+        {"pattern": r"(\d+)\s*°\s*C", "flags": "i", "replacement": r"\1 degrees Celsius"},
+        {"pattern": r"GPT", "replacement": "G P T"},
+        {"pattern": r"[bad", "replacement": "x"},  # malformed — must be skipped
+    ]
+    assert normalize_tts_text("Dr. Smith says 20°C and GPT-4", custom_replacements=rules) == \
+        "Doctor Smith says twenty degrees C and G P T-4"
+    # Kill-switch leaves structural cleanup untouched; custom rules still apply.
+    assert normalize_tts_text("$5 and Dr. Foo", normalize_enabled=False, custom_replacements=rules) == \
+        "$5 and Doctor Foo"
+    # No rules, kill-switch off -> untouched.
+    assert normalize_tts_text("$5 and Dr. Foo", normalize_enabled=False) == "$5 and Dr. Foo"
     print("normalizer self-check: OK")

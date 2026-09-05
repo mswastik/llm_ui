@@ -1137,7 +1137,9 @@ h4 { font-size: 1rem; font-weight: 600; }
   so the text aligns pixel-perfect with the underlying canvas. The
   spans start transparent (invisible) and only become visible when
   selected or highlighted — this keeps the rendered canvas looking
-  unchanged while still being selectable + scriptable.
+  unchanged while still being selectable + scriptable. PDF.js 3.x
+  nests spans inside optional .markedContent wrappers, so we target
+  descendants rather than direct children.
 */
 .textLayer {
   position: absolute;
@@ -1151,27 +1153,72 @@ h4 { font-size: 1rem; font-weight: 600; }
   user-select: text;
   pointer-events: auto;
 }
-.textLayer > span,
-.textLayer > br {
+.textLayer span,
+.textLayer br {
   color: transparent;
   position: absolute;
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
 }
-.textLayer > span::selection,
-.textLayer > span *::selection {
+.textLayer span::selection,
+.textLayer span *::selection {
   background: color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 /* The current TTS sentence. rgba(255 235 59 / 0.45) is a textbook
    "highlighter" yellow at 45% alpha. Using background-color (not
    background) so PDF.js's positioning math still applies. */
-.textLayer > .pdf-highlight {
+.textLayer .pdf-highlight {
   background-color: rgba(255, 235, 59, 0.45) !important;
   color: transparent !important;
   border-radius: 2px;
   mix-blend-mode: multiply;
 }
-.textLayer > .pdf-highlight::selection {
+.textLayer .pdf-highlight::selection {
   background: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+}
+
+/* PDF find matches (painted by pdf.js' PDFFindController into the text
+   layer as .highlight spans). Like the TTS highlight, the text itself
+   stays transparent and only the background band shows over the canvas.
+   Overridden here (theme.css loads after pdf_viewer.css) so the colours
+   read clearly in both light and dark themes. */
+.textLayer .highlight {
+  background-color: rgba(255, 213, 0, 0.5);
+}
+.textLayer .highlight.selected {
+  background-color: rgba(255, 140, 0, 0.65);
+}
+
+/* PDF.js reference-viewer container. reader.js builds this subtree
+   (host > .pdfjs-container > .pdfViewer) fresh for every open; the
+   host is the stable mount point and the container scrolls. Center
+   the pages, give the canvas a soft drop shadow, and override PDF.js'
+   default page colors so they match our app surface. */
+.pdfjs-host {
+  position: absolute;
+  inset: 0;
+}
+.pdfjs-container {
+  /* PDFViewer requires the outer container to be position:absolute.
+     We size it to fill the host, which is the overflow:auto div. */
+  position: absolute;
+  inset: 0;
+  background: var(--bg-tertiary);
+  overflow: auto;
+}
+.pdfjs-container .pdfViewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem 0;
+}
+.pdfjs-container .page {
+  margin: 0 auto 0.5rem auto !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  background: #fff !important;
+  border: none !important;
+}
+[data-theme="dark"] .pdfjs-container .page {
+  background: #1a1a1a !important;
 }

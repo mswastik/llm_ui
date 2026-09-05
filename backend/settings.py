@@ -77,6 +77,11 @@ DEFAULTS = {
     "kokoro_volume": 1.0,
     "kokoro_speed": 1.0,
     "tts_auto_read": False,
+    "tts_normalize_enabled": True,
+    # User-defined regex replacements applied last in normalize_tts_text.
+    # Each entry: {"pattern": str, "flags": str, "replacement": str}.
+    # Compile errors are skipped (one bad rule must not kill TTS).
+    "tts_custom_replacements": [],
 
     # Agent Platform: Terminal Tool Settings
     "terminal_allowed_dirs": [".", "./uploads", "./outputs"],
@@ -144,6 +149,8 @@ class Settings(BaseModel):
     kokoro_volume: float = DEFAULTS["kokoro_volume"]
     kokoro_speed: float = DEFAULTS["kokoro_speed"]
     tts_auto_read: bool = DEFAULTS["tts_auto_read"]
+    tts_normalize_enabled: bool = DEFAULTS["tts_normalize_enabled"]
+    tts_custom_replacements: list = DEFAULTS["tts_custom_replacements"]
     terminal_allowed_dirs: list = DEFAULTS["terminal_allowed_dirs"]
     terminal_allowed_commands: list = DEFAULTS["terminal_allowed_commands"]
     terminal_blocked_patterns: list = DEFAULTS["terminal_blocked_patterns"]
@@ -223,6 +230,7 @@ _ENV_MAP = {
     "kokoro_volume": "KOKORO_VOLUME",
     "kokoro_speed": "KOKORO_SPEED",
     "tts_auto_read": "TTS_AUTO_READ",
+    "tts_normalize_enabled": "TTS_NORMALIZE_ENABLED",
     "stt_engine": "STT_ENGINE",
     "stt_model": "STT_MODEL",
     "terminal_require_approval": "TERMINAL_REQUIRE_APPROVAL",
@@ -270,7 +278,7 @@ class SettingsManager:
         # Update TTS settings if changed and TTS service is available
         tts_keys = {'tts_engine', 'tts_voice', 'tts_rate', 'tts_volume',
                     'kokoro_lang', 'kokoro_device', 'kokoro_volume', 'kokoro_speed',
-                    'tts_auto_read'}
+                    'tts_auto_read', 'tts_normalize_enabled', 'tts_custom_replacements'}
         if tts_keys & set(new_settings.keys()) and self.tts_service:
             from .tools.tts_service import TTSConfig
             tts_config = TTSConfig.from_settings(new_settings)

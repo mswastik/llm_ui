@@ -28,14 +28,14 @@ console.log('[main] Alpine ESM module loaded')
 // 2. Import SSE + TTS services (no Alpine dependency)
 // ═══════════════════════════════════════════════════════════
 import { SSEService, sseService } from './services/sse.js?v=70'
-import { TTSService, ttsService } from './services/tts.js?v=45'
+import { TTSService, ttsService } from './services/tts.js?v=46'
 window.sseService = sseService
 window.ttsService = ttsService
 
 // ═══════════════════════════════════════════════════════════
 // 3. Import utils (provides formatters, markdownUtils, helpers, api)
 // ═══════════════════════════════════════════════════════════
-import { helpers, formatters } from './utils.js?v=62'
+import { helpers, formatters } from './utils.js?v=63'
 window.helpers = helpers
 window.formatters = formatters
 
@@ -56,13 +56,13 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // ═══════════════════════════════════════════════════════════
 import { sidebar } from './components/sidebar.js?v=64'
 import { chatComponent } from './components/chat.js?v=80'
-import { settings } from './components/settings.js?v=72'
+import { settings } from './components/settings.js?v=73'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
 import { agentsPanel } from './components/agents_panel.js?v=70'
 import { capabilityPicker } from './components/tag_picker.js?v=1'
-import { library } from './components/library.js?v=15'
-import { reader } from './components/reader.js?v=15'
+import { library } from './components/library.js?v=24'
+import { reader } from './components/reader.js?v=30'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {

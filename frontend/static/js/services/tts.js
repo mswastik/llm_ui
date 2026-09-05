@@ -7,6 +7,8 @@
  * and a native pause means "stop" (same semantics as the UI pause button).
  */
 
+import { getTtsVolume } from '../utils.js'
+
 export class TTSService {
   constructor() {
     this.ttsAvailable = false
@@ -28,6 +30,53 @@ export class TTSService {
     this.playerSlot = null   // DOM element it's currently injected in
     this._finishCb = null
     this._stopping = false
+    // Volume-boost graph (Web Audio gain). Built lazily only when the
+    // Settings → TTS volume differs from 1× so default playback is never
+    // routed through (or dependent on) an AudioContext.
+    this._actx = null
+    this._gainNode = null
+  }
+
+  // Route the player through a gain node when the configured volume isn't
+  // 1×. The <audio> element's own volume tops out at 1.0; boosting past
+  // 100% needs Web Audio. Must be (re)applied before each play() — also
+  // resumes the context (a gesture may be needed; see the listeners).
+  #ensureVolume() {
+    const el = this.player
+    if (!el) return
+    const vol = getTtsVolume()
+    if (Math.abs(vol - 1) > 0.001 && !this._gainNode) {
+      try {
+        const Ctor = window.AudioContext || window.webkitAudioContext
+        if (!Ctor) {
+          el.volume = Math.min(1, vol)
+          return
+        }
+        const actx = new Ctor()
+        const src = actx.createMediaElementSource(el)
+        const gain = actx.createGain()
+        src.connect(gain)
+        gain.connect(actx.destination)
+        this._actx = actx
+        this._gainNode = gain
+        // Resume on the next user gesture (contexts start suspended). The
+        // native play button on the visible player is the reliable one; the
+        // window listeners also catch auto-read cases.
+        const warm = () => { try { actx.resume() } catch { /* noop */ } }
+        window.addEventListener('pointerdown', warm, { once: true, capture: true })
+        window.addEventListener('keydown', warm, { once: true, capture: true })
+        window.addEventListener('touchstart', warm, { once: true, capture: true })
+        el.addEventListener('play', () => {
+          if (actx.state === 'suspended') actx.resume().catch(() => {})
+        })
+      } catch {
+        this._gainNode = null
+      }
+    }
+    if (this._actx && this._actx.state === 'suspended') {
+      this._actx.resume().catch(() => {})
+    }
+    if (this._gainNode) this._gainNode.gain.value = Math.max(0.2, Math.min(2, vol))
   }
 
   // Emit the authoritative state (drift-proof: derived from real playback events)
@@ -99,6 +148,7 @@ export class TTSService {
     this.segmentIndex = next
     const el = this.#getPlayer()
     el.src = this.segments[next].url
+    this.#ensureVolume()
     // play() returns a promise — a rejected one (e.g. element detached during
     // an Alpine re-render) must be caught or it surfaces as an unhandled rejection
     el.play().catch(() => {})
@@ -205,6 +255,7 @@ export class TTSService {
               const el = this.#getPlayer()
               el.src = evt.url
               this.segmentIndex = 0
+              this.#ensureVolume()
               try {
                 await el.play()
               } catch (e) {
@@ -272,6 +323,7 @@ export class TTSService {
     this.isPaused = false
     this.isPlaying = true
     this.#emit()
+    this.#ensureVolume()
     this.player.play().catch(() => {})
   }
 }

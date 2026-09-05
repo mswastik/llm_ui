@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PDF.js viewer smoke test</title>
+<style>
+body { font-family: sans-serif; padding: 1em; }
+#log { background: #f4f4f4; padding: 1em; font-family: monospace; white-space: pre-wrap; margin-top: 1em; }
+.pdfViewer { display: block; }
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.css">
+</head>
+<body>
+<h2>PDF.js viewer smoke test</h2>
+<div id="viewerContainer">
+  <div id="viewer" class="pdfViewer"></div>
+</div>
+<div id="log">Loading…</div>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.js"></script>
+<script>
+const log = (m) => { document.getElementById('log').textContent += '\n' + m; };
+window.onerror = (e, src, line, col, err) => log(`ERROR ${e} ${err?.message || ''}`);
+async function go() {
+  log('pdfjsLib: ' + typeof window.pdfjsLib);
+  log('pdfjsViewer: ' + typeof window.pdfjsViewer);
+  if (window.pdfjsViewer) {
+    log('keys: ' + Object.keys(window.pdfjsViewer).slice(0, 20).join(','));
+  }
+  if (!window.pdfjsLib || !window.pdfjsViewer) { log('FAIL'); return; }
+  try {
+    const resp = await fetch('/api/books');
+    const { books } = await resp.json();
+    const book = books.find(b => b.file_type === 'pdf');
+    if (!book) { log('no pdf book'); return; }
+    const fresp = await fetch(`/api/books/${book.id}/file`);
+    const buf = await fresp.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buf, disableWorker: true }).promise;
+    log(`doc: ${doc.numPages} pages`);
+    log('outline: ' + (await doc.getOutline()).length + ' entries');
+    // Get the title metadata
+    const meta = await doc.getMetadata();
+    log('metadata: ' + JSON.stringify(meta.info).slice(0, 200));
+    // Build the viewer
+    const eventBus = new pdfjsViewer.EventBus();
+    const linkService = new pdfjsViewer.PDFLinkService({ eventBus });
+    const pdfViewer = new pdfjsViewer.PDFViewer({ container: document.getElementById('viewer'), linkService, eventBus });
+    linkService.setDocument(doc);
+    pdfViewer.setDocument(doc);
+    log('viewer built');
+  } catch (e) {
+    log('CATCH: ' + e.message);
+    log(e.stack);
+  }
+}
+go();
+</script>
+</body>
+</html>

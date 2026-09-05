@@ -1,7 +1,7 @@
 /**
  * Settings Component — Unified settings modal with MCP server management
  */
-import { api } from '../utils.js'
+import { api, getTtsVolume, setTtsVolume } from '../utils.js'
 
 const settings = () => {
   console.log('[settings] Factory function called, creating component')
@@ -36,6 +36,8 @@ const settings = () => {
   mcpRegistryResults: [],
   mcpRegistryLoading: false,
   mcpRegistryError: '',
+  // TTS normalizer: live preview only, never sent to the server.
+  ttsPreviewInput: 'Dr. Smith saw $5 at 20°C — see https://example.com',
   mcpRegistryInstalling: '',
 
   async init() {
@@ -60,7 +62,26 @@ const settings = () => {
     try {
       this.settings = await api.get('/api/settings')
       this.$store.ui.settingsData = this.settings
+      // Volume is consumed at playback time from localStorage (so it applies
+      // even before Settings loads). Show the value actually in use so the
+      // slider never jumps back to a stale server copy.
+      this.$store.ui.settingsData.tts_volume = getTtsVolume()
+      // New fields may be missing on installs predating this feature.
+      if (this.$store.ui.settingsData.tts_normalize_enabled === undefined) {
+        this.$store.ui.settingsData.tts_normalize_enabled = true
+      }
+      if (!Array.isArray(this.$store.ui.settingsData.tts_custom_replacements)) {
+        this.$store.ui.settingsData.tts_custom_replacements = []
+      }
     } catch (e) { console.error('[settings] Error:', e) }
+  },
+
+  // Volume slider in Settings → TTS. Applies immediately (playback reads
+  // localStorage) and Save persists it to the server too.
+  onVolumeSettingInput() {
+    const sd = this.$store.ui.settingsData
+    sd.tts_volume = Math.max(0.2, Math.min(2, Number(sd.tts_volume) || 1))
+    setTtsVolume(sd.tts_volume)
   },
 
   async saveSettings() {
@@ -89,6 +110,42 @@ const settings = () => {
     } else if (settings.tts_engine === 'edge-tts') {
       settings.tts_voice = 'en-IN-NeerjaNeural'
     }
+  },
+
+  // ─── TTS text normalizer (UI helpers) ─────────────────
+  // ponytail: rule edits mutate settingsData.tts_custom_replacements in place;
+  // saveSettings() ships the whole payload so no per-rule PATCH is needed.
+  addTtsReplacement() {
+    const sd = this.$store.ui.settingsData
+    if (!Array.isArray(sd.tts_custom_replacements)) sd.tts_custom_replacements = []
+    sd.tts_custom_replacements.push({ pattern: '', flags: '', replacement: '', _error: '' })
+  },
+  removeTtsReplacement(idx) {
+    const sd = this.$store.ui.settingsData
+    if (Array.isArray(sd.tts_custom_replacements)) sd.tts_custom_replacements.splice(idx, 1)
+  },
+  get ttsPreviewOutput() {
+    const sd = this.$store.ui.settingsData || {}
+    const text = this.ttsPreviewInput || ''
+    if (!Array.isArray(sd.tts_custom_replacements) || !sd.tts_custom_replacements.length) {
+      return sd.tts_normalize_enabled === false ? text : '(no rules — built-in cleanup will still run on the server)'
+    }
+    let out = text
+    for (const r of sd.tts_custom_replacements) {
+      if (!r || !r.pattern) continue
+      let flags = ''
+      for (const ch of (r.flags || '').toLowerCase()) {
+        if ('imsu'.includes(ch)) flags += ch
+      }
+      try {
+        // JS regex (close-enough preview; the server runs Python).
+        out = new RegExp(r.pattern, flags)[Symbol.replace](out, r.replacement ?? '')
+        r._error = ''
+      } catch (e) {
+        r._error = e.message
+      }
+    }
+    return out
   },
 
   // ─── Memory (agent platform Phase 2) ─────────────────

@@ -1,10 +1,12 @@
 <!-- ═══════════ READER OVERLAY (fullscreen, fixed) ═══════════ -->
 <!--
-  Fullscreen reader. PDF is rendered with PDF.js using a per-page
-  canvas + text layer (Mozilla's standard pattern). The text layer
-  is a series of absolutely-positioned <span>s — one per PDF text
-  item — which gives us a precise handle for highlighting the
-  current TTS sentence via a CSS class.
+  Fullscreen reader. PDF is rendered by PDF.js' own multi-page viewer
+  (PDFViewer from pdfjs-dist/web/pdf_viewer.js) which gives us scroll,
+  page navigation, keyboard arrows, link annotations, lazy page
+  rendering, and a text layer for free — the same machinery Mozilla's
+  reference viewer.html uses. We hook into the `textlayerrendered`
+  event to capture the per-page textDivs, then toggle .pdf-highlight
+  on the spans that overlap the current TTS sentence.
 
   EPUB has no native viewer here; the right pane is a sentence list
   the user can click to jump.
@@ -13,8 +15,11 @@
   x-data="reader"
   x-show="open"
   x-cloak
-  @keydown.escape.window="if (open) close()"
-  @keydown.space.window.prevent="if (open && !['INPUT','TEXTAREA'].includes($event.target.tagName)) toggle()"
+  @keydown.escape.window="if (open) handleEscape()"
+  @keydown.window="if ($event.ctrlKey || $event.metaKey) { if ($event.key.toLowerCase() === 'f') { if (open && book?.file_type === 'pdf') { $event.preventDefault(); openFind() } } }"
+  @keydown.space.window="if (open && !['INPUT','TEXTAREA','SELECT'].includes($event.target.tagName)) { $event.preventDefault(); toggle() }"
+  @keydown.arrowleft.window="if (open && book?.file_type === 'pdf' && !['INPUT','TEXTAREA'].includes($event.target.tagName)) goToPage(currentPdfPage - 1)"
+  @keydown.arrowright.window="if (open && book?.file_type === 'pdf' && !['INPUT','TEXTAREA'].includes($event.target.tagName)) goToPage(currentPdfPage + 1)"
   class="fixed inset-0 z-[200] bg-[var(--bg-primary)] flex flex-col"
 >
   <!-- Header / transport bar -->
@@ -34,6 +39,114 @@
         </span>
       </p>
     </div>
+
+    <!-- PDF nav controls -->
+    <div
+      class="flex items-center gap-1"
+      x-show="book?.file_type === 'pdf' && pdfReady"
+    >
+      <button
+        @click="goToPage(1)"
+        :disabled="currentPdfPage <= 1"
+        class="btn btn-icon btn-ghost"
+        title="First page"
+      >
+        <i class="ph ph-skip-back text-lg"></i>
+      </button>
+      <button
+        @click="goToPage(currentPdfPage - 1)"
+        :disabled="currentPdfPage <= 1"
+        class="btn btn-icon btn-ghost"
+        title="Previous page (←)"
+      >
+        <i class="ph ph-caret-left text-lg"></i>
+      </button>
+      <div class="flex items-center gap-1 text-sm px-2">
+        <input
+          type="number"
+          min="1"
+          :max="pdfNumPages"
+          :value="currentPdfPage"
+          @change="goToPage(parseInt($event.target.value, 10) || 1)"
+          class="w-14 text-center px-1 py-0.5 rounded border border-[var(--border-primary)] bg-[var(--bg-primary)]"
+        />
+        <span class="text-[var(--text-tertiary)]" x-text="`/ ${pdfNumPages || '?'}`"></span>
+      </div>
+      <button
+        @click="goToPage(currentPdfPage + 1)"
+        :disabled="currentPdfPage >= pdfNumPages"
+        class="btn btn-icon btn-ghost"
+        title="Next page (→)"
+      >
+        <i class="ph ph-caret-right text-lg"></i>
+      </button>
+      <button
+        @click="goToPage(pdfNumPages)"
+        :disabled="currentPdfPage >= pdfNumPages"
+        class="btn btn-icon btn-ghost"
+        title="Last page"
+      >
+        <i class="ph ph-skip-forward text-lg"></i>
+      </button>
+    </div>
+
+    <!-- Go back to the sentence currently being spoken (shown only while
+         TTS plays and the user scrolled/jumped away from it) -->
+    <button
+      x-show="isPlaying && pageMap[currentIdx] && pageMap[currentIdx] !== currentPdfPage"
+      @click="_goToSpokenPage()"
+      class="btn btn-icon btn-ghost"
+      title="Go to current spoken page"
+    >
+      <i class="ph ph-crosshair text-lg"></i>
+    </button>
+
+    <!-- Find in document (PDF only) -->
+    <button
+      x-show="book?.file_type === 'pdf' && pdfReady"
+      @click="findOpen ? closeFind() : openFind()"
+      class="btn btn-icon btn-ghost"
+      :class="findOpen ? 'bg-[var(--bg-tertiary)]' : ''"
+      title="Find in document (Ctrl+F)"
+    >
+      <i class="ph ph-magnifying-glass text-lg"></i>
+    </button>
+
+    <!-- Outline toggle (PDF only) -->
+    <button
+      x-show="book?.file_type === 'pdf' && pdfReady"
+      @click="outlineOpen = !outlineOpen"
+      class="btn btn-icon btn-ghost"
+      :class="outlineOpen ? 'bg-[var(--bg-tertiary)]' : ''"
+      title="Outline / bookmarks"
+    >
+      <i class="ph ph-list-numbers text-lg"></i>
+    </button>
+
+    <!-- Playback volume / boost (0.5×–2×). Web Audio gain on the player,
+         so it can go past the <audio> element's 100% ceiling. Persisted via
+         localStorage + Settings → TTS. -->
+    <div
+      class="hidden sm:flex items-center gap-1.5 pl-1"
+      x-show="sentences.length"
+      title="Playback volume (boost)"
+    >
+      <i class="ph ph-speaker-high text-base text-[var(--text-tertiary)]"></i>
+      <input
+        type="range"
+        min="0.5"
+        max="2"
+        step="0.05"
+        :value="volume"
+        @input="volume = parseFloat($event.target.value); onVolumeInput()"
+        class="w-20 lg:w-24 accent-[var(--accent-primary)]"
+      />
+      <span
+        class="text-xs tabular-nums w-9 text-[var(--text-tertiary)]"
+        x-text="Math.round(volume * 100) + '%'"
+      ></span>
+    </div>
+
     <button
       @click="toggle()"
       class="btn btn-primary px-4"
@@ -65,41 +178,160 @@
     <button @click="error = ''" class="ml-auto"><i class="ph ph-x"></i></button>
   </div>
 
-  <!-- Main content: PDF.js viewer (PDF) or sentence list (EPUB) -->
-  <div class="flex-1 min-h-0 overflow-auto bg-[var(--bg-tertiary)]">
-    <div
-      x-show="book?.file_type === 'pdf' && pdfReady"
-      x-ref="pdfViewer"
-      class="py-4"
-    ></div>
-    <div
-      x-show="book?.file_type !== 'pdf'"
-      class="max-w-3xl mx-auto py-4 px-6"
-    >
+  <!-- Main content row: viewer/EPUB pane first, outline sidebar on the
+       right (matches the toggle button's position in the header). -->
+  <div class="flex-1 min-h-0 flex">
+    <!-- PDF.js viewer or EPUB sentence list. The PDF host is the stable
+         mount point: reader.js builds a fresh .pdfjs-container subtree
+         inside it per open (PDFViewer leaks a ResizeObserver on its
+         container otherwise) and drops it on close. The container does
+         its own scrolling (position:absolute + overflow:auto). -->
+    <div class="flex-1 min-w-0 relative bg-[var(--bg-tertiary)]">
       <div
-        x-show="isLoading"
-        class="flex items-center justify-center h-32 text-[var(--text-tertiary)]"
+        x-ref="pdfHost"
+        class="pdfjs-host"
+        x-show="book?.file_type === 'pdf'"
+      ></div>
+
+      <!-- PDF find bar (search). Overlays the top-center of the viewer;
+           the viewer container scrolls underneath so the bar stays put. -->
+      <div
+        x-show="findOpen && book?.file_type === 'pdf' && pdfReady"
+        x-cloak
+        class="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-2 rounded-xl
+               border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-xl
+               w-[calc(100%-1.5rem)] sm:w-auto"
+      >
+        <i class="ph ph-magnifying-glass text-[var(--text-tertiary)]"></i>
+        <input
+          x-ref="findInput"
+          type="text"
+          x-model="findQuery"
+          placeholder="Find in document…"
+          @input="findOnInput()"
+          @keydown.enter.prevent="findNext()"
+          @keydown.shift.enter.prevent="findPrev()"
+          @keydown.escape.stop="closeFind()"
+          class="input text-sm w-40 sm:w-56"
+        />
+        <span
+          x-show="!findPending && !findNotFound && findTotal > 0 && findQuery"
+          class="text-xs tabular-nums text-[var(--text-tertiary)] min-w-12 text-center"
+          x-text="`${findCurrent} / ${findTotal}`"
+        ></span>
+        <span
+          x-show="findPending && findQuery"
+          class="text-xs text-[var(--text-tertiary)] flex items-center gap-1"
+        >
+          <i class="ph ph-spinner-gap animate-spin"></i> Searching…
+        </span>
+        <span
+          x-show="!findPending && findNotFound && findQuery"
+          class="text-xs text-amber-500"
+        >
+          No matches
+        </span>
+        <div class="flex items-center ml-1">
+          <button
+            @click="findPrev()"
+            class="btn btn-icon btn-ghost p-1.5"
+            title="Previous match (Shift+Enter)"
+          >
+            <i class="ph ph-caret-up text-sm"></i>
+          </button>
+          <button
+            @click="findNext()"
+            class="btn btn-icon btn-ghost p-1.5"
+            title="Next match (Enter)"
+          >
+            <i class="ph ph-caret-down text-sm"></i>
+          </button>
+          <button
+            @click="closeFind()"
+            class="btn btn-icon btn-ghost p-1.5"
+            title="Close (Esc)"
+          >
+            <i class="ph ph-x text-sm"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading spinner while the PDF.js viewer initializes -->
+      <div
+        x-show="book?.file_type === 'pdf' && isLoading"
+        class="absolute inset-0 flex items-center justify-center text-[var(--text-tertiary)] pointer-events-none"
       >
         <i class="ph ph-spinner-gap animate-spin text-2xl"></i>
-        <span class="ml-2">Loading book…</span>
+        <span class="ml-2 text-sm">Loading book…</span>
       </div>
-      <p
-        x-show="!isLoading && !sentences.length"
-        class="text-center text-[var(--text-tertiary)] py-8 px-4"
+      <div
+        x-show="book?.file_type !== 'pdf'"
+        class="max-w-3xl mx-auto py-4 px-6 overflow-y-auto max-h-full"
       >
-        No content extracted from this book.
-      </p>
-      <template x-for="(s, i) in sentences" :key="i">
+        <div
+          x-show="isLoading"
+          class="flex items-center justify-center h-32 text-[var(--text-tertiary)]"
+        >
+          <i class="ph ph-spinner-gap animate-spin text-2xl"></i>
+          <span class="ml-2">Loading book…</span>
+        </div>
         <p
-          class="leading-snug mb-1 px-3 py-1.5 rounded-lg text-sm"
-          :class="{
-            'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] font-medium ring-1 ring-[var(--accent-primary)]/40':
-              isCurrent(i),
-            'text-[var(--text-tertiary)]': isPast(i),
-          }"
-          x-text="sentenceText(i)"
-        ></p>
-      </template>
+          x-show="!isLoading && !sentences.length"
+          class="text-center text-[var(--text-tertiary)] py-8 px-4"
+        >
+          No content extracted from this book.
+        </p>
+        <template x-for="(s, i) in sentences" :key="i">
+          <p
+            class="leading-snug mb-1 px-3 py-1.5 rounded-lg text-sm"
+            :class="{
+              'bg-[var(--accent-primary-light)] text-[var(--accent-primary)] font-medium ring-1 ring-[var(--accent-primary)]/40':
+                isCurrent(i),
+              'text-[var(--text-tertiary)]': isPast(i),
+            }"
+            x-text="sentenceText(i)"
+          >          </p>
+        </template>
+      </div>
+    </div>
+
+    <!-- Outline sidebar (PDF only). outlineItems is reactive data set
+         after getOutline() resolves, so rows appear when the panel
+         opens; the raw destination refs stay out of Alpine (indexed
+         identically via _gotoOutlineItemAt). Page numbers are resolved
+         asynchronously and patched in per row. -->
+    <div
+      x-show="outlineOpen && book?.file_type === 'pdf'"
+      class="w-80 flex-shrink-0 overflow-y-auto border-l border-[var(--border-primary)] bg-[var(--bg-secondary)]"
+    >
+      <div class="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-tertiary)] border-b border-[var(--border-primary)]">
+        Outline
+      </div>
+      <div class="py-1">
+        <template x-for="(item, i) in outlineItems" :key="i">
+          <button
+            @click="_gotoOutlineItemAt(i)"
+            class="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm hover:bg-[var(--bg-tertiary)]"
+            :style="`padding-left: ${0.75 + item.depth * 0.75}rem`"
+            :title="item.page ? item.title + ' (page ' + item.page + ')' : item.title"
+          >
+            <span class="flex-1 min-w-0 truncate" x-text="item.title"></span>
+            <span
+              x-show="item.page"
+              class="flex-shrink-0 text-xs tabular-nums text-[var(--text-tertiary)]"
+              x-text="item.page"
+            ></span>
+          </button>
+        </template>
+        <div
+          x-show="outlineEmpty"
+          class="px-3 py-4 text-sm text-[var(--text-tertiary)]"
+        >
+          This PDF has no outline.
+        </div>
+      </div>
     </div>
   </div>
 </div>
+</content>
+</invoke>

@@ -499,6 +499,117 @@
                 <span class="text-sm text-[var(--text-secondary)]">Automatically read assistant responses aloud</span>
               </label>
             </div>
+            <!-- Playback volume — engine-agnostic. Applied as Web Audio gain
+                 at playback time (reader + chat), so >100% really boosts.
+                 Stored under tts_volume (server) + localStorage (runtime). -->
+            <div class="md:col-span-2">
+              <label
+                class="block text-xs font-medium text-[var(--text-secondary)] mb-1"
+                >Volume
+                <span class="text-[var(--text-tertiary)]">(0.5×–2× — above 100% boosts playback)</span></label
+              >
+              <div class="flex items-center gap-3">
+                <i class="ph ph-speaker-low text-[var(--text-tertiary)]"></i>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.05"
+                  x-model.number="$store.ui.settingsData.tts_volume"
+                  @input="onVolumeSettingInput()"
+                  class="flex-1 accent-[var(--accent-primary)]"
+                />
+                <i class="ph ph-speaker-high text-[var(--text-tertiary)]"></i>
+                <span
+                  class="text-sm tabular-nums w-11 text-right text-[var(--text-secondary)]"
+                  x-text="Math.round(($store.ui.settingsData.tts_volume || 1) * 100) + '%'"
+                ></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Text normalizer: built-in cleanup toggle + user regex rules -->
+          <h3 class="font-semibold mb-3 mt-6">Text normalizer</h3>
+          <p class="text-xs text-[var(--text-tertiary)] mb-3">
+            Before text is sent to the TTS engine, the app rewrites URLs, money, symbols and numbers so it sounds natural.
+            Add your own rules below — each rule is a Python regex with an optional replacement.
+            Bad patterns are skipped at runtime; you can preview results without saving.
+          </p>
+          <div class="md:col-span-2 mb-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                x-model="$store.ui.settingsData.tts_normalize_enabled"
+                class="rounded border-[var(--border-input)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+              />
+              <span class="text-sm text-[var(--text-secondary)]">Enable built-in cleanup (URLs, $, %, numbers, symbols)</span>
+            </label>
+          </div>
+
+          <div class="md:col-span-2 mb-2 flex items-center justify-between">
+            <span class="text-xs font-medium text-[var(--text-secondary)]">Custom replacements</span>
+            <button type="button" @click="addTtsReplacement()" class="btn btn-secondary btn-xs">
+              <i class="ph ph-plus text-xs"></i> Add rule
+            </button>
+          </div>
+
+          <div class="md:col-span-2 space-y-2">
+            <template x-for="(rule, idx) in ($store.ui.settingsData.tts_custom_replacements || [])" :key="idx">
+              <div class="grid grid-cols-12 gap-2 items-start p-2 border border-[var(--border-input)] rounded">
+                <div class="col-span-5">
+                  <input
+                    type="text"
+                    x-model="rule.pattern"
+                    @input="rule._error = ''"
+                    class="input text-xs font-mono"
+                    placeholder='\bDr\.\s*'
+                  />
+                </div>
+                <div class="col-span-1">
+                  <input
+                    type="text"
+                    x-model="rule.flags"
+                    class="input text-xs font-mono"
+                    placeholder="i"
+                    title="Regex flags: i (ignore case), m (multiline), s (dotall), x (verbose)"
+                    maxlength="4"
+                  />
+                </div>
+                <div class="col-span-5">
+                  <input
+                    type="text"
+                    x-model="rule.replacement"
+                    class="input text-xs font-mono"
+                    placeholder="Doctor "
+                  />
+                </div>
+                <div class="col-span-1 flex justify-end">
+                  <button type="button" @click="removeTtsReplacement(idx)" class="btn btn-icon btn-ghost p-1.5 text-red-500" title="Remove rule">
+                    <i class="ph ph-trash text-sm"></i>
+                  </button>
+                </div>
+                <div class="col-span-12 text-[10px] text-red-500" x-text="rule._error || ''"></div>
+              </div>
+            </template>
+            <p x-show="!($store.ui.settingsData.tts_custom_replacements || []).length" class="text-xs text-[var(--text-tertiary)] py-2 text-center">
+              No custom rules. Common uses: rewrite brand names, expand abbreviations, drop noise tokens.
+            </p>
+          </div>
+
+          <div class="md:col-span-2 mt-4">
+            <label class="block text-xs font-medium text-[var(--text-secondary)] mb-1">Preview (try your rules without saving)</label>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <textarea
+                x-model="ttsPreviewInput"
+                class="input text-xs font-mono"
+                rows="3"
+                placeholder="Paste text to test your rules against…"
+              ></textarea>
+              <div class="input text-xs font-mono whitespace-pre-wrap break-words overflow-auto" style="min-height: 4.5rem; background: var(--bg-tertiary, transparent);" x-text="ttsPreviewOutput"></div>
+            </div>
+            <p class="text-[10px] text-[var(--text-tertiary)] mt-1">
+              Preview runs your rules in the browser (JS regex, not Python) — close enough for quick checks.
+            </p>
           </div>
 
           <!-- Speech-to-Text (STT) — voice input -->

@@ -24,9 +24,12 @@
 
     <!-- PDF.js 3.11 (UMD build — classic worker, no module/private-field realm issues) -->
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <!-- PDF.js viewer classes (PDFViewer, PDFLinkService, EventBus, outline, etc.) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.css">
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.js"></script>
 
     <!-- Custom Theme CSS -->
-    <link rel="stylesheet" href="/static/css/theme.css?v=44">
+    <link rel="stylesheet" href="/static/css/theme.css?v=47">
     <!-- Alpine.js stores data (plain objects, no Alpine dependency) -->
     <script>
       // ═══════════════════════════════════════════════════════════
@@ -102,7 +105,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=93"></script>
+    <script type="module" src="/static/js/main.js?v=99"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] h-screen overflow-hidden"

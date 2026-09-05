@@ -329,4 +329,30 @@ export const helpers = {
   }
 }
 
+// ─── TTS playback volume (boost) ──────────────────────────
+// Effective loudness multiplier for TTS audio (0.5×–2×). Source of truth is
+// localStorage (survives reloads and applies before Settings are fetched);
+// the Settings → TTS slider keeps localStorage in sync with the server-saved
+// tts_volume, and both reader + chat playback read it through here.
+function _clampVol(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 1
+  return Math.min(2, Math.max(0.2, n))
+}
+export function getTtsVolume() {
+  try {
+    const ls = parseFloat(localStorage.getItem('ttsVolume'))
+    if (Number.isFinite(ls)) return _clampVol(ls)
+  } catch { /* storage unavailable */ }
+  try {
+    const sd = window.Alpine?.store('ui')?.settingsData
+    const v = sd && parseFloat(sd.tts_volume)
+    if (Number.isFinite(v)) return _clampVol(v)
+  } catch { /* Alpine not up yet */ }
+  return 1
+}
+export function setTtsVolume(v) {
+  try { localStorage.setItem('ttsVolume', String(_clampVol(v))) } catch { /* noop */ }
+}
+
 // Note: api, formatters, markdownUtils, helpers are already exported individually above

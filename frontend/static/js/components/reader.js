@@ -505,6 +505,38 @@ export function reader() {
       this.isPlaying = false
     },
 
+    // Jump to the previous or next sentence and resume TTS from there.
+    // Repeated presses walk through the book one sentence at a time.
+    // The new index is clamped to the sentence range; pressing prev at
+    // the very first sentence stops at the top (so the user can tell
+    // they've hit the start), pressing next at the end does the same.
+    async skipSentence(direction) {
+      if (!this.sentences.length) return
+      // Anchor on the last *spoken* sentence, not the viewer's page —
+      // that's what the user's mental model is ("where TTS is / was").
+      // If nothing has played yet, fall back to the resume index.
+      const base = Math.max(0, Math.min(this.currentIdx || 0, this.sentences.length - 1))
+      const target = base + (direction > 0 ? 1 : -1)
+      if (target < 0 || target >= this.sentences.length) return
+      // Tear down whatever is mid-flight; the new stream re-uses the
+      // existing <audio> element and the cached TTS audio on the server
+      // (re-reads of the same sentence are instant).
+      this.stop()
+      this.currentIdx = target
+      // For PDF: jump the viewer to the target page so the user lands
+      // on the right spot even before the first audio segment arrives.
+      const targetPage = this.pageMap[target]
+      if (this.book?.file_type === 'pdf' && targetPage) {
+        this.goToPage(targetPage)
+      }
+      this._ensureAudio()
+      this._ensurePlaybackGraph()
+      await this._startStream(target)
+    },
+
+    prevSentence() { this.skipSentence(-1) },
+    nextSentence() { this.skipSentence(1) },
+
     stop() {
       if (this._abort) {
         try { this._abort.abort() } catch { /* noop */ }
@@ -668,6 +700,14 @@ export function reader() {
     // ─── Stream → segment queue → audio ────────────────────────────
     async _startStream(fromIdx) {
       this._abort = new AbortController()
+      // Reset the queue so a re-entry (e.g. skipSentence) doesn't play
+      // segments from the previous stream — the OLD segments array
+      // would still be at segCursor=0 and the OLD [0] would be played
+      // for the new fetch's first NDJSON line.
+      this.segments = []
+      this.segCursor = 0
+      this.streamDone = false
+      this.pendingPlay = false
       this.isPlaying = true
       try {
         const res = await fetch(

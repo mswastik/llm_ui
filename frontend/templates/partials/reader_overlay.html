@@ -147,6 +147,31 @@
       ></span>
     </div>
 
+    <!-- Sentence skip controls. Walk one sentence back/forward and
+         restart TTS from that point — pressing repeatedly moves the
+         cursor step by step. Disabled at the start/end of the book. -->
+    <div
+      class="flex items-center"
+      x-show="sentences.length"
+    >
+      <button
+        @click="prevSentence()"
+        :disabled="!currentIdx"
+        class="btn btn-icon btn-ghost"
+        title="Previous sentence"
+      >
+        <i class="ph ph-rewind text-lg"></i>
+      </button>
+      <button
+        @click="nextSentence()"
+        :disabled="currentIdx >= sentences.length - 1"
+        class="btn btn-icon btn-ghost"
+        title="Next sentence"
+      >
+        <i class="ph ph-fast-forward text-lg"></i>
+      </button>
+    </div>
+
     <button
       @click="toggle()"
       class="btn btn-primary px-4"
@@ -193,12 +218,13 @@
         x-show="book?.file_type === 'pdf'"
       ></div>
 
-      <!-- PDF find bar (search). Overlays the top-center of the viewer;
-           the viewer container scrolls underneath so the bar stays put. -->
+      <!-- PDF find bar (search). Anchored to the right edge of the
+           viewer so it doesn't sit on top of the searched text — the
+           viewer scrolls underneath while the bar stays put. -->
       <div
         x-show="findOpen && book?.file_type === 'pdf' && pdfReady"
         x-cloak
-        class="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-2 rounded-xl
+        class="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-2 rounded-xl
                border border-[var(--border-primary)] bg-[var(--bg-secondary)] shadow-xl
                w-[calc(100%-1.5rem)] sm:w-auto"
       >

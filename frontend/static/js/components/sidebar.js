@@ -2,6 +2,7 @@
  * Sidebar Component — Conversation management with search, agent filters, tags
  */
 import { api } from '../utils.js'
+import { offline } from '../services/offline.js'
 
 const sidebar = () => ({
   conversations: [],
@@ -59,6 +60,15 @@ const sidebar = () => ({
     this.currentConversationTitle = this.$store.chat.currentConversationTitle
     this.conversations = this.$store.chat.conversations || []
     this.availableAgents = this.$store.chat.availableAgents || []
+    // Seed UI from cache immediately so the sidebar is populated even if the
+    // network is dead. Then refresh from the server in the background.
+    if (offline.isSupported() && !this.conversations.length) {
+      const cached = await offline.getCachedConversations()
+      if (cached.length) {
+        this.conversations = cached
+        this.$store.chat.conversations = cached
+      }
+    }
     await this.loadConversations()
 
     // Listen for load-conversation events (e.g., from Notes modal)
@@ -81,11 +91,31 @@ const sidebar = () => ({
       const data = await api.get('/api/conversations')
       this.conversations = data.conversations || []
       this.$store.chat.conversations = this.conversations
-    } catch (e) { console.error('[sidebar] Error:', e) }
+      if (offline.isSupported()) {
+        // Fire and forget — IndexedDB writes don't need to gate the UI.
+        offline.saveConversations(this.conversations).catch(() => {})
+        // Eagerly cache the messages of the most recent N conversations so
+        // the user can open them offline even if they never opened them
+        // online first. Capped to avoid blowing the mobile data budget.
+        this._precacheRecentThreads(this.conversations)
+      }
+    } catch (e) {
+      console.error('[sidebar] Error:', e)
+      // Network failed — keep whatever's in the cache + tell the user once.
+      if (offline.isSupported() && !this.conversations.length) {
+        const cached = await offline.getCachedConversations()
+        if (cached.length) {
+          this.conversations = cached
+          this.$store.chat.conversations = cached
+          this.$store.ui.showToast('Offline — showing cached conversations', 'info')
+        }
+      }
+    }
   },
 
   async createNewConversation() {
     try {
+      this.$store.ui.setMainView('chat')
       const agentId = this.$store.chat.selectedAgentId || null
       const data = await api.post('/api/conversations', { title: 'New Chat', agent_id: agentId })
       this.$store.chat.addConversation(data.conversation)
@@ -97,6 +127,8 @@ const sidebar = () => ({
   },
 
   async loadConversation(id) {
+    // Opening a thread always returns to the chat pane (library is a view).
+    this.$store.ui.setMainView('chat')
     // Check for active streaming
     const active = this.$store.chat.activeStreaming
     if (active.isStreaming && active.conversationId === id) {
@@ -125,7 +157,27 @@ const sidebar = () => ({
 
       // Notify chat component to focus the input
       window.dispatchEvent(new CustomEvent('conversation-loaded'))
+      if (offline.isSupported()) {
+        offline.saveConversation(data.conversation, data.messages || []).catch(() => {})
+      }
     } catch (e) {
+      // Offline: try the cache before giving up.
+      if (offline.isSupported()) {
+        const cached = await offline.getCachedConversation(id)
+        if (cached) {
+          this.$store.chat.currentConversationId = id
+          this.$store.chat.currentConversationTitle = cached.conversation.title
+          this.$store.chat.messages = this.normalizeMessages(cached.messages)
+          this.currentConversationId = id
+          this.currentConversationTitle = cached.conversation.title
+          this.$store.chat.setAgent(cached.conversation.agent_id || null)
+          this.$store.chat.applyAgentConfig()
+          this.$store.ui.showToast('Offline — showing cached messages', 'info')
+          window.dispatchEvent(new CustomEvent('sync-agent', { detail: { agentId: cached.conversation.agent_id || null } }))
+          window.dispatchEvent(new CustomEvent('conversation-loaded'))
+          return
+        }
+      }
       this.$store.ui.showToast('Failed to load conversation', 'error')
     }
   },
@@ -182,6 +234,40 @@ const sidebar = () => ({
     } catch (e) {
       this.$store.ui.showToast('Failed to remove tag', 'error')
     }
+  },
+
+  // Eagerly cache the messages of the most recent N conversations so the
+  // user can open them offline. Bounded to avoid network + storage blow-up
+  // on users with hundreds of conversations. Concurrency-limited so we
+  // don't slam the server. ponytail: per-thread fetch fan-out — bump cap
+  // or move to a server-side bulk endpoint if 20 recent ever feels thin.
+  async _precacheRecentThreads(conversations) {
+    if (!Array.isArray(conversations) || !conversations.length) return
+    const RECENT = 20
+    const CONCURRENCY = 3
+    const top = conversations
+      .slice()
+      .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+      .slice(0, RECENT)
+    let i = 0
+    const worker = async () => {
+      while (i < top.length) {
+        const idx = i++
+        const c = top[idx]
+        try {
+          // Skip if already cached.
+          const cached = await offline.getCachedConversation(c.id)
+          if (cached && Array.isArray(cached.messages) && cached.messages.length) continue
+          const data = await api.get(`/api/conversations/${c.id}`)
+          if (data?.conversation) {
+            await offline.saveConversation(data.conversation, data.messages || [])
+          }
+        } catch {
+          // Best-effort: ignore failures, the user is online and can retry.
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker))
   },
 
   // ─── Resize ───────────────────────────────────────────

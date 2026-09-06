@@ -4,6 +4,7 @@
 import { sseService } from '../services/sse.js?v=70'
 import { ttsService } from '../services/tts.js?v=45'
 import { sttService } from '../services/stt.js'
+import { offline } from '../services/offline.js'
 import { formatters, markdownUtils, helpers, api } from '../utils.js'
 
 const chatComponent = () => ({
@@ -61,7 +62,68 @@ const chatComponent = () => ({
   contextInfo: null,
   contextOpen: false,
 
-  // ─── Composer getters ────────────────────────────────
+  // ─── Pull-to-refresh (mobile) ──────────────────────────
+  // Tracked in component state, not the store: only one chat instance cares.
+  pullRefreshVisible: false,
+  pullRefreshStatus: 'idle', // 'idle' | 'pulling' | 'refreshing'
+  _ptrStartY: 0,
+  _ptrDistance: 0,
+  _ptrTriggered: false,
+
+  // ─── Pull-to-refresh handlers ──────────────────────────
+  // Threshold: 70px of vertical travel at the top of the messages container
+  // fires a refresh. Anything shorter just lets the native scroll resume.
+  _ptrThreshold: 70,
+  onPTRStart(e) {
+    if (window.matchMedia('(max-width: 768px)').matches === false) return
+    const el = document.getElementById('messages-container')
+    if (!el || el.scrollTop > 4) { this._ptrTriggered = false; return }
+    this._ptrStartY = e.touches[0].clientY
+    this._ptrDistance = 0
+    this._ptrTriggered = true
+  },
+  onPTRMove(e) {
+    if (!this._ptrTriggered) return
+    const dy = e.touches[0].clientY - this._ptrStartY
+    if (dy <= 0) { this.pullRefreshVisible = false; return }
+    this._ptrDistance = dy
+    this.pullRefreshVisible = dy > 24
+    this.pullRefreshStatus = 'pulling'
+  },
+  async onPTREnd() {
+    if (!this._ptrTriggered) return
+    this._ptrTriggered = false
+    if (this._ptrDistance >= this._ptrThreshold) {
+      this.pullRefreshStatus = 'refreshing'
+      try {
+        const cid = this.$store.chat.currentConversationId
+        if (cid) {
+          const data = await api.get(`/api/conversations/${cid}`)
+          this.$store.chat.messages = (data.messages || []).map((m) => ({ ...m, blocks: m.blocks || m.metadata?.blocks || null }))
+          if (offline.isSupported()) {
+            offline.saveConversation(data.conversation, data.messages || []).catch(() => {})
+          }
+        } else {
+          // No active conversation: just refresh the sidebar list.
+          window.dispatchEvent(new CustomEvent('refresh-conversations'))
+        }
+        this.$store.ui.showToast('Refreshed', 'success')
+      } catch (e) {
+        this.$store.ui.showToast('Refresh failed', 'error')
+      } finally {
+        setTimeout(() => {
+          this.pullRefreshVisible = false
+          this.pullRefreshStatus = 'idle'
+          this._ptrDistance = 0
+        }, 400)
+      }
+    } else {
+      this.pullRefreshVisible = false
+      this.pullRefreshStatus = 'idle'
+      this._ptrDistance = 0
+    }
+  },
+
   get selectedModelName() {
     const m = this.availableModels.find(x => x.id === this.selectedModel)
     if (m) return (m.name || m.id)
@@ -207,6 +269,27 @@ const chatComponent = () => ({
     window.addEventListener('sync-agent', (e) => {
       this.selectedAgentId = e.detail.agentId
     })
+
+    // When the network comes back, replay any messages the user typed while
+    // offline. The first one goes into the active conversation; the rest
+    // append to whichever thread they were addressed to.
+    if (typeof window !== 'undefined') {
+      this._drainOfflineQueue = async () => {
+        if (!offline.isSupported() || !offline.isOnline()) return
+        await offline.drainQueue(async (item) => {
+          try {
+            const data = await api.post(`/api/conversations/${item.conversationId}/messages`, {
+              message: item.body,
+              files: item.files || [],
+              model: item.model,
+            })
+            if (data?.request_id) await this.streamResponse(data.request_id)
+            return true
+          } catch { return false }
+        })
+      }
+      window.addEventListener('online', this._drainOfflineQueue)
+    }
 
     window.addEventListener('conversation-loaded', async () => {
       // Show what the model WILL see on next turn — fetch preview for past chats
@@ -599,9 +682,9 @@ const chatComponent = () => ({
       const _prov = _m?.provider_id || this.selectedProviderId
       const data = await api.post(
         `/api/conversations/${conversationId}/messages`,
-        { 
-          message: text, 
-          enable_rag: this.isRAGActive, 
+        {
+          message: text,
+          enable_rag: this.isRAGActive,
           document_ids: this.selectedDocumentIds.includes('all') ? null : this.selectedDocumentIds,
           files: uploadedFiles,
           model: this.selectedModel,
@@ -614,6 +697,13 @@ const chatComponent = () => ({
       console.error('[chat] Send error:', e)
       this.isLoading = false
       this.$store.chat.isLoading = false
+      // Ponytail: if the network is gone, queue the message so it auto-sends
+      // the next time we're online. If the request just 5xx'd, surface a toast.
+      if (offline.isSupported() && !offline.isOnline()) {
+        await offline.enqueue({ conversationId, body: text, files: uploadedFiles, model: this.selectedModel })
+        this.$store.ui.showToast('Offline — message queued, will send when online', 'info')
+        return
+      }
       this.$store.ui.showToast('Failed to send message', 'error')
     }
   },

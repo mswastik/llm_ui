@@ -7,13 +7,22 @@
 
   <!-- ═══════════ MAIN CHAT AREA ═══════════ -->
   {% include "partials/main_chat.html" %}
+
+  <!-- ═══════════ LIBRARY PANEL (main-pane view) ═══════════ -->
+  {% include "partials/library_panel.html" %}
 </div>
-<!-- Mobile sidebar backdrop -->
+<!-- Mobile sidebar backdrop. The bare `x-data` is intentional: this element
+     lives at the top level of <body>, so without an Alpine scope of its own
+     Alpine would skip its `:class` and `@click` and `x-cloak` would never
+     get removed. Empty `x-data="{}"` registers a scope so the directives
+     below are processed. -->
 <div
+  x-data
   x-cloak
   @click="$store.ui.closeSidebarMobile()"
-  class="fixed inset-0 z-[150] bg-black/50 md:hidden"
-  :class="{ 'hidden': !$store.ui.sidebarMobileOpen }"
+  class="fixed inset-0 md:hidden"
+  :class="[$store.ui.sidebarMobileOpen ? 'z-[140] bg-black/50 block' : 'hidden']"
+  aria-hidden="true"
 ></div>
 
 <!-- ═══════════ SETTINGS MODAL ═══════════ -->
@@ -27,9 +36,6 @@
 
 <!-- ═══════════ JOBS MODAL ═══════════ -->
 {% include "partials/jobs_modal.html" %}
-
-<!-- ═══════════ LIBRARY MODAL ═══════════ -->
-{% include "partials/library_modal.html" %}
 
 <!-- ═══════════ READER OVERLAY (fullscreen) ═══════════ -->
 {% include "partials/reader_overlay.html" %}

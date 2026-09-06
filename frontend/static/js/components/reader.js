@@ -530,6 +530,9 @@ export function reader() {
     currentIdx: 0,
     isLoading: false,
     error: '',
+    // Reading view for url/text saves with an article snapshot:
+    // 'article' (formatted HTML, pictures) or 'tts' (sentence list).
+    readerView: 'article',
 
     // TTS playback state
     audio: null,
@@ -601,6 +604,9 @@ export function reader() {
         this.book = book
         this.sentences = book.sentences || []
         this.pageMap = book.page_map || []
+        // Web/paste saves with an article snapshot open formatted;
+        // everything else (and legacy rows without a snapshot) uses TTS.
+        this.readerView = book.has_article ? 'article' : 'tts'
         const savedIdx = Math.max(0, Math.min(
           book.current_sentence_idx || 0,
           Math.max(0, this.sentences.length - 1)
@@ -679,6 +685,7 @@ export function reader() {
       this.open = false
       this.book = null
       this.bookId = null
+      this.readerView = 'article'
       this.sentences = []
       this.segments = []
       this.segCursor = 0
@@ -1482,6 +1489,16 @@ export function reader() {
     progressPct() {
       if (!this.sentences.length) return 0
       return Math.min(100, Math.round((this.currentIdx / this.sentences.length) * 100))
+    },
+
+    // Formatted article view (url/text saves with an HTML snapshot).
+    hasArticle() { return !!(this.book && this.book.has_article) },
+    articleUrl() { return this.bookId ? `/api/books/${this.bookId}/article` : '' },
+    // Blocked-site entry: no extractable sentences, just the source link.
+    isLinkCard() {
+      return !!(this.book && !this.sentences.length &&
+        (this.book.file_type === 'url' || this.book.file_type === 'text') &&
+        this.book.source_url)
     },
 
     // Sentence list helpers (EPUB only — PDF uses the in-PDF text layer)

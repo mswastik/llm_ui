@@ -281,8 +281,9 @@
         <span>Knowledge Base</span>
       </button>
       <button
-        @click="$dispatch('open-library'); $store.ui.openLibrary()"
+        @click="$store.ui.setMainView($store.ui.mainView === 'library' ? 'chat' : 'library')"
         class="sidebar-item"
+        :class="{'sidebar-item-active': $store.ui.mainView === 'library'}"
       >
         <i class="ph ph-book-open text-base"></i>
         <span>Library</span>

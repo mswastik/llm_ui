@@ -3,6 +3,7 @@
   class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)] relative"
   x-data="chat"
   x-init="init()"
+  x-show="$store.ui.mainView === 'chat'"
   @dragenter.prevent="handleDragEnter()"
   @dragover.prevent
   @dragleave="handleDragLeave()"
@@ -23,14 +24,32 @@
   </div>
 
   <!-- Messages Container -->
-    <!-- Mobile top bar (hamburger to open the off-canvas sidebar) -->
+    <!-- Mobile top bar (no hamburger — the bottom FAB opens the sidebar now) -->
     <div class="md:hidden flex items-center gap-2 px-3 h-14 flex-shrink-0 border-b border-[var(--border-primary)] bg-[var(--bg-primary)]">
-      <button @click="$store.ui.openSidebarMobile()" class="btn btn-icon btn-ghost -ml-1" title="Open menu" aria-label="Open menu">
-        <i class="ph ph-list text-xl"></i>
-      </button>
       <span class="font-semibold text-sm truncate" x-text="$store.chat.currentConversationTitle || 'New Chat'"></span>
     </div>
-  <div id="messages-container" class="flex-1 overflow-y-auto overflow-x-hidden">
+
+    <!-- Pull-to-refresh indicator (mobile only). Lives inside the scroll
+         container so it scrolls with the content; the visual is positioned
+         at the top of the container via flex layout. -->
+    <div
+      x-show="pullRefreshVisible"
+      x-cloak
+      x-transition.opacity.duration.150ms
+      class="md:hidden flex items-center justify-center gap-2 h-10 text-xs text-[var(--text-tertiary)] flex-shrink-0"
+      role="status"
+      aria-live="polite"
+    >
+      <i class="ph ph-arrow-clockwise" :class="pullRefreshStatus === 'refreshing' ? 'animate-spin' : ''"></i>
+      <span x-text="pullRefreshStatus === 'refreshing' ? 'Refreshing…' : 'Release to refresh'"></span>
+    </div>
+  <div
+    id="messages-container"
+    class="flex-1 overflow-y-auto overflow-x-hidden"
+    @touchstart.passive="onPTRStart"
+    @touchmove.passive="onPTRMove"
+    @touchend="onPTREnd"
+  >
     <div class="mx-auto w-full px-3 messages-wrap">
       <!-- Conversation Title (inline, subtle) -->
       <div class="pt-4 pb-1">
@@ -1537,4 +1556,20 @@
       </div>
     </div>
   </div>
+
+  <!-- Mobile FAB — opens the off-canvas sidebar from the bottom-right.
+       Lives above the backdrop (z-[140]) so it stays clickable when the
+       sidebar is open. Hidden while the sidebar is open to avoid stacking
+       with the backdrop. -->
+  <button
+    x-show="!$store.ui.sidebarMobileOpen"
+    x-cloak
+    @click="$store.ui.openSidebarMobile()"
+    class="md:hidden fixed right-4 z-[160] bottom-[max(1rem,env(safe-area-inset-bottom))] h-12 px-4 rounded-full bg-[var(--accent-primary)] text-white shadow-lg flex items-center gap-2 active:scale-95 transition-transform"
+    title="Open menu"
+    aria-label="Open menu"
+  >
+    <i class="ph ph-list text-xl"></i>
+    <span class="text-sm font-medium">Menu</span>
+  </button>
 </main>

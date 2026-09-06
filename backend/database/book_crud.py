@@ -24,6 +24,10 @@ def _book_to_dict(book: Book, include_text: bool = False) -> Dict[str, Any]:
         "filepath": book.filepath,
         "file_type": book.file_type,
         "size_bytes": book.size_bytes,
+        "source_type": getattr(book, "source_type", None) or "file",
+        "source_url": getattr(book, "source_url", None),
+        "domain": getattr(book, "domain", None),
+        "has_article": bool(getattr(book, "html_path", None)),
         "total_sentences": book.total_sentences,
         "current_sentence_idx": book.current_sentence_idx,
         "current_page": book.current_page,
@@ -45,6 +49,10 @@ async def create_book(
     page_map: List[int],
     size_bytes: int = 0,
     author: Optional[str] = None,
+    source_type: str = "file",
+    source_url: Optional[str] = None,
+    domain: Optional[str] = None,
+    html_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a Book row with the extraction cache populated."""
     book = Book(
@@ -56,13 +64,26 @@ async def create_book(
         sentences=sentences,
         page_map=page_map,
         total_sentences=len(sentences),
+        source_type=source_type,
+        source_url=source_url,
+        domain=domain,
+        html_path=html_path,
     )
     db.add(book)
     await db.flush()
     return _book_to_dict(book, include_text=False)
 
 
-async def list_books(db: AsyncSession, limit: int = 100) -> List[Dict[str, Any]]:
+async def get_book_by_source_url(db: AsyncSession, source_url: str) -> Optional[Dict[str, Any]]:
+    """Active book previously saved from this URL (dedupe for re-saves)."""
+    result = await db.execute(
+        select(Book).where(Book.source_url == source_url, Book.is_active == 1)
+    )
+    book = result.scalar_one_or_none()
+    return _book_to_dict(book, include_text=False) if book else None
+
+
+async def list_books(db: AsyncSession, limit: int = 500) -> List[Dict[str, Any]]:
     """All active books, light payload (no sentences)."""
     result = await db.execute(
         select(Book).where(Book.is_active == 1).order_by(Book.created_at.desc()).limit(limit)
@@ -126,20 +147,23 @@ async def soft_delete_book(db: AsyncSession, book_id: str) -> bool:
         return False
     book.is_active = 0
     # Best-effort file cleanup; failure here doesn't fail the delete.
-    if book.filepath and os.path.exists(book.filepath):
-        try:
-            os.remove(book.filepath)
-        except OSError as e:
-            print(f"[books] could not remove {book.filepath}: {e}")
+    for _path in (book.filepath, getattr(book, "html_path", None)):
+        if _path and os.path.exists(_path):
+            try:
+                os.remove(_path)
+            except OSError as e:
+                print(f"[books] could not remove {_path}: {e}")
     return True
 
 
 async def set_book_sentences(
-    db: AsyncSession, book_id: str, sentences: List[Dict[str, Any]], page_map: List[int]
+    db: AsyncSession, book_id: str, sentences: List[Dict[str, Any]], page_map: List[int],
+    html_path: Optional[str] = None,
 ) -> bool:
     """Replace the cached extraction on a book. Used by the re-extract
     endpoint after the extraction pipeline has improved (e.g. soft-wrap
-    fix) so the cached sentences can be refreshed without re-uploading."""
+    fix) so the cached sentences can be refreshed without re-uploading.
+    html_path replaces the article snapshot when given (url/text saves)."""
     result = await db.execute(select(Book).where(Book.id == book_id))
     book = result.scalar_one_or_none()
     if not book:
@@ -147,4 +171,6 @@ async def set_book_sentences(
     book.sentences = sentences
     book.page_map = page_map
     book.total_sentences = len(sentences)
+    if html_path is not None and hasattr(book, "html_path"):
+        book.html_path = html_path
     return True

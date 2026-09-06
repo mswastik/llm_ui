@@ -1,9 +1,10 @@
 /* LLM UI service worker — app-shell caching for PWA installability + offline shell */
-const CACHE = 'llm-ui-v1';
+const CACHE = 'llm-ui-v2';
 const APP_SHELL = [
   '/',
   '/static/css/theme.css',
   '/static/js/main.js',
+  '/static/js/services/offline.js',
   '/static/icons/icon.svg',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png'
@@ -65,4 +66,13 @@ self.addEventListener('fetch', (event) => {
           .catch(() => cached)
     )
   );
+});
+
+// Broadcast online/offline status to every open client so the chat store can
+// flip the queue drain on. Pages also listen on `online`/`offline` directly,
+// this is a belt-and-suspenders second channel for the SW's vantage point.
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'ping-status') {
+    event.source && event.source.postMessage({ type: 'offline-status', online: self.navigator.onLine })
+  }
 });

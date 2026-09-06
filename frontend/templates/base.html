@@ -73,6 +73,10 @@
         settingsData: {}, mcpServers: [], mcpTools: [],
         // Books / reader state — see /api/books
         showLibrary: false, books: [],
+        // Main-pane view: 'chat' | 'library'. The library is a full-pane
+        // view (not a modal) so hundreds of web saves stay browsable.
+        mainView: 'chat',
+        setMainView(v) { this.mainView = (v === 'library') ? 'library' : 'chat' },
         newServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', timeout: 60 },
         editingServer: false,
         editServer: { name: '', transport_type: 'stdio', command: '', args: '[]', url: '', env: '{}', headers: '{}', enabled: true, originalName: '', timeout: 60 },
@@ -97,6 +101,8 @@
         closeJobs() { this.showJobs = false },
         openLibrary() { this.showLibrary = true },
         closeLibrary() { this.showLibrary = false },
+        openLibraryView() { this.mainView = 'library' },
+        openChatView() { this.mainView = 'chat' },
         toggleAgentFilter(v) { const i = this.activeAgentFilters.indexOf(v); if (i >= 0) { this.activeAgentFilters.splice(i, 1) } else { this.activeAgentFilters.push(v) }; this.activeTagFilter = null },
         clearFilters() { this.activeAgentFilters = []; this.activeTagFilter = null },
         startEditTags(id) { this.editingTagsForConversation = id; this.tagInput = '' },
@@ -105,7 +111,7 @@
     </script>
 
     <!-- App Init — imports Alpine ESM, registers everything, calls Alpine.start() -->
-    <script type="module" src="/static/js/main.js?v=99"></script>
+    <script type="module" src="/static/js/main.js?v=102"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="bg-[var(--bg-primary)] text-[var(--text-primary)] h-screen overflow-hidden"

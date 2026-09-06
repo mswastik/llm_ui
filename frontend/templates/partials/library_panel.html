@@ -1,0 +1,207 @@
+<!-- ═══════════ LIBRARY PANEL (main-pane view) ═══════════ -->
+<!-- Full-pane replacement for the old library modal: search, type filters
+     and sort scale to hundreds of saved web pages; cards reuse the modal's
+     markup plus origin (domain / type) metadata. Reader overlay still opens
+     on click via the `open-reader` event. -->
+<section
+  x-data="library"
+  x-init="init()"
+  x-show="$store.ui.mainView === 'library'"
+  x-cloak
+  class="flex-1 flex flex-col min-w-0 bg-[var(--bg-primary)]"
+>
+  <!-- Header -->
+  <div class="flex items-center gap-2 px-4 py-3 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] flex-shrink-0">
+    <button @click="$store.ui.setMainView('chat')" class="btn btn-icon btn-ghost" title="Back to chat">
+      <i class="ph ph-arrow-left text-lg"></i>
+    </button>
+    <h2 class="font-semibold text-sm flex items-center gap-2">
+      <i class="ph ph-book-open text-[var(--accent-primary)] text-lg"></i>
+      Library
+    </h2>
+    <span class="text-xs text-[var(--text-tertiary)]" x-text="($store.ui.books || []).length + ' saved'"></span>
+    <div class="ml-auto flex items-center gap-2">
+      <button @click="showAdd = !showAdd" class="btn btn-primary btn-xs px-3" :class="showAdd ? 'opacity-80' : ''">
+        <i class="ph ph-plus text-sm"></i>
+        <span class="ml-1 text-xs">Add</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Add panel: file upload, save-from-URL, paste text -->
+  <div x-show="showAdd" x-cloak class="px-4 py-3 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] flex-shrink-0">
+    <div class="max-w-3xl mx-auto space-y-3">
+      <!-- File upload -->
+      <label
+        class="flex items-center justify-center gap-2 w-full py-3 border-2 border-dashed rounded-xl cursor-pointer
+               border-[var(--border-input)] hover:border-[var(--accent-primary)] hover:bg-[var(--accent-primary-light)]/20 transition-colors"
+        :class="uploading ? 'opacity-50 pointer-events-none' : ''"
+      >
+        <i class="ph ph-upload-simple text-lg text-[var(--text-tertiary)]"></i>
+        <span class="text-sm text-[var(--text-secondary)]" x-text="uploading ? 'Uploading & extracting…' : 'Upload a book (PDF or EPUB)'"></span>
+        <input
+          type="file"
+          accept=".pdf,.epub"
+          class="hidden"
+          @change="(async () => { const input = $event.target; const file = input.files && input.files[0]; if (!file) return; await uploadFile(file); input.value = ''; })()"
+        />
+      </label>
+      <!-- Save from URL -->
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <i class="ph ph-globe absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] text-sm"></i>
+          <input
+            x-model="urlInput"
+            @keydown.enter="saveFromUrl()"
+            type="url"
+            placeholder="Paste a page URL to save it…"
+            class="input pl-9 pr-3 py-2 text-sm"
+          />
+        </div>
+        <button @click="saveFromUrl()" :disabled="savingUrl || !urlInput.trim()" class="btn btn-primary btn-xs px-4 disabled:opacity-50">
+          <span x-show="!savingUrl" class="text-xs">Save page</span>
+          <span x-show="savingUrl" class="text-xs"><i class="ph ph-spinner-gap animate-spin"></i> Saving…</span>
+        </button>
+      </div>
+      <!-- Paste text -->
+      <div class="space-y-2">
+        <input
+          x-model="pasteTitle"
+          type="text"
+          placeholder="Note title (optional)"
+          class="input px-3 py-2 text-sm"
+        />
+        <textarea
+          x-model="pasteText"
+          rows="3"
+          placeholder="Paste text from your clipboard…"
+          class="input px-3 py-2 text-sm resize-y"
+        ></textarea>
+        <div class="flex justify-end">
+          <button @click="saveFromText()" :disabled="savingText || pasteText.trim().length < 20" class="btn btn-secondary btn-xs px-4 disabled:opacity-50">
+            <span x-show="!savingText" class="text-xs">Save note</span>
+            <span x-show="savingText" class="text-xs"><i class="ph ph-spinner-gap animate-spin"></i> Saving…</span>
+          </button>
+        </div>
+      </div>
+      <p x-show="error" class="text-xs text-[var(--error)]" x-text="error"></p>
+    </div>
+  </div>
+
+  <!-- Hub picker: a section-front URL returned article links — pick to save -->
+  <div x-show="hubLinks.length" x-cloak class="px-4 py-3 border-b border-[var(--border-primary)] bg-[var(--bg-secondary)] flex-shrink-0">
+    <div class="max-w-3xl mx-auto">
+      <div class="flex items-center gap-2 mb-2">
+        <i class="ph ph-list-bullets text-[var(--accent-primary)]"></i>
+        <p class="text-sm font-medium truncate" x-text="hubTitle"></p>
+        <span class="text-xs text-[var(--text-tertiary)] flex-shrink-0" x-text="hubLinks.length + ' articles'"></span>
+        <button @click="hubLinks = []; hubTitle = ''" class="ml-auto btn btn-icon btn-xs btn-ghost" title="Dismiss">
+          <i class="ph ph-x text-sm"></i>
+        </button>
+      </div>
+      <div class="space-y-1 max-h-64 overflow-y-auto">
+        <template x-for="link in hubLinks" :key="link.url">
+          <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border-primary)] bg-[var(--bg-primary)]">
+            <p class="flex-1 min-w-0 text-sm truncate" x-text="link.title" :title="link.title"></p>
+            <button
+              @click="saveHubLink(link)"
+              :disabled="!!hubSaving"
+              class="btn btn-secondary btn-xs px-3 flex-shrink-0 disabled:opacity-50"
+            >
+              <span x-show="hubSaving !== link.url" class="text-xs">Save</span>
+              <span x-show="hubSaving === link.url" class="text-xs"><i class="ph ph-spinner-gap animate-spin"></i></span>
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toolbar: search + type filter + sort -->
+  <div class="px-4 pt-3 pb-2 flex-shrink-0">
+    <div class="max-w-3xl mx-auto flex flex-col gap-2">
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <i class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] text-sm"></i>
+          <input
+            x-model="search"
+            type="text"
+            placeholder="Search library…"
+            class="input pl-9 pr-3 py-2 text-sm"
+          />
+        </div>
+        <select x-model="sort" class="input text-sm py-2 px-2 max-w-32" title="Sort">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="title">Title</option>
+          <option value="progress">Progress</option>
+        </select>
+      </div>
+      <div class="flex gap-1.5 flex-wrap">
+        <template x-for="f in [['all','All'],['pdf','PDF'],['epub','EPUB'],['url','Web'],['text','Notes']]" :key="f[0]">
+          <button
+            @click="filter = f[0]"
+            class="px-2.5 py-1 text-xs rounded-full font-medium transition-all"
+            :class="filter === f[0] ? 'bg-[var(--accent-primary)] text-white' : 'bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'"
+            x-text="f[1]"
+          ></button>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- List -->
+  <div class="flex-1 overflow-y-auto px-4 pb-6">
+    <div class="max-w-3xl mx-auto">
+      <div x-show="filteredBooks.length === 0" class="text-center py-10 text-[var(--text-tertiary)]">
+        <i class="ph ph-books text-4xl mb-2 block"></i>
+        <p class="text-sm" x-text="($store.ui.books || []).length === 0 ? 'Library is empty. Save a page, paste a note, or upload a book.' : 'Nothing matches this search.'"></p>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <template x-for="book in filteredBooks" :key="book.id">
+          <div
+            class="group border border-[var(--border-primary)] rounded-xl p-3 hover:border-[var(--accent-primary)]
+                   hover:shadow-sm transition-all bg-[var(--bg-secondary)] cursor-pointer"
+            @click="openBook(book)"
+          >
+            <div class="flex items-start gap-3">
+              <div
+                class="w-10 h-12 flex-shrink-0 rounded-md flex items-center justify-center text-lg
+                       bg-[var(--accent-primary-light)] text-[var(--accent-primary)]"
+              >
+                <i :class="sourceIcon(book)"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <h3 class="font-medium text-sm truncate" x-text="book.title"></h3>
+                <p class="text-xs text-[var(--text-tertiary)] mt-0.5 truncate" x-text="sourceLabel(book)"></p>
+                <p class="text-xs text-[var(--text-tertiary)] mt-0.5" x-text="progressLabel(book)"></p>
+                <div class="mt-2 h-1 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                  <div
+                    class="h-full bg-[var(--accent-primary)] transition-all"
+                    :style="`width: ${progressPct(book)}%`"
+                  ></div>
+                </div>
+              </div>
+              <button
+                @click.stop="reextractBook(book)"
+                class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--bg-hover)]
+                       text-[var(--text-tertiary)] hover:text-[var(--accent-primary)] transition-all"
+                title="Re-extract (re-fetch pages, reset progress)"
+              >
+                <i class="ph ph-arrows-clockwise text-sm"></i>
+              </button>
+              <button
+                @click.stop="deleteBook(book)"
+                class="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--error-bg)]
+                       text-[var(--text-tertiary)] hover:text-[var(--error)] transition-all"
+                title="Remove from library"
+              >
+                <i class="ph ph-trash text-sm"></i>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</section>

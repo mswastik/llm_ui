@@ -175,6 +175,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await backup_scheduler.stop()
     await mcp_manager.cleanup()
+    try:
+        from tools.web_extract import _reset_session as _close_web_session
+        await _close_web_session()
+    except Exception:
+        pass
     await shutdown_db()
 
 app = FastAPI(title="LLM UI with MCP Support", lifespan=lifespan)
@@ -4328,6 +4333,126 @@ async def upload_book(file: UploadFile = File(...)):
     return {"status": "ok", "book": book, "total_sentences": len(extracted["sentences"])}
 
 
+@app.post("/api/books/from-url")
+async def save_book_from_url(body: Dict[str, Any]):
+    """Save a webpage to the library: fetch, extract main content, cache
+    sentences + a sanitized article-HTML snapshot for the human reading view.
+    Body: {url: str}. Returns the existing entry on re-save (deduped by
+    normalized URL). Three response shapes:
+      saved     — full article saved ({book, total_sentences})
+      hub       — section front: no article text, but article links to pick
+                  ({title, links: [{title, url}]}, nothing saved)
+      link_card — site blocked scraping: metadata entry with the source link
+                  ({book}, sentences empty, opens original in reader)
+    """
+    from tools.web_extract import (
+        fetch_url_text, sentences_from_text, normalize_url, domain_of,
+        title_from_url, _HubResult,
+    )
+    from database.book_crud import get_book_by_source_url
+
+    url = normalize_url((body or {}).get("url", ""))
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Provide a valid http(s) URL")
+    async with get_db() as db:
+        existing = await get_book_by_source_url(db, url)
+        if existing:
+            return {"status": "ok", "book": existing, "deduped": True,
+                    "total_sentences": existing.get("total_sentences", 0)}
+    try:
+        fetched = await fetch_url_text(url)
+    except _HubResult as h:
+        return {"status": "hub", "title": h.title, "source_url": url,
+                "domain": domain_of(url), "links": h.links}
+    except ValueError as e:
+        # Blocked (paywall/bot-wall/challenge) — save a link card so the
+        # URL is kept with attribution instead of a bare error.
+        async with get_db() as db:
+            book = await db_create_book(
+                db, title=title_from_url(url), filepath="",
+                file_type="url", sentences=[], page_map=[], size_bytes=0,
+                source_type="url", source_url=url, domain=domain_of(url),
+            )
+        return {"status": "link_card", "book": book,
+                "detail": f"Site blocks scraping ({e}). Saved as link — open the original in the reader."}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Fetch failed: {e}")
+    try:
+        extracted = sentences_from_text(fetched["text"], title=fetched["title"])
+    except ValueError as e:
+        if fetched.get("links"):
+            return {"status": "hub", "title": fetched["title"], "source_url": url,
+                    "domain": domain_of(url), "links": fetched["links"]}
+        raise HTTPException(status_code=422, detail=str(e))
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    snap = f"{uuid.uuid4()}.txt"
+    with open(os.path.join(UPLOAD_DIR, snap), "w", encoding="utf-8") as f:
+        f.write(fetched["text"])
+    html_path = None
+    if fetched.get("html", "").strip():
+        from tools.web_extract import article_document
+        html_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(article_document(extracted["title"], fetched["html"]))
+    async with get_db() as db:
+        book = await db_create_book(
+            db, title=extracted["title"], filepath=os.path.join(UPLOAD_DIR, snap),
+            file_type="url", sentences=extracted["sentences"], page_map=extracted["page_map"],
+            size_bytes=len(fetched["text"].encode("utf-8")),
+            source_type="url", source_url=url, domain=domain_of(url),
+            html_path=html_path,
+        )
+    return {"status": "ok", "book": book, "total_sentences": len(extracted["sentences"])}
+
+
+@app.post("/api/books/from-text")
+async def save_book_from_text(body: Dict[str, Any]):
+    """Save pasted/clipboard text to the library. Body: {title?: str,
+    text: str, source_url?: str}. Keeps the optional source URL for attribution."""
+    from tools.web_extract import sentences_from_text, normalize_url, domain_of
+
+    text = ((body or {}).get("text") or "").strip()
+    if len(text) < 20:
+        raise HTTPException(status_code=400, detail="Text is too short — paste at least a paragraph")
+    try:
+        max_size = int(settings_manager.get_settings().get("max_upload_size", MAX_UPLOAD_SIZE))
+    except Exception:
+        max_size = MAX_UPLOAD_SIZE
+    if len(text.encode("utf-8")) > max_size:
+        raise HTTPException(status_code=400, detail="Text too large")
+    raw_src = ((body or {}).get("source_url") or "").strip()
+    source_url = normalize_url(raw_src) if raw_src else None
+    try:
+        extracted = sentences_from_text(text, title=((body or {}).get("title") or "").strip())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    snap = f"{uuid.uuid4()}.txt"
+    with open(os.path.join(UPLOAD_DIR, snap), "w", encoding="utf-8") as f:
+        f.write(text)
+    # Pastes get a minimal article view too (paragraphs only, escaped).
+    import html as _html
+    paras = "".join(f"<p>{_html.escape(p.strip())}</p>" for p in text.split("\n\n") if p.strip())
+    html_path = None
+    if paras:
+        from tools.web_extract import article_document
+        html_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(article_document(extracted["title"], paras))
+    async with get_db() as db:
+        book = await db_create_book(
+            db, title=extracted["title"], filepath=os.path.join(UPLOAD_DIR, snap),
+            file_type="text", sentences=extracted["sentences"], page_map=extracted["page_map"],
+            size_bytes=len(text.encode("utf-8")),
+            source_type="text", source_url=source_url,
+            domain=domain_of(source_url) if source_url else None,
+            html_path=html_path,
+        )
+    return {"status": "ok", "book": book, "total_sentences": len(extracted["sentences"])}
+
+
 @app.get("/api/books")
 async def list_books_endpoint():
     """All active books, light payload (no sentences JSON)."""
@@ -4452,26 +4577,54 @@ async def set_book_sentences_endpoint(book_id: str, body: Dict[str, Any]):
 
 @app.post("/api/books/{book_id}/reextract")
 async def reextract_book_endpoint(book_id: str):
-    """Re-run the sentence extraction on the book's file. Useful when
-    the extraction logic has improved (e.g. new soft-wrap fix) and the
-    user wants to refresh the cached sentences without re-uploading.
-    Replaces the cached sentences + page_map; resets progress to 0.
+    """Re-run the sentence extraction on the book's file (or re-fetch the
+    URL for saved pages). Replaces the cached sentences + page_map; resets
+    progress to 0.
     """
     from tools.book_service import extract as book_extract
     async with get_db() as db:
         book = await db_get_book(db, book_id, include_text=False)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-    if not os.path.exists(book["filepath"]):
-        raise HTTPException(status_code=410, detail="File no longer exists on disk")
     try:
-        sentences, page_map = book_extract(book["filepath"], book["file_type"])
+        html_snapshot = None
+        if book.get("source_type") == "url" and book.get("source_url"):
+            from tools.web_extract import fetch_url_text, sentences_from_text, article_document
+            fetched = await fetch_url_text(book["source_url"])
+            extracted = sentences_from_text(fetched["text"], title=fetched["title"])
+            sentences, page_map = extracted["sentences"], extracted["page_map"]
+            if fetched.get("html", "").strip():
+                html_snapshot = article_document(extracted["title"], fetched["html"])
+        elif book.get("file_type") in ("url", "text"):
+            from tools.web_extract import sentences_from_text, article_document
+            import html as _html_mod
+            with open(book["filepath"], "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+            extracted = sentences_from_text(text, title=book.get("title", ""))
+            sentences, page_map = extracted["sentences"], extracted["page_map"]
+            paras = "".join(f"<p>{_html_mod.escape(p.strip())}</p>"
+                            for p in text.split("\n\n") if p.strip())
+            if paras:
+                html_snapshot = article_document(extracted["title"], paras)
+        else:
+            if not os.path.exists(book["filepath"]):
+                raise HTTPException(status_code=410, detail="File no longer exists on disk")
+            extracted = book_extract(book["filepath"], book["file_type"])
+            sentences, page_map = extracted["sentences"], extracted["page_map"]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
     if not sentences:
         raise HTTPException(status_code=422, detail="No sentences extracted")
+    html_path = None
+    if html_snapshot:
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        html_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4()}.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_snapshot)
     async with get_db() as db:
-        await db_set_book_sentences(db, book_id, sentences, page_map)
+        await db_set_book_sentences(db, book_id, sentences, page_map, html_path=html_path)
         # Reset progress so the next open starts at the top of the
         # new sentence list. (Old sentence indices are no longer valid.)
         await db_update_book_progress(db, book_id, 0, 1)
@@ -4599,6 +4752,28 @@ async def stream_book(book_id: str, request: Request, from_idx: int = 0):
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/books/{book_id}/article")
+async def get_book_article(book_id: str):
+    """Serve the sanitized article-HTML snapshot for the human reading view
+    (url/text saves). The HTML is sanitized at save time (tag/attribute
+    allowlist) and rendered client-side in a sandboxed iframe, so embedded
+    scripts/trackers cannot run. 404 when the entry has no article snapshot
+    (PDF/EPUB uploads, link cards)."""
+    async with get_db() as db:
+        book = await db_get_book(db, book_id, include_text=False)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+        # html_path is intentionally not in the public book dict —
+        # resolve the snapshot location with a targeted read.
+        from sqlalchemy import select
+        from database.models import Book
+        r = await db.execute(select(Book.html_path).where(Book.id == book_id))
+        path = r.scalar_one_or_none() or ""
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No article view for this entry")
+    return FileResponse(path, media_type="text/html")
 
 
 if __name__ == "__main__":

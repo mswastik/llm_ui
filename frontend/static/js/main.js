@@ -54,14 +54,14 @@ if (window.__chatStoreData__ && window.__uiStoreData__) {
 // ═══════════════════════════════════════════════════════════
 // 5. Import component factories and register them
 // ═══════════════════════════════════════════════════════════
-import { sidebar } from './components/sidebar.js?v=64'
+import { sidebar } from './components/sidebar.js?v=101'
 import { chatComponent } from './components/chat.js?v=80'
 import { settings } from './components/settings.js?v=73'
 import { skillsPanel } from './components/skills.js?v=67'
 import { jobsModal } from './components/jobs.js?v=64'
 import { agentsPanel } from './components/agents_panel.js?v=70'
 import { capabilityPicker } from './components/tag_picker.js?v=1'
-import { library } from './components/library.js?v=24'
+import { library } from './components/library.js?v=25'
 import { reader } from './components/reader.js?v=30'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
@@ -99,10 +99,9 @@ Alpine.data('modalJobs', jobsModal)
 Alpine.data('agentsPanel', agentsPanel)
 Alpine.data('skillsPanel', skillsPanel)
 Alpine.data('capabilityPicker', capabilityPicker)
-Alpine.data('modalLibrary', createModal('library', 'openLibrary', 'closeLibrary'))
 Alpine.data('library', library)
 Alpine.data('reader', reader)
-console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel, capabilityPicker, modalLibrary, library, reader')
+console.log('[main] Components registered: sidebar, chat, settings, modalDocuments, modalSettings, modalNotes, modalJobs, agentsPanel, skillsPanel, capabilityPicker, library, reader')
 
 // ═══════════════════════════════════════════════════════════
 // 6. Start Alpine AFTER all stores and components are registered

@@ -196,22 +196,32 @@ class LLMProvider(Base):
 
 
 class Book(Base):
-    """A user-uploaded book (PDF/EPUB) for the read-aloud reader.
+    """A library item for the read-aloud reader: uploaded file (PDF/EPUB),
+    saved webpage (URL), or pasted text.
 
     `sentences` and `page_map` are the JSON sidecar that maps each sentence
-    index to its source page (PDF only — empty for EPUB). Both are populated
-    once at upload time by tools.book_service.extract(); subsequent reads
-    stream from the cache, never re-extract. `current_sentence_idx` is the
-    resume point, updated every sentence by the stream endpoint.
+    index to its source page (PDF pages, EPUB chapters, or 1 for web/text).
+    Both are populated once at save time; subsequent reads stream from the
+    cache, never re-extract. `current_sentence_idx` is the resume point,
+    updated every sentence by the stream endpoint.
     """
     __tablename__ = "books"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String, nullable=False)
     author = Column(String, nullable=True)
-    filepath = Column(String, nullable=False)
-    file_type = Column(String, nullable=False)  # "pdf" | "epub"
+    filepath = Column(String, nullable=False, default="")
+    file_type = Column(String, nullable=False)  # "pdf" | "epub" | "url" | "text"
     size_bytes = Column(Integer, default=0)
+
+    # Origin — "file" for uploads, "url" for saved pages, "text" for pastes
+    source_type = Column(String, default="file")
+    source_url = Column(String, nullable=True)
+    domain = Column(String, nullable=True)
+
+    # Human article view — sanitized HTML snapshot path (url saves only;
+    # sentences stay the plain-text source for TTS). None = no article view.
+    html_path = Column(String, nullable=True)
 
     # Extraction cache — see tools/book_service.py
     sentences = Column(JSON, default=list)   # [{text, page, char_start}, ...]
@@ -414,6 +424,22 @@ async def init_db():
         print("[DB] Migrated messages: added version_group column")
     except OperationalError:
         pass
+
+    # ── Migration: library origin columns on books (web pages + pastes) ──
+    for _ddl in (
+        "ALTER TABLE books ADD COLUMN source_type VARCHAR DEFAULT 'file'",
+        "ALTER TABLE books ADD COLUMN source_url VARCHAR",
+        "ALTER TABLE books ADD COLUMN domain VARCHAR",
+        "ALTER TABLE books ADD COLUMN html_path VARCHAR",
+    ):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(
+                    lambda sync_conn, ddl=_ddl: sync_conn.exec_driver_sql(ddl)
+                )
+            print(f"[DB] Migrated books: {_ddl.split('ADD COLUMN')[1].strip().split()[0]}")
+        except OperationalError:
+            pass
 
 
 async def shutdown_db():

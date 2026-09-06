@@ -17,6 +17,8 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 | **Tool Executor** | `backend/tools/tool_executor.py` | Dispatches custom+MCP tools, yields `tool_progress` events |
 | **RAG Service** | `backend/tools/rag_service.py` | Document processing → chunking → embedding → retrieval |
 | **TTS Service** | `backend/tools/tts_service.py` | Edge TTS / pyttsx3 / Kokoro text-to-speech |
+| **Web Extract** | `backend/tools/web_extract.py` | Library saves: stealth fetch (curl_cffi+browserforge, aiohttp fallback), keep-longest extract (trafilatura/bs4), sanitized article HTML, hub-link + challenge detection |
+| **Book Extract** | `backend/tools/book_service.py` | PDF/EPUB → sentences + page_map for the read-aloud reader |
 | **Shared Utils** | `backend/tools/base.py` | Embedding + reranking helpers (cosine similarity) |
 | **Progress Helpers** | `backend/tools/progress.py` | `ToolProgress` for standardized progress events |
 | **Frontend Entrypoint** | `frontend/static/js/main.js` | Imports Alpine ESM, registers stores+components, calls Alpine.start() |
@@ -27,7 +29,8 @@ A real-time chat interface for LLMs with MCP (Model Context Protocol), RAG, and 
 | **SSE Service** | `frontend/static/js/services/sse.js` | `SSEService` — fetch-based SSE streaming |
 | **TTS Service** | `frontend/static/js/services/tts.js` | `TTSService` — audio playback control |
 | **Utilities** | `frontend/static/js/utils.js` | API client, markdown rendering, formatters, helpers |
-| **Main Template** | `frontend/templates/index.html` | Sidebar + chat + all modals (settings, agents, mcp, documents) |
+| **Main Template** | `frontend/templates/index.html` | Sidebar + chat/library main-pane views + all modals (settings, agents, mcp, documents) |
+| **Library Panel** | `frontend/templates/partials/library_panel.html` + `frontend/static/js/components/library.js` | Full-pane library (upload file / save URL / paste note, search, type filter, sort); reader opens via `open-reader` |
 | **Chat Partial** | `frontend/templates/partials/chat.html` | Message rendering, input box, tool call UI |
 | **Config** | `settings.json` | Runtime settings (loaded by `SettingsManager`) |
 

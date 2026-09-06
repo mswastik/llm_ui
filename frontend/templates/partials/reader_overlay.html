@@ -83,14 +83,17 @@
       <button
         @click="goToPage(pdfNumPages)"
         :disabled="currentPdfPage >= pdfNumPages"
-        class="btn btn-icon btn-xs btn-ghost"
+        class="btn btn-icon btn-xs btn-ghost hidden sm:inline-flex"
         title="Last page"
       >
         <i class="ph ph-skip-forward text-lg"></i>
       </button>
 
-      <!-- PDF zoom: out / % readout (click to reset to 100%) / in / fit-width -->
-      <div class="flex items-center gap-0.5 ml-1 pl-2 border-l border-[var(--border-primary)]">
+      <!-- PDF zoom: out / % readout (click to reset to 100%) / in / fit-width.
+           Hidden on mobile (below `sm`) — the user's thumbs can't reach
+           precision zoom buttons accurately and they steal room from the
+           always-on prev/next/page controls. -->
+      <div class="hidden sm:flex items-center gap-0.5 ml-1 pl-2 border-l border-[var(--border-primary)]">
         <button
           @click="zoomOut()"
           :disabled="zoomPct <= 25"
@@ -122,10 +125,12 @@
         </button>
       </div>
 
-      <!-- Start TTS from the top of the currently displayed page -->
+      <!-- Start TTS from the top of the currently displayed page. Hidden
+           on small screens — the play button in the top-right does the
+           obvious thing; "from page" is power-user on desktop. -->
       <button
         @click="playFromPage()"
-        class="btn btn-xs btn-ghost ml-1"
+        class="btn btn-xs btn-ghost ml-1 hidden md:inline-flex"
         title="Start reading from the top of this page"
       >
         <i class="ph ph-play-circle text-lg"></i>
@@ -216,6 +221,7 @@
     </div>
 
     <button
+      x-show="sentences.length"
       @click="toggle()"
       class="btn btn-primary btn-xs px-4"
       :title="isPlaying ? 'Pause (Space)' : 'Play (Space)'"
@@ -223,6 +229,31 @@
       <i class="ph text-lg" :class="isPlaying ? 'ph-pause' : 'ph-play'"></i>
       <span class="ml-1.5 text-xs" x-text="isPlaying ? 'Pause' : 'Play'"></span>
     </button>
+
+    <!-- Article / Read-aloud toggle (web + paste saves with a snapshot) -->
+    <div
+      x-show="hasArticle()"
+      class="flex items-center rounded-lg overflow-hidden border border-[var(--border-primary)] text-xs"
+    >
+      <button
+        @click="readerView = 'article'"
+        class="px-2.5 py-1.5 font-medium transition-colors"
+        :class="readerView === 'article' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        title="Formatted article with pictures"
+      >
+        <i class="ph ph-article text-sm"></i>
+        <span class="ml-1 hidden sm:inline">Article</span>
+      </button>
+      <button
+        @click="readerView = 'tts'"
+        class="px-2.5 py-1.5 font-medium transition-colors"
+        :class="readerView === 'tts' ? 'bg-[var(--accent-primary)] text-white' : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'"
+        title="Sentence list for read-aloud"
+      >
+        <i class="ph ph-speaker-high text-sm"></i>
+        <span class="ml-1 hidden sm:inline">Read aloud</span>
+      </button>
+    </div>
   </div>
 
   <!-- Progress bar -->
@@ -336,8 +367,48 @@
       </div>
       <div
         x-show="book?.file_type !== 'pdf'"
-        class="max-w-3xl mx-auto py-4 px-6 overflow-y-auto max-h-full"
+        class="flex-1 min-h-0  w-3/4 h-full flex flex-col"
       >
+        <!-- Link card: site blocked scraping — attribution + open original -->
+        <div
+          x-show="!isLoading && isLinkCard()"
+          class="max-w-xl mx-auto py-12 px-6 text-center"
+        >
+          <i class="ph ph-globe text-4xl text-[var(--text-tertiary)] mb-3 block"></i>
+          <h3 class="font-semibold text-base mb-1" x-text="book?.title"></h3>
+          <p class="text-sm text-[var(--text-tertiary)] mb-1" x-text="book?.domain"></p>
+          <p class="text-sm text-[var(--text-secondary)] mb-5">
+            This site blocks automatic extraction, so it was saved as a link.
+          </p>
+          <a
+            :href="book?.source_url"
+            target="_blank"
+            rel="noopener"
+            class="btn btn-primary btn-xs px-5 py-2"
+          >
+            <i class="ph ph-arrow-square-out text-sm"></i>
+            <span class="ml-1.5 text-xs">Open original</span>
+          </a>
+        </div>
+
+        <!-- Article view: formatted HTML with pictures (sandboxed iframe —
+             scripts/trackers cannot run; styling comes from the snapshot).
+             x-if (not x-show): the frame only exists in article view, so it
+             never loads — or logs sandbox blocks — while hidden. -->
+        <template x-if="!isLoading && !isLinkCard() && hasArticle() && readerView === 'article'">
+          <iframe
+            :src="articleUrl()"
+            sandbox=""
+            referrerpolicy="no-referrer"
+            title="Article"
+            class="flex-1 min-h-0 w-full border-0 bg-white"
+          ></iframe>
+        </template>
+
+        <div
+          x-show="!isLoading && !isLinkCard() && (!hasArticle() || readerView === 'tts')"
+          class="max-w-3xl mx-auto py-4 px-6 overflow-y-auto max-h-full w-full"
+        >
         <div
           x-show="isLoading"
           class="flex items-center justify-center h-32 text-[var(--text-tertiary)]"
@@ -362,6 +433,7 @@
             x-text="sentenceText(i)"
           >          </p>
         </template>
+        </div>
       </div>
     </div>
 
@@ -403,5 +475,3 @@
     </div>
   </div>
 </div>
-</content>
-</invoke>

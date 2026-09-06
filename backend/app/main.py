@@ -4253,6 +4253,7 @@ from database.book_crud import (
     set_book_sentences as db_set_book_sentences,
 )
 from tools.book_service import extract as book_extract, derive_title as book_derive_title
+from tools import book_service as _book_svc
 
 
 @app.post("/api/books/upload")
@@ -4702,6 +4703,16 @@ async def stream_book(book_id: str, request: Request, from_idx: int = 0):
                 # "OK" / "I" type valid fragments, drops 1-char artifacts.
                 stripped = sent.strip()
                 if not stripped or len(stripped) < 2:
+                    continue
+                # Books extracted before the citation patterns were
+                # extended may still carry markers ("text.*12",
+                # "text.12*") in their stored rows — re-strip here so
+                # old books stop reading footnote numbers aloud without
+                # a re-extract. Citation-only rows ("12", "*12") are
+                # skipped the same way.
+                sent = _book_svc._strip_citations(sent)
+                stripped = sent.strip()
+                if not stripped or len(stripped) < 2 or _book_svc._is_citation_only(stripped):
                     continue
                 # One bad sentence (TTS engine error, OOM, etc.) must not
                 # kill the whole 40k-sentence stream — wrap each in its own

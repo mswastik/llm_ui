@@ -26,7 +26,7 @@
   "tts_engine": "kokoro",
   "tts_voice": "af_heart",
   "tts_rate": "+0%",
-  "tts_volume": 1.5,
+  "tts_volume": 1.35,
   "kokoro_lang": "a",
   "kokoro_device": "cpu",
   "kokoro_volume": 1,
@@ -35,7 +35,7 @@
   "tts_normalize_enabled": true,
   "tts_custom_replacements": [
     {
-      "pattern": "\\b[eE]\\.g\\.\\b",
+      "pattern": "[eE]\\.g\\.",
       "flags": "",
       "replacement": "for example",
       "_error": ""

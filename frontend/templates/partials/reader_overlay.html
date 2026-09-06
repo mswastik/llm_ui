@@ -16,10 +16,7 @@
   x-show="open"
   x-cloak
   @keydown.escape.window="if (open) handleEscape()"
-  @keydown.window="if ($event.ctrlKey || $event.metaKey) { if ($event.key.toLowerCase() === 'f') { if (open && book?.file_type === 'pdf') { $event.preventDefault(); openFind() } } }"
-  @keydown.space.window="if (open && !['INPUT','TEXTAREA','SELECT'].includes($event.target.tagName)) { $event.preventDefault(); toggle() }"
-  @keydown.arrowleft.window="if (open && book?.file_type === 'pdf' && !['INPUT','TEXTAREA'].includes($event.target.tagName)) goToPage(currentPdfPage - 1)"
-  @keydown.arrowright.window="if (open && book?.file_type === 'pdf' && !['INPUT','TEXTAREA'].includes($event.target.tagName)) goToPage(currentPdfPage + 1)"
+  @keydown.window="if (open && (($event.ctrlKey || $event.metaKey) && $event.key && $event.key.toLowerCase() === 'f' && book && book.file_type === 'pdf')) { $event.preventDefault(); openFind() }"
   class="fixed inset-0 z-[200] bg-[var(--bg-primary)] flex flex-col"
 >
   <!-- Header / transport bar -->
@@ -57,7 +54,7 @@
         @click="goToPage(currentPdfPage - 1)"
         :disabled="currentPdfPage <= 1"
         class="btn btn-icon btn-xs btn-ghost"
-        title="Previous page (←)"
+        title="Previous page"
       >
         <i class="ph ph-caret-left text-lg"></i>
       </button>
@@ -76,7 +73,7 @@
         @click="goToPage(currentPdfPage + 1)"
         :disabled="currentPdfPage >= pdfNumPages"
         class="btn btn-icon btn-xs btn-ghost"
-        title="Next page (→)"
+        title="Next page"
       >
         <i class="ph ph-caret-right text-lg"></i>
       </button>
@@ -206,7 +203,7 @@
         @click="prevSentence()"
         :disabled="!currentIdx"
         class="btn btn-icon btn-xs btn-ghost"
-        title="Previous sentence"
+        title="Previous sentence (←)"
       >
         <i class="ph ph-rewind text-lg"></i>
       </button>
@@ -214,7 +211,7 @@
         @click="nextSentence()"
         :disabled="currentIdx >= sentences.length - 1"
         class="btn btn-icon btn-xs btn-ghost"
-        title="Next sentence"
+        title="Next sentence (→)"
       >
         <i class="ph ph-fast-forward text-lg"></i>
       </button>

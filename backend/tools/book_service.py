@@ -40,7 +40,9 @@ from tools import tts_service as _tts_mod
 #   academic / reference books).
 #
 #   TRAILING: a marker at the end of a sentence ("text.1", "text[3]",
-#   "text *"). More common in narrative books.
+#   "text *"). More common in narrative books. The star may also sit
+#   directly BEFORE the number ("text.*12") or AFTER it ("text.12*")
+#   depending on how the PDF flattened the superscript.
 #
 # Patterns are deliberately narrow: bare digits mid-sentence ("I ate 3
 # apples", "page 1") are left alone since they could be the actual
@@ -49,8 +51,9 @@ from tools import tts_service as _tts_mod
 _LEADING_CITATION_RE = re.compile(
     r"""
     ^\s* (?:
-          \[\d+(?:[\-,–]\s*\d+)*\]      # [1]  [1, 2]  [1-3]
-        | \*+\d+                          # *1  **2
+          \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
+        | \*+\s*\d+                        # *1  **2  * 12
+        | \d+\*+                           # 12*  — number with trailing star
         | \*\s+(?=[A-Z])                  # *  followed by capital (footnote in body)
         | [†‡§¶]                          # unicode footnote / pilcrow
         | [\u00B9\u00B2\u00B3\u2070-\u2079]+  # unicode superscript digits
@@ -63,16 +66,18 @@ _LEADING_CITATION_RE = re.compile(
 _TRAILING_CITATION_RE = re.compile(
     r"""
     \s* (?:
-          \[\d+(?:[\-,–]\s*\d+)*\]   # [1]  [1, 2]  [1-3]
-        | \*+                         # *  **  ***
-        | [†‡§¶]                      # dagger / pilcrow / etc.
-        | \^\d+                       # ^1
-        | (?<=[.!?])\d+               # .12  !23  ?7  — superscript reference
-                                      # marker glued AFTER the sentence's
-                                      # terminal punctuation (the standard
-                                      # footnote placement). We deliberately
-                                      # do NOT strip digits BEFORE the period:
-                                      # "There were 12." / "CO2." are prose.
+          \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
+        | \*+\s*\d+                        # *12  * 12  — star BEFORE the number
+        | \d+\s*\*+                        # 12*  12 *  — star AFTER the number
+        | \*+                             # *  **  ***
+        | [†‡§¶]                          # dagger / pilcrow / etc.
+        | \^\d+                           # ^1
+        | (?<=[.!?])\**\d+\**             # .12  .*12  .12*  — superscript reference
+                                          # marker glued AFTER the sentence's
+                                          # terminal punctuation (the standard
+                                          # footnote placement). We deliberately
+                                          # do NOT strip digits BEFORE the period:
+                                          # "There were 12." / "CO2." are prose.
     )
     \s* $
     """,
@@ -299,6 +304,14 @@ if __name__ == "__main__":
     # a sentence are genuine prose ("There were 12.", "12 Reasons...")
     # and must survive.
     assert _strip_citations("The claim is disputed.12") == "The claim is disputed."
+    # Star glued to the number, either side ("text.*12", "text.12*",
+    # "text *12", "text 12*") — same flattened-superscript footnote.
+    assert _strip_citations("The claim is disputed.*12") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed.12*") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed *12") == "The claim is disputed"
+    assert _strip_citations("The claim is disputed 12*") == "The claim is disputed"
+    assert _strip_citations("The claim is disputed.*[3]") == "The claim is disputed."
+    assert _strip_citations("12* The next quote follows.") == "The next quote follows."
     # ...keep genuine prose numbers untouched (years, counts, versions).
     assert _strip_citations("The rate rose in 1964 .") == "The rate rose in 1964."
     assert _strip_citations("There were 12 .") == "There were 12."
@@ -308,6 +321,8 @@ if __name__ == "__main__":
     # Standalone marker sentences identified as citation-only.
     assert _is_citation_only("12") is True
     assert _is_citation_only("14.") is True
+    assert _is_citation_only("*12") is True
+    assert _is_citation_only("12*") is True
     assert _is_citation_only("12 years later") is False
 
     print(f"OK: splitter={len(sents)} sentences, page_map={page_map}, title derivation correct, broken-chunk filter correct, citation strip correct")

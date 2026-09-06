@@ -158,20 +158,22 @@ function _splitSentencesClient(text) {
 // footnote / citation reference markers that PyPDF2 or PDF.js flatten
 // into the prose so TTS never reads "twelve" / "asterisk" for a
 // reference. Keep the patterns in sync with the Python version: bracket
-// refs, asterisk/dagger symbols, unicode superscripts, and digit markers
-// glued AFTER the sentence's terminal punctuation ("text.12"). Digits
-// BEFORE the period or at the start of a sentence are genuine prose
-// ("There were 12.", "12 Reasons...") and must NOT be stripped.
+// refs (with optional flanking stars), star+number combos in either
+// order ("*12" / "12*"), asterisk/dagger symbols, unicode superscripts,
+// and digit markers glued AFTER the sentence's terminal punctuation
+// ("text.12", "text.*12", "text.12*"). Digits BEFORE the period or at
+// the start of a sentence are genuine prose ("There were 12.",
+// "12 Reasons...") and must NOT be stripped.
 function _stripCitationsClient(s) {
   let t = (s || '').trim()
   // Leading marker (footnote ref at the start of a sentence).
   t = t.replace(
-    /^\s*(?:\[\d+(?:[-,–]\s*\d+)*\]|\*+\d+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
+    /^\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\d+\*+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
     ''
   )
   // Trailing marker (end of sentence).
   t = t.replace(
-    /\s*(?:\[\d+(?:[-,–]\s*\d+)*\]|\*+|[†‡§¶]|\^\d+|(?<=[.!?])\d+)\s*$/,
+    /\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\d+\s*\*+|\*+|[†‡§¶]|\^\d+|(?<=[.!?])\**\d+\**)\s*$/,
     ''
   )
   // Stripping can leave "disputed ." — pull punctuation back.
@@ -579,6 +581,13 @@ export function reader() {
 
     init() {
       window.addEventListener('open-reader', (e) => this.start(e.detail?.bookId))
+      // Bare `@keydown.window` in Alpine was not reliably firing for
+      // ArrowLeft/Right on this element, and the template-level Space
+      // binding was lost in a refactor (Space fell through to the
+      // browser and scrolled the page). All reader keys live here in
+      // one real DOM listener instead.
+      this._arrowHandler = (ev) => this.onReaderKey(ev)
+      window.addEventListener('keydown', this._arrowHandler, true)
     },
 
     // ─── Lifecycle ─────────────────────────────────────────────────
@@ -1006,6 +1015,36 @@ export function reader() {
     handleEscape() {
       if (this.findOpen && this.book?.file_type === 'pdf') this.closeFind()
       else this.close()
+    },
+
+    // Window-level key router. Space toggles play/pause (preventDefault
+    // so the page doesn't scroll); arrows step prev/next sentence in
+    // TTS. Alpine's @keydown.arrowleft.window / .arrowright matching
+    // was not firing reliably for ArrowLeft/Right in this app, so we
+    // filter here instead. Escape and Ctrl/Cmd+F stay as template
+    // listeners in reader_overlay.html.
+    onReaderKey(ev) {
+      if (!this.open) return
+      const key = ev?.key
+      const tag = ev?.target?.tagName
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+      // Space → play/pause. Gated on focus so typing a space in the
+      // page-number input or the find query still works.
+      if (key === ' ' || key === 'Spacebar') {
+        if (typing) return
+        ev.preventDefault()
+        this.toggle()
+        return
+      }
+      // Arrows → prev/next sentence. Gated on focus so typing in the
+      // page-number input or the find query still works. The find
+      // bar takes the arrow keys when it's open.
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        if (this.findOpen) return
+        if (typing) return
+        ev.preventDefault()
+        this.skipSentence(key === 'ArrowLeft' ? -1 : 1)
+      }
     },
 
     // ─── Stream → segment queue → audio ────────────────────────────

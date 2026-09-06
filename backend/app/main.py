@@ -4706,10 +4706,10 @@ async def stream_book(book_id: str, request: Request, from_idx: int = 0):
                     continue
                 # Books extracted before the citation patterns were
                 # extended may still carry markers ("text.*12",
-                # "text.12*") in their stored rows — re-strip here so
-                # old books stop reading footnote numbers aloud without
-                # a re-extract. Citation-only rows ("12", "*12") are
-                # skipped the same way.
+                # "text.12*", "text. 24") in their stored rows — re-strip
+                # here so old books stop reading footnote numbers aloud
+                # without a re-extract. Citation-only rows ("12", "*12")
+                # are skipped the same way.
                 sent = _book_svc._strip_citations(sent)
                 stripped = sent.strip()
                 if not stripped or len(stripped) < 2 or _book_svc._is_citation_only(stripped):

@@ -44,16 +44,27 @@ from tools import tts_service as _tts_mod
 #   directly BEFORE the number ("text.*12") or AFTER it ("text.12*")
 #   depending on how the PDF flattened the superscript.
 #
+#   Gating rule: a bare digit run is only a citation when it sits AFTER
+#   the sentence's terminal punctuation (".24", ". 24", ".24*"). Digits
+#   BEFORE the period ("There were 12.", "rated 5*.", "CO2.") are genuine
+#   prose and must survive — same for a digit run with no period at all
+#   ("disputed 24", "5* hotels"). Star-FIRST markers ("*12") need no
+#   gating: prose never ends that way, while footnotes often do.
+#
 # Patterns are deliberately narrow: bare digits mid-sentence ("I ate 3
 # apples", "page 1") are left alone since they could be the actual
 # content. Only marker-shaped patterns at sentence boundaries are
 # stripped.
+#
+# SUP: ASCII digits + unicode superscript / subscript digits (²⁴, ₂₄).
+# Subscripts are included ONLY in the after-period cluster — "CO2" /
+# "H2O" (digits before the period) must never be touched.
+_SUP_DIGITS = r"[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+"
 _LEADING_CITATION_RE = re.compile(
     r"""
     ^\s* (?:
           \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
         | \*+\s*\d+                        # *1  **2  * 12
-        | \d+\*+                           # 12*  — number with trailing star
         | \*\s+(?=[A-Z])                  # *  followed by capital (footnote in body)
         | [†‡§¶]                          # unicode footnote / pilcrow
         | [\u00B9\u00B2\u00B3\u2070-\u2079]+  # unicode superscript digits
@@ -64,20 +75,20 @@ _LEADING_CITATION_RE = re.compile(
 )
 
 _TRAILING_CITATION_RE = re.compile(
-    r"""
+    rf"""
     \s* (?:
           \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
-        | \*+\s*\d+                        # *12  * 12  — star BEFORE the number
-        | \d+\s*\*+                        # 12*  12 *  — star AFTER the number
-        | \*+                             # *  **  ***
+        | \*+\s*\d+                        # *12  * 12  — star FIRST: always a marker
+        | (?<!\d)\*+                      # lone stars ("para *") — but never the
+                                          # star off a rating ("rated 5*")
         | [†‡§¶]                          # dagger / pilcrow / etc.
         | \^\d+                           # ^1
-        | (?<=[.!?])\**\d+\**             # .12  .*12  .12*  — superscript reference
-                                          # marker glued AFTER the sentence's
-                                          # terminal punctuation (the standard
-                                          # footnote placement). We deliberately
-                                          # do NOT strip digits BEFORE the period:
-                                          # "There were 12." / "CO2." are prose.
+        | (?<=[.!?])\s*\**\s*{_SUP_DIGITS}(?:\s*[,;]\s*{_SUP_DIGITS})*\s*\**
+                                          # citation cluster AFTER the terminal
+                                          # punctuation: .24  . 24  .*12  .12*
+                                          # .24,25  .²⁴  . *[3]-style digits.
+                                          # The $ anchor keeps mid-sentence
+                                          # numbers ("Stop! 3 times") safe.
     )
     \s* $
     """,
@@ -95,11 +106,11 @@ def _strip_citations(sent: str) -> str:
 
 
 # A sentence that is ONLY digits / citation punctuation ("12", "14.",
-# "[3]") is a flattened superscript reference or a page number — PyPDF2
-# puts superscripts on their own line, and the sentence splitter then
-# yields the bare number as its own sentence. Never real prose, so it
-# must not reach the TTS engine.
-_CITATION_ONLY_RE = re.compile(r"[\d\s,.;:()\[\]{}*†‡§¶%#]+")
+# "[3]", "²⁴") is a flattened superscript reference or a page number —
+# PyPDF2 puts superscripts on their own line, and the sentence splitter
+# then yields the bare number as its own sentence. Never real prose, so
+# it must not reach the TTS engine.
+_CITATION_ONLY_RE = re.compile(r"[\d\s,.;:()\[\]{}*†‡§¶%#\^\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+")
 
 
 def _is_citation_only(sent: str) -> bool:
@@ -304,25 +315,42 @@ if __name__ == "__main__":
     # a sentence are genuine prose ("There were 12.", "12 Reasons...")
     # and must survive.
     assert _strip_citations("The claim is disputed.12") == "The claim is disputed."
-    # Star glued to the number, either side ("text.*12", "text.12*",
-    # "text *12", "text 12*") — same flattened-superscript footnote.
+    # Star glued to the number ("text.*12", "text.12*", "text *12") —
+    # star-first is always a marker; digit-star is gated on the period
+    # (see below), so "rated 5*." survives while ".12*" is stripped.
     assert _strip_citations("The claim is disputed.*12") == "The claim is disputed."
     assert _strip_citations("The claim is disputed.12*") == "The claim is disputed."
     assert _strip_citations("The claim is disputed *12") == "The claim is disputed"
-    assert _strip_citations("The claim is disputed 12*") == "The claim is disputed"
     assert _strip_citations("The claim is disputed.*[3]") == "The claim is disputed."
-    assert _strip_citations("12* The next quote follows.") == "The next quote follows."
-    # ...keep genuine prose numbers untouched (years, counts, versions).
+    # Period-gated cluster: PyPDF2 often leaves a space (". 24"), groups
+    # (".24,25") or unicode superscripts (".²⁴") after the period.
+    assert _strip_citations("The claim is disputed. 24") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed.24,25") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed.²⁴") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed. 12 *") == "The claim is disputed."
+    # ...keep genuine prose numbers untouched (years, counts, versions,
+    # ratings, chemistry). Anything before the period — or with no
+    # period at all — is prose, never a citation.
     assert _strip_citations("The rate rose in 1964 .") == "The rate rose in 1964."
     assert _strip_citations("There were 12 .") == "There were 12."
     assert _strip_citations("The claim is disputed 12.") == "The claim is disputed 12."
     assert _strip_citations("The claim is disputed12.") == "The claim is disputed12."
+    assert _strip_citations("He rated it 5*.") == "He rated it 5*."
+    assert _strip_citations("The claim is disputed 12*") == "The claim is disputed 12*"
+    assert _strip_citations("The claim is disputed 24") == "The claim is disputed 24"
+    assert _strip_citations("CO2 levels rose.") == "CO2 levels rose."
+    assert _strip_citations("Drink H2O daily.") == "Drink H2O daily."
+    assert _strip_citations("Version 2.0 is out.") == "Version 2.0 is out."
+    assert _strip_citations("5* hotels are great.") == "5* hotels are great."
     assert _strip_citations("12 The next quote follows.") == "12 The next quote follows."
+    assert _strip_citations("12* The next quote follows.") == "12* The next quote follows."
     # Standalone marker sentences identified as citation-only.
     assert _is_citation_only("12") is True
     assert _is_citation_only("14.") is True
     assert _is_citation_only("*12") is True
     assert _is_citation_only("12*") is True
+    assert _is_citation_only("²⁴") is True
+    assert _is_citation_only("^1") is True
     assert _is_citation_only("12 years later") is False
 
     print(f"OK: splitter={len(sents)} sentences, page_map={page_map}, title derivation correct, broken-chunk filter correct, citation strip correct")

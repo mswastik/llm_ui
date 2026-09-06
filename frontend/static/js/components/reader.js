@@ -158,22 +158,23 @@ function _splitSentencesClient(text) {
 // footnote / citation reference markers that PyPDF2 or PDF.js flatten
 // into the prose so TTS never reads "twelve" / "asterisk" for a
 // reference. Keep the patterns in sync with the Python version: bracket
-// refs (with optional flanking stars), star+number combos in either
-// order ("*12" / "12*"), asterisk/dagger symbols, unicode superscripts,
-// and digit markers glued AFTER the sentence's terminal punctuation
-// ("text.12", "text.*12", "text.12*"). Digits BEFORE the period or at
-// the start of a sentence are genuine prose ("There were 12.",
-// "12 Reasons...") and must NOT be stripped.
+// refs (with optional flanking stars), star-first combos ("*12"),
+// lone stars (never off a rating: "rated 5*" survives), asterisk/dagger
+// symbols, unicode superscripts, and a citation cluster gated on the
+// sentence's terminal punctuation (".24", ". 24", ".*12", ".12*",
+// ".24,25", ".²⁴"). Digits BEFORE the period or with no period at all
+// are genuine prose ("There were 12.", "rated 5*.", "CO2.", "5* hotels")
+// and must NOT be stripped.
 function _stripCitationsClient(s) {
   let t = (s || '').trim()
   // Leading marker (footnote ref at the start of a sentence).
   t = t.replace(
-    /^\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\d+\*+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
+    /^\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
     ''
   )
   // Trailing marker (end of sentence).
   t = t.replace(
-    /\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\d+\s*\*+|\*+|[†‡§¶]|\^\d+|(?<=[.!?])\**\d+\**)\s*$/,
+    /\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|(?<!\d)\*+|[†‡§¶]|\^\d+|(?<=[.!?])\s*\**\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[,;]\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*\s*\**)\s*$/,
     ''
   )
   // Stripping can leave "disputed ." — pull punctuation back.
@@ -181,10 +182,11 @@ function _stripCitationsClient(s) {
   return t.trim()
 }
 
-// A sentence that is only digits / citation punctuation ("12", "14.") is
-// a flattened superscript reference or page number — never prose to read.
+// A sentence that is only digits / citation punctuation ("12", "14.",
+// "²⁴") is a flattened superscript reference or page number — never
+// prose to read.
 function _isCitationOnlyClient(s) {
-  return /^[\d\s,.;:()\[\]{}*†‡§¶%#]+$/.test((s || '').trim())
+  return /^[\d\s,.;:()\[\]{}*†‡§¶%#^\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+$/.test((s || '').trim())
 }
 
 // Extract every page's text via PDF.js (clean per-page text) and re-ship

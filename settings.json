@@ -39,6 +39,12 @@
       "flags": "",
       "replacement": "for example",
       "_error": ""
+    },
+    {
+      "pattern": "i\\.e\\.",
+      "flags": "",
+      "replacement": "that is",
+      "_error": ""
     }
   ],
   "terminal_allowed_dirs": [

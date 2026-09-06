@@ -62,7 +62,7 @@ import { jobsModal } from './components/jobs.js?v=64'
 import { agentsPanel } from './components/agents_panel.js?v=70'
 import { capabilityPicker } from './components/tag_picker.js?v=1'
 import { library } from './components/library.js?v=25'
-import { reader } from './components/reader.js?v=30'
+import { reader } from './components/reader.js?v=31'
 // ─── Modal factory (extracted from store.js which is now removed) ────
 function createModal(storeKey, openMethod, closeMethod) {
   return function () {

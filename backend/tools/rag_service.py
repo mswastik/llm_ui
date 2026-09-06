@@ -74,12 +74,54 @@ class DocumentProcessor:
                 return ""
     
     @staticmethod
+    def _extract_pdf_poppler(filepath: str) -> Optional[List[str]]:
+        """Extract per-page text via poppler's `pdftotext` (system binary).
+
+        Returns None when poppler is missing or fails — the caller falls
+        back to PyPDF2. Preferred when available: for print-typeset PDFs
+        PyPDF2 inserts spurious spaces between letters ("M onk e y l uv"),
+        which breaks sentence splitting, citation stripping, the TTS
+        read-aloud and the highlight match. pdftotext reads the same file
+        cleanly. Single subprocess call; pages split on form feeds.
+        ponytail: no new dep (binary probe + stdlib subprocess only).
+        """
+        import shutil
+        import subprocess
+        if not shutil.which("pdftotext"):
+            return None
+        try:
+            # Reading-order text (no -layout: avoids alignment padding).
+            # '-' writes to stdout; Lambda-free list args, no shell.
+            proc = subprocess.run(
+                ["pdftotext", filepath, "-"],
+                capture_output=True,
+                timeout=180,
+            )
+            if proc.returncode != 0:
+                return None
+            full = proc.stdout.decode("utf-8", errors="ignore")
+            if not full.strip():
+                return None
+            pages = [p.strip() for p in full.split("\x0c")]
+            # Poppler ends output with a form feed → drop the trailing
+            # empty, but keep interior blanks so page numbers stay aligned.
+            while pages and not pages[-1]:
+                pages.pop()
+            return pages or None
+        except Exception:
+            return None
+
+    @staticmethod
     def _extract_pdf(filepath: str) -> Tuple[List[str], str]:
+        raw_pages = DocumentProcessor._extract_pdf_poppler(filepath)
+        if raw_pages is None:
+            raw_pages = []
+            with open(filepath, 'rb') as f:
+                reader = PyPDF2.PdfReader(f)
+                for page in reader.pages:
+                    raw_pages.append(page.extract_text() or "")
         page_texts = []
-        with open(filepath, 'rb') as f:
-            reader = PyPDF2.PdfReader(f)
-            for page in reader.pages:
-                raw = page.extract_text() or ""
+        for raw in raw_pages:
                 # PyPDF2 sometimes returns text with 2+ spaces between letters
                 # (e.g. "A L S O  B Y" for "ALSO BY" in print-typeset books).
                 # Collapse them — single spaces are real word boundaries.

@@ -155,28 +155,47 @@ function _splitSentencesClient(text) {
 }
 
 // Client-side mirror of backend book_service._strip_citations: strips
-// footnote / citation reference markers that PyPDF2 or PDF.js flatten
-// into the prose so TTS never reads "twelve" / "asterisk" for a
-// reference. Keep the patterns in sync with the Python version: bracket
-// refs (with optional flanking stars), star-first combos ("*12"),
-// lone stars (never off a rating: "rated 5*" survives), asterisk/dagger
-// symbols, unicode superscripts, and a citation cluster gated on the
-// sentence's terminal punctuation (".24", ". 24", ".*12", ".12*",
-// ".24,25", ".²⁴"). Digits BEFORE the period or with no period at all
-// are genuine prose ("There were 12.", "rated 5*.", "CO2.", "5* hotels")
-// and must NOT be stripped.
+// footnote / citation reference markers that extraction flattens into
+// the prose so TTS never reads "twelve" / "asterisk" for a reference.
+// Keep the patterns in sync with the Python version: bracket refs,
+// star-first combos ("*12", "*3 0"), lone stars (never off a rating or
+// math: "rated 5*.", "2 * 3"), dagger/caret markers, and a citation
+// cluster gated on terminal punctuation (".24", ". 24", ".*12", ".12*",
+// ".24,25", ".²⁴" — to the end, or into a capital-starting next
+// sentence: ".2 Now"). Digits before the period, decimals ("4.3"),
+// years without footnotes and bare mid-sentence numbers are genuine
+// prose ("There were 12.", "CO2.", "5* hotels", "I ate 3 apples") and
+// must NOT be stripped.
 function _stripCitationsClient(s) {
   let t = (s || '').trim()
   // Leading marker (footnote ref at the start of a sentence).
   t = t.replace(
-    /^\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
+    /^\s*(?:\**\[\d+(?:[\s,;\-–]*\d+)*\]\**|\*+\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*|\*\s+(?=[A-Z])|[†‡§¶]|[\u00B9\u00B2\u00B3\u2070-\u2079]+)\s*/,
     ''
   )
-  // Trailing marker (end of sentence).
+  // Mid-row footnote star with its number ("life." *3 0", "mother,
+  // *2 3 and"). Star-first is always marker-shaped; blocked after
+  // digits so math ("2 * 3") survives.
   t = t.replace(
-    /\s*(?:\**\[\d+(?:[-,–]\s*\d+)*\]\**|\*+\s*\d+|(?<!\d)\*+|[†‡§¶]|\^\d+|(?<=[.!?])\s*\**\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[,;]\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*\s*\**)\s*$/,
+    /(?<!\d)(?<!\d\s)\*+\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[,;]?\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*/g,
     ''
   )
+  // Mid-row lone footnote star ("amygdala * is", "prosocial*—less").
+  // Same math/rating guard; must be followed by space, punctuation,
+  // quote or dash (glued emphasis like "M*A*S*H" and code like "a*b"
+  // survive).
+  t = t.replace(
+    /(?<!\d)(?<!\d\s)\*+(?=[\s.,;:!?\"'()\[\]\u201c\u201d\u2014\u2013])/g,
+    ''
+  )
+  // Trailing marker (end of sentence) or into a next sentence.
+  t = t.replace(
+    /(?:\s*(?:\**\[\d+(?:[\s,;\-–]*\d+)*\]\**|(?<!\d)(?<!\d\s)\*+|[†‡§¶]|\^\d+)\s*$|(?<=[^\d][.!?])\s*\**\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[,;]?\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*\s*\**(?=\s+[A-Z\"'\(\[\u201c\u201d]|\s*$)|(?<=\D[12]\d{3}[.!?])\s*\**\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+(?:\s*[,;]?\s*[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+)*\s*\**(?=\s+[A-Z\"'\(\[\u201c\u201d]|\s*$))/,
+    ''
+  )
+  // Mid-row removal can leave double spaces — collapse (insignificant
+  // to TTS and the highlight).
+  t = t.replace(/ {2,}/g, ' ')
   // Stripping can leave "disputed ." — pull punctuation back.
   t = t.replace(/\s+([.!?,;:])/g, '$1')
   return t.trim()

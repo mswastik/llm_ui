@@ -26,47 +26,59 @@ from tools.tts_service import TTSService
 # would AttributeError (it's not a method).
 from tools import tts_service as _tts_mod
 
-# Superscript / footnote / citation markers that PyPDF2 flattens into the
-# prose when it extracts text from print-typeset PDFs (PyPDF2 has no
+# Superscript / footnote / citation markers that extraction flattens
+# into the prose when it pulls text from print-typeset PDFs (no
 # font-size info, so a superscript "1" is indistinguishable from a body
 # number). We strip these markers so TTS doesn't read "one" or
-# "asterisk" between sentences. Two locations:
+# "asterisk" between sentences. Three locations:
 #
 #   LEADING: a footnote reference in the body text that was rendered
-#   as a superscript BEFORE the word it qualifies. PyPDF2 drops the
-#   superscript baseline, so the marker ends up as a regular character
-#   at the start of the sentence ("*1 W or ds pa ck pow er..."). The
-#   asterisk IS the footnote indicator in some book styles (common in
-#   academic / reference books).
+#   as a superscript BEFORE the word it qualifies ("*1 The next...").
+#   The asterisk IS the footnote indicator in some book styles (common
+#   in academic / reference books).
 #
 #   TRAILING: a marker at the end of a sentence ("text.1", "text[3]",
 #   "text *"). More common in narrative books. The star may also sit
 #   directly BEFORE the number ("text.*12") or AFTER it ("text.12*")
 #   depending on how the PDF flattened the superscript.
 #
+#   MID-ROW: mangled spacing defeats the sentence splitter, so one
+#   stored row can hold "sentence.24 Next sentence..." or a mid-sentence
+#   footnote star ("amygdala * is"). These need non-anchored patterns.
+#
 #   Gating rule: a bare digit run is only a citation when it sits AFTER
-#   the sentence's terminal punctuation (".24", ". 24", ".24*"). Digits
-#   BEFORE the period ("There were 12.", "rated 5*.", "CO2.") are genuine
-#   prose and must survive — same for a digit run with no period at all
-#   ("disputed 24", "5* hotels"). Star-FIRST markers ("*12") need no
-#   gating: prose never ends that way, while footnotes often do.
+#   the sentence's terminal punctuation (".24", ". 24", ".24*"), and the
+#   period itself must not extend a decimal ("4.3 Overview" keeps its
+#   "3"). Digits BEFORE the period ("There were 12.", "rated 5*.",
+#   "CO2.") are genuine prose and must survive — same for a digit run
+#   with no period at all ("disputed 24", "5* hotels"). Star-FIRST
+#   markers ("*12") need no gating: prose never ends that way, while
+#   footnotes often do. A lone "*" is removed mid-row only when it
+#   cannot be math ("2 * 3") or a rating ("5*").
 #
 # Patterns are deliberately narrow: bare digits mid-sentence ("I ate 3
 # apples", "page 1") are left alone since they could be the actual
-# content. Only marker-shaped patterns at sentence boundaries are
-# stripped.
+# content. Only marker-shaped patterns at sentence boundaries (or after
+# terminal punctuation) are stripped.
 #
 # SUP: ASCII digits + unicode superscript / subscript digits (²⁴, ₂₄).
 # Subscripts are included ONLY in the after-period cluster — "CO2" /
 # "H2O" (digits before the period) must never be touched.
 _SUP_DIGITS = r"[\d\u00B9\u00B2\u00B3\u2070-\u2079\u2080-\u2089]+"
+# A cluster digit run continues across spaces/commas ("1 0", "24,25" —
+# flattened multi-digit footnotes). Used after terminal punctuation.
+_SUP_SEQ = rf"{_SUP_DIGITS}(?:\s*[,;]?\s*{_SUP_DIGITS})*"
+# What may start a new sentence after a mid-row citation (capital
+# letter, quote or bracket). Lowercase after digits is prose
+# ("Stop! 3 times", "Fig. 2 shows this") and must survive.
+_SENT_START = r"""[A-Z\"'\(\[\u201c\u201d]"""
 _LEADING_CITATION_RE = re.compile(
-    r"""
+    rf"""
     ^\s* (?:
-          \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
-        | \*+\s*\d+                        # *1  **2  * 12
-        | \*\s+(?=[A-Z])                  # *  followed by capital (footnote in body)
-        | [†‡§¶]                          # unicode footnote / pilcrow
+          \**\[\d+(?:[\s,;\-–]*\d+)*\]\**  # [1]  [1, 2]  [1-3]  [3 0]
+        | \*+\s*{_SUP_SEQ}                   # *1  **2  * 12  *3 0
+        | \*\s+(?=[A-Z])                    # *  followed by capital (footnote in body)
+        | [†‡§¶]                            # unicode footnote / pilcrow
         | [\u00B9\u00B2\u00B3\u2070-\u2079]+  # unicode superscript digits
     )
     \s*
@@ -74,32 +86,60 @@ _LEADING_CITATION_RE = re.compile(
     re.VERBOSE,
 )
 
+# Mid-row footnote star with its number ("life." *3 0", "mother, *2 3
+# and"). Star-first is always marker-shaped, so no end anchor is needed —
+# but it must not be math ("2 * 3"): block when digits precede the star.
+_MID_STAR_DIGITS_RE = re.compile(
+    rf"(?<!\d)(?<!\d\s)\*+\s*{_SUP_SEQ}",
+    re.VERBOSE,
+)
+
+# Mid-row lone footnote star ("amygdala * is", "; * when", "prosocial*—less").
+# Same math/rating guard; must be followed by space, punctuation, quote
+# or dash (so glued emphasis like "M*A*S*H" and code like "a*b" survive).
+_MID_LONE_STAR_RE = re.compile(
+    r"""(?<!\d)(?<!\d\s)\*+(?=[\s.,;:!?\"'()\[\]\u201c\u201d\u2014\u2013])""",
+    re.VERBOSE,
+)
+
 _TRAILING_CITATION_RE = re.compile(
     rf"""
-    \s* (?:
-          \**\[\d+(?:[\-,–]\s*\d+)*\]\**  # [1]  [1, 2]  [1-3], optional flanking *
-        | \*+\s*\d+                        # *12  * 12  — star FIRST: always a marker
-        | (?<!\d)\*+                      # lone stars ("para *") — but never the
-                                          # star off a rating ("rated 5*")
-        | [†‡§¶]                          # dagger / pilcrow / etc.
-        | \^\d+                           # ^1
-        | (?<=[.!?])\s*\**\s*{_SUP_DIGITS}(?:\s*[,;]\s*{_SUP_DIGITS})*\s*\**
-                                          # citation cluster AFTER the terminal
-                                          # punctuation: .24  . 24  .*12  .12*
-                                          # .24,25  .²⁴  . *[3]-style digits.
-                                          # The $ anchor keeps mid-sentence
-                                          # numbers ("Stop! 3 times") safe.
+    (?:
+          \s*(?:
+               \**\[\d+(?:[\s,;\-–]*\d+)*\]\**  # [1]  [1, 2]  [1-3]  [3 0]
+             | (?<!\d)(?<!\d\s)\*+              # lone stars — never off a
+                                               # rating ("rated 5*") or math
+             | [†‡§¶]                          # dagger / pilcrow / etc.
+             | \^\d+                           # ^1
+          )\s*$
+        | (?<=[^\d][.!?])\s*\**\s*{_SUP_SEQ}\s*\**
+          (?=\s+{_SENT_START}|\s*$)  # citation cluster AFTER terminal
+                                     # punctuation: .24  . 24  .*12  .12*
+                                     # .24,25  .²⁴ — to the end, or into a
+                                     # capital-starting next sentence
+                                     # (".2 Now", ".1 0 In"). The period
+                                     # must not extend a decimal ("4.3").
+        | (?<=\D[12]\d{{3}}[.!?])\s*\**\s*{_SUP_SEQ}\s*\**
+          (?=\s+{_SENT_START}|\s*$)  # ...unless it extends a 4-digit year:
+                                     # years never take decimals, so
+                                     # "in 2008.1 The" is year + footnote.
     )
-    \s* $
     """,
     re.VERBOSE,
 )
 
 
 def _strip_citations(sent: str) -> str:
-    # Strip leading marker first (footnote refs in body text), then trailing.
+    # Strip leading marker first (footnote refs in body text), then
+    # mid-row stars (star+digits before lone stars, so "*2 3" goes as
+    # one marker instead of leaving "2 3" behind), then trailing.
     sent = _LEADING_CITATION_RE.sub("", sent)
+    sent = _MID_STAR_DIGITS_RE.sub("", sent)
+    sent = _MID_LONE_STAR_RE.sub("", sent)
     sent = _TRAILING_CITATION_RE.sub("", sent)
+    # Mid-row removal can leave double spaces ("amygdala  is") — collapse
+    # (whitespace is insignificant to TTS and the highlight).
+    sent = re.sub(r" {2,}", " ", sent)
     # Stripping a marker can leave "disputed ." — pull punctuation back.
     sent = re.sub(r"\s+([.!?,;:])", r"\1", sent)
     return sent.rstrip()
@@ -322,12 +362,26 @@ if __name__ == "__main__":
     assert _strip_citations("The claim is disputed.12*") == "The claim is disputed."
     assert _strip_citations("The claim is disputed *12") == "The claim is disputed"
     assert _strip_citations("The claim is disputed.*[3]") == "The claim is disputed."
-    # Period-gated cluster: PyPDF2 often leaves a space (". 24"), groups
-    # (".24,25") or unicode superscripts (".²⁴") after the period.
+    # Period-gated cluster: extraction often leaves a space (". 24"),
+    # groups (".24,25") or unicode superscripts (".²⁴") after the period.
     assert _strip_citations("The claim is disputed. 24") == "The claim is disputed."
     assert _strip_citations("The claim is disputed.24,25") == "The claim is disputed."
     assert _strip_citations("The claim is disputed.²⁴") == "The claim is disputed."
     assert _strip_citations("The claim is disputed. 12 *") == "The claim is disputed."
+    assert _strip_citations("The claim is disputed.[3 0]") == "The claim is disputed."
+    # Mid-row citations: mangled spacing defeats the splitter, so one row
+    # can hold "sentence.24 Next..." or a mid-sentence footnote star.
+    # The cluster reaches into a capital-starting next sentence (".2 Now",
+    # ".1 0 In") but never into lowercase prose ("3. 4 apples" survives).
+    assert _strip_citations("It is complicated.2 Now he left.") == "It is complicated. Now he left."
+    assert _strip_citations("The link.1 0 In lab animals died.") == "The link. In lab animals died."
+    assert _strip_citations("Wellesley College.8 And violence rose.") == "Wellesley College. And violence rose."
+    assert _strip_citations("he amygdala * is the core structure") == "he amygdala is the core structure"
+    assert _strip_citations("pay; * when it rises late") == "pay; when it rises late"
+    assert _strip_citations("behaviors, *23 and she will stop") == "behaviors, and she will stop"
+    assert _strip_citations("rate . *31 Embed this word") == "rate. Embed this word"
+    assert _strip_citations("less prosocial*—less charitable") == "less prosocial—less charitable"
+    assert _strip_citations('syndrome (PMS)*—the symptoms stay') == 'syndrome (PMS)—the symptoms stay'
     # ...keep genuine prose numbers untouched (years, counts, versions,
     # ratings, chemistry). Anything before the period — or with no
     # period at all — is prose, never a citation.
@@ -342,6 +396,14 @@ if __name__ == "__main__":
     assert _strip_citations("Drink H2O daily.") == "Drink H2O daily."
     assert _strip_citations("Version 2.0 is out.") == "Version 2.0 is out."
     assert _strip_citations("5* hotels are great.") == "5* hotels are great."
+    assert _strip_citations("2 * 3 equals 6.") == "2 * 3 equals 6."
+    assert _strip_citations("I ate 3. 4 apples today.") == "I ate 3. 4 apples today."
+    assert _strip_citations("Stop! 3 times in a row.") == "Stop! 3 times in a row."
+    assert _strip_citations("Fig. 2 shows this clearly.") == "Fig. 2 shows this clearly."
+    assert _strip_citations("In 1964. The war began.") == "In 1964. The war began."
+    assert _strip_citations("Section 4.3 Overview here.") == "Section 4.3 Overview here."
+    assert _strip_citations("DDC 612.8-dc23 record kept.") == "DDC 612.8-dc23 record kept."
+    assert _strip_citations("What?! 3") == "What?!"
     assert _strip_citations("12 The next quote follows.") == "12 The next quote follows."
     assert _strip_citations("12* The next quote follows.") == "12* The next quote follows."
     # Standalone marker sentences identified as citation-only.

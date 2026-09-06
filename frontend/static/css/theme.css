@@ -1164,18 +1164,24 @@ h4 { font-size: 1rem; font-weight: 600; }
 .textLayer span::selection,
 .textLayer span *::selection {
   background: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  /* Keep the layer's glyphs invisible while selected. The canvas
+     underneath already draws the pixels — painting the span's own
+     glyphs too (via the global ::selection color) would double-draw
+     the text with a slight offset, which reads as blur. */
+  color: transparent;
 }
 /* The current TTS sentence. rgba(255 235 59 / 0.45) is a textbook
    "highlighter" yellow at 45% alpha. Using background-color (not
    background) so PDF.js's positioning math still applies. */
 .textLayer .pdf-highlight {
-  background-color: rgba(255, 235, 59, 0.45) !important;
+  background-color: rgba(255, 235, 59, 0.30) !important;
   color: transparent !important;
   border-radius: 2px;
   mix-blend-mode: multiply;
 }
 .textLayer .pdf-highlight::selection {
   background: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  color: transparent;
 }
 
 /* PDF find matches (painted by pdf.js' PDFFindController into the text
@@ -1184,7 +1190,7 @@ h4 { font-size: 1rem; font-weight: 600; }
    Overridden here (theme.css loads after pdf_viewer.css) so the colours
    read clearly in both light and dark themes. */
 .textLayer .highlight {
-  background-color: rgba(255, 213, 0, 0.5);
+  background-color: rgba(255, 213, 0, 0.15);
 }
 .textLayer .highlight.selected {
   background-color: rgba(255, 140, 0, 0.65);
